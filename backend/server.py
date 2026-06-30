@@ -174,6 +174,18 @@ class HousekeepingDone(BaseModel):
     petugas: Optional[str] = ""
     catatan: Optional[str] = ""
 
+class BookingCreate(BaseModel):
+    room_id: str
+    tipe: str  # "day_use" | "menginap"
+    nama_tamu: str
+    no_hp: str = ""
+    no_identitas: str = ""
+    kendaraan: str = ""
+    jumlah_tamu: int = 1
+    jam_mulai: str  # ISO datetime (for day_use: checkin time; for menginap: checkin date)
+    jam_selesai: Optional[str] = None  # ISO datetime (estimated checkout); required for menginap
+    catatan: str = ""
+
 # ---- Auth Endpoints ----
 @api.post("/auth/login")
 async def login(body: LoginIn, response: Response):
@@ -721,7 +733,125 @@ async def delete_expense(eid: str, user: dict = Depends(require_owner)):
     await log_activity(user, "delete_expense", f"Hapus pengeluaran {eid}")
     return {"ok": True}
 
-# ---- Audit Log ----
+# ---- Bookings ----
+def _parse_iso(s: str, field: str) -> datetime:
+    try:
+        d = datetime.fromisoformat(s.replace("Z", "+00:00"))
+        if d.tzinfo is None:
+            d = d.replace(tzinfo=timezone.utc)
+        return d.astimezone(timezone.utc)
+    except Exception:
+        raise HTTPException(400, f"Format {field} tidak valid")
+
+@api.post("/bookings")
+async def create_booking(body: BookingCreate, user: dict = Depends(get_current_user)):
+    if body.tipe not in ("day_use", "menginap"):
+        raise HTTPException(400, "Tipe booking tidak valid")
+    r = await db.rooms.find_one({"id": body.room_id})
+    if not r:
+        raise HTTPException(404, "Kamar tidak ditemukan")
+    start = _parse_iso(body.jam_mulai, "jam_mulai")
+    if body.jam_selesai:
+        end = _parse_iso(body.jam_selesai, "jam_selesai")
+    else:
+        if body.tipe == "menginap":
+            raise HTTPException(400, "Booking menginap wajib mengisi jam_selesai")
+        end = start + timedelta(hours=6)
+    if end <= start:
+        raise HTTPException(400, "Jam selesai harus setelah jam mulai")
+    overlap = await db.bookings.find_one({
+        "room_id": body.room_id, "status": "aktif",
+        "jam_mulai": {"$lt": end.isoformat()},
+        "jam_selesai": {"$gt": start.isoformat()},
+    })
+    if overlap:
+        raise HTTPException(400, f"Kamar sudah dibooking pada rentang ini ({overlap.get('kode')})")
+    kode = f"BK-{datetime.now().strftime('%Y%m%d%H%M%S')}-{uuid.uuid4().hex[:4].upper()}"
+    doc = {
+        "id": str(uuid.uuid4()), "kode": kode,
+        "room_id": body.room_id, "room_nomor": r["nomor"], "room_tipe": r["tipe"],
+        "tipe": body.tipe, "nama_tamu": body.nama_tamu, "no_hp": body.no_hp,
+        "no_identitas": body.no_identitas, "kendaraan": body.kendaraan, "jumlah_tamu": body.jumlah_tamu,
+        "jam_mulai": start.isoformat(), "jam_selesai": end.isoformat(),
+        "catatan": body.catatan, "status": "aktif",
+        "created_at": now_iso(), "created_by": user["nama"],
+    }
+    await db.bookings.insert_one(doc)
+    await log_activity(user, "create_booking", f"Booking {body.tipe} kamar {r['nomor']} untuk {body.nama_tamu}", entity=r["nomor"])
+    doc.pop("_id", None)
+    return doc
+
+@api.get("/bookings")
+async def list_bookings(status: Optional[str] = None, tipe: Optional[str] = None,
+                        user: dict = Depends(get_current_user)):
+    q: Dict[str, Any] = {}
+    if status: q["status"] = status
+    if tipe: q["tipe"] = tipe
+    items = await db.bookings.find(q, {"_id": 0}).sort("jam_mulai", 1).to_list(1000)
+    return items
+
+@api.delete("/bookings/{bid}")
+async def cancel_booking(bid: str, user: dict = Depends(get_current_user)):
+    b = await db.bookings.find_one({"id": bid})
+    if not b: raise HTTPException(404, "Booking tidak ditemukan")
+    if b["status"] != "aktif": raise HTTPException(400, "Booking sudah tidak aktif")
+    await db.bookings.update_one({"id": bid}, {"$set": {"status": "dibatalkan", "cancelled_at": now_iso()}})
+    await log_activity(user, "cancel_booking", f"Batalkan booking {b['kode']} kamar {b['room_nomor']}")
+    return {"ok": True}
+
+@api.post("/bookings/{bid}/checkin")
+async def checkin_booking(bid: str, user: dict = Depends(get_current_user)):
+    b = await db.bookings.find_one({"id": bid})
+    if not b: raise HTTPException(404, "Booking tidak ditemukan")
+    if b["status"] != "aktif": raise HTTPException(400, "Booking tidak aktif")
+    r = await db.rooms.find_one({"id": b["room_id"]})
+    if not r: raise HTTPException(404, "Kamar tidak ditemukan")
+    if r["status"] != "kosong":
+        raise HTTPException(400, f"Kamar belum tersedia (status: {r['status']})")
+    if b["tipe"] == "menginap":
+        info = {
+            "nama_tamu": b["nama_tamu"], "no_hp": b["no_hp"],
+            "checkin_date": b["jam_mulai"], "checkout_date": b["jam_selesai"],
+            "catatan": b.get("catatan", ""), "booking_id": b["id"],
+        }
+        await db.rooms.update_one({"id": r["id"]}, {"$set": {"status": "menginap", "info": info}})
+        await db.bookings.update_one({"id": bid}, {"$set": {"status": "checked_in", "checked_in_at": now_iso()}})
+        await log_activity(user, "checkin_booking_menginap", f"Aktivasi booking menginap {b['kode']} kamar {r['nomor']}", entity=r["nomor"])
+        return {"ok": True, "tipe": "menginap"}
+    # day_use
+    guest = None
+    if b.get("no_identitas"): guest = await db.guests.find_one({"no_identitas": b["no_identitas"]})
+    if not guest and b.get("no_hp"): guest = await db.guests.find_one({"no_hp": b["no_hp"]})
+    if guest:
+        await db.guests.update_one({"id": guest["id"]}, {"$inc": {"total_kunjungan": 1}, "$set": {"last_visit": now_iso()}})
+        guest_id = guest["id"]
+    else:
+        guest_id = str(uuid.uuid4())
+        await db.guests.insert_one({
+            "id": guest_id, "nama": b["nama_tamu"], "no_hp": b["no_hp"], "no_identitas": b["no_identitas"],
+            "kendaraan": b["kendaraan"], "total_kunjungan": 1, "last_visit": now_iso(), "created_at": now_iso(),
+        })
+    trx_no = f"CI-{datetime.now().strftime('%Y%m%d%H%M%S')}-{uuid.uuid4().hex[:4].upper()}"
+    ci_doc = {
+        "id": str(uuid.uuid4()), "trx_no": trx_no, "guest_id": guest_id,
+        "nama_tamu": b["nama_tamu"], "no_hp": b["no_hp"], "no_identitas": b["no_identitas"],
+        "kendaraan": b["kendaraan"], "jumlah_tamu": b["jumlah_tamu"],
+        "room_id": r["id"], "room_nomor": r["nomor"], "room_tipe": r["tipe"],
+        "tarif_dasar": r["tarif"], "jam_checkin": b["jam_mulai"],
+        "jam_checkout": None, "durasi_jam": 0, "overtime_jam": 0, "biaya_tambahan": 0, "total": 0,
+        "status": "aktif", "catatan": b.get("catatan", ""), "pembayaran": [],
+        "booking_id": b["id"], "petugas_checkin": user["nama"], "petugas_checkin_id": user["id"],
+        "created_at": now_iso(),
+    }
+    await db.checkins.insert_one(ci_doc)
+    await db.rooms.update_one({"id": r["id"]}, {"$set": {"status": "day_use", "info": {"checkin_id": ci_doc["id"], "nama_tamu": b["nama_tamu"]}}})
+    await db.bookings.update_one({"id": bid}, {"$set": {"status": "checked_in", "checked_in_at": now_iso(), "checkin_id": ci_doc["id"]}})
+    await log_activity(user, "checkin_booking_dayuse", f"Aktivasi booking day-use {b['kode']} kamar {r['nomor']}", entity=r["nomor"])
+    ci_doc.pop("_id", None)
+    return {"ok": True, "tipe": "day_use", "checkin": ci_doc}
+
+
+
 @api.get("/audit-log")
 async def list_audit(limit: int = 200, user: dict = Depends(get_current_user)):
     items = await db.audit_log.find({}, {"_id": 0}).sort("timestamp", -1).to_list(limit)
@@ -912,6 +1042,8 @@ async def startup():
     await db.kasir.create_index("timestamp")
     await db.expenses.create_index("tanggal")
     await db.audit_log.create_index("timestamp")
+    await db.bookings.create_index("room_id")
+    await db.bookings.create_index("jam_mulai")
 
     # Seed users
     async def ensure_user(username, password, nama, role):

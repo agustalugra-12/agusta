@@ -16,6 +16,7 @@ import Housekeeping from "@/pages/Housekeeping";
 import Laporan from "@/pages/Laporan";
 import Pengguna from "@/pages/Pengguna";
 import Audit from "@/pages/Audit";
+import Bookings from "@/pages/Bookings";
 import "@/App.css";
 
 function Protected({ children, ownerOnly = false }) {
@@ -44,6 +45,7 @@ function AppRoutes() {
         <Route path="/laporan" element={<Laporan />} />
         <Route path="/pengguna" element={<Protected ownerOnly><Pengguna /></Protected>} />
         <Route path="/audit" element={<Audit />} />
+        <Route path="/bookings" element={<Bookings />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
