@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import api, { fmtRp, statusLabel, statusColor } from "@/lib/apiClient";
@@ -13,7 +13,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { useAuth } from "@/context/AuthContext";
 import {
   BedDouble, AlertTriangle, Hourglass, Clock, Wallet,
-  CalendarRange, Users as UsersIcon, Sparkles, Wrench,
+  CalendarRange, Users as UsersIcon, Sparkles, Wrench, Calendar,
 } from "lucide-react";
 
 const STAT_CARDS = [
@@ -24,6 +24,11 @@ const STAT_CARDS = [
   { key: "maintenance", label: "Maintenance", icon: Wrench, color: "#EAB308" },
 ];
 
+const todayLocal = () => {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+};
+
 export default function Dashboard() {
   const { user } = useAuth();
   const nav = useNavigate();
@@ -31,6 +36,7 @@ export default function Dashboard() {
   const [rooms, setRooms] = useState([]);
   const [active, setActive] = useState([]);
   const [bookings, setBookings] = useState([]);
+  const [filterDate, setFilterDate] = useState(todayLocal());
   const [actionRoom, setActionRoom] = useState(null);
   const [statusForm, setStatusForm] = useState({ status: "", nama_tamu: "", catatan: "" });
 
@@ -55,6 +61,19 @@ export default function Dashboard() {
   // notify overdue (>=5h since checkin) — simple banner
   const nearDue = active.filter(c => (Date.now() - new Date(c.jam_checkin).getTime()) / 3600000 >= 5);
   const overtime = active.filter(c => (Date.now() - new Date(c.jam_checkin).getTime()) / 3600000 >= 6);
+
+  // Filter bookings: ribbon hanya muncul jika filterDate berada dalam rentang [jam_mulai..jam_selesai] (zona lokal)
+  const bookingsOnDate = useMemo(() => {
+    const dayStart = new Date(`${filterDate}T00:00:00`);
+    const dayEnd = new Date(`${filterDate}T23:59:59.999`);
+    return bookings.filter(b => {
+      const start = new Date(b.jam_mulai);
+      const end = new Date(b.jam_selesai);
+      return start <= dayEnd && end >= dayStart;
+    });
+  }, [bookings, filterDate]);
+
+  const isToday = filterDate === todayLocal();
 
   const handleRoomClick = (room) => {
     if (room.status === "day_use") {
@@ -155,24 +174,46 @@ export default function Dashboard() {
       {/* Room grid */}
       <Card className="border-slate-200">
         <CardContent className="p-4 sm:p-6">
-          <div className="flex items-center justify-between mb-4">
+          <div className="flex items-center justify-between mb-4 flex-wrap gap-3">
             <h2 className="text-xl font-bold">Daftar Kamar</h2>
-            <div className="flex flex-wrap gap-3 text-xs">
-              {STAT_CARDS.map((s) => (
-                <div key={s.key} className="flex items-center gap-1.5">
-                  <span className="w-3 h-3 rounded-sm" style={{ background: s.color }} />
-                  <span className="text-slate-600">{s.label}</span>
-                </div>
-              ))}
-              <div className="flex items-center gap-1.5">
-                <span className="w-3 h-3 rounded-sm" style={{ background: "#92400E" }} />
-                <span className="text-slate-600">Booked</span>
+            <div className="flex items-center gap-2">
+              <Calendar className="w-4 h-4 text-slate-500" />
+              <Label htmlFor="filter-date" className="text-xs text-slate-600">Booking pada:</Label>
+              <Input
+                id="filter-date"
+                data-testid="dashboard-filter-date"
+                type="date"
+                value={filterDate}
+                onChange={(e) => setFilterDate(e.target.value || todayLocal())}
+                className="h-9 w-[160px] text-sm"
+              />
+              {!isToday && (
+                <Button data-testid="dashboard-filter-today" size="sm" variant="outline" onClick={() => setFilterDate(todayLocal())} className="h-9">
+                  Hari ini
+                </Button>
+              )}
+            </div>
+          </div>
+          {!isToday && (
+            <div data-testid="filter-date-banner" className="mb-3 rounded-lg bg-amber-50 border border-amber-200 px-3 py-2 text-xs text-amber-800">
+              Menampilkan booking untuk <b>{new Date(`${filterDate}T00:00:00`).toLocaleDateString("id-ID", { weekday: "long", day: "2-digit", month: "long", year: "numeric" })}</b>. Status kamar (Kosong/Day Use/Menginap) tetap real-time.
+            </div>
+          )}
+          <div className="flex flex-wrap gap-3 text-xs mb-3">
+            {STAT_CARDS.map((s) => (
+              <div key={s.key} className="flex items-center gap-1.5">
+                <span className="w-3 h-3 rounded-sm" style={{ background: s.color }} />
+                <span className="text-slate-600">{s.label}</span>
               </div>
+            ))}
+            <div className="flex items-center gap-1.5">
+              <span className="w-3 h-3 rounded-sm" style={{ background: "#92400E" }} />
+              <span className="text-slate-600">Booked ({bookingsOnDate.length})</span>
             </div>
           </div>
           <div data-testid="room-grid" className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 gap-3">
             {rooms.map((r) => {
-              const upcomingBk = r.status === "kosong" ? bookings
+              const upcomingBk = r.status === "kosong" ? bookingsOnDate
                 .filter(b => b.room_id === r.id)
                 .sort((a, c) => a.jam_mulai.localeCompare(c.jam_mulai))[0] : null;
               const bg = upcomingBk ? "#92400E" : statusColor(r.status);
