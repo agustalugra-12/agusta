@@ -912,26 +912,26 @@ async def startup():
     await ensure_user(os.environ.get("RECEPTIONIST_USERNAME", "resepsionis"),
                       os.environ.get("RECEPTIONIST_PASSWORD", "resep123"), "Resepsionis Pelangi", "resepsionis")
 
-    # Seed rooms (18 total: 12 Standard + 6 Cottage) if empty
+    # Seed rooms (18 total: 12 Standard nomor 1-12 + 6 Cottage nomor 13-18) if empty
     count = await db.rooms.count_documents({})
     if count == 0:
         rooms = []
-        # Standard: 101..112
+        # Standard: 1..12
         for i in range(1, 13):
             rooms.append({
                 "id": str(uuid.uuid4()),
-                "nomor": f"1{i:02d}",
+                "nomor": str(i),
                 "tipe": "Standard",
                 "tarif": 120000,
                 "status": "kosong",
                 "info": {},
                 "created_at": now_iso(),
             })
-        # Cottage: 201..206
-        for i in range(1, 7):
+        # Cottage: 13..18
+        for i in range(13, 19):
             rooms.append({
                 "id": str(uuid.uuid4()),
-                "nomor": f"2{i:02d}",
+                "nomor": str(i),
                 "tipe": "Cottage",
                 "tarif": 140000,
                 "status": "kosong",
