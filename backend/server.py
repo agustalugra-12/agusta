@@ -1204,8 +1204,9 @@ async def booking_widgets(user: dict = Depends(get_current_user)):
     online_bulan = await db.bookings.count_documents({
         "source": "online", "created_at": {"$gte": month_start.isoformat()},
     })
-    walk_bulan = await db.bookings.count_documents({
-        "source": {"$ne": "online"}, "created_at": {"$gte": month_start.isoformat()},
+    # Walk-in = check-ins langsung dari dashboard (tanpa booking online) bulan ini
+    walk_bulan = await db.checkins.count_documents({
+        "jam_checkin": {"$gte": month_start.isoformat()},
     })
     return {
         "booking_hari_ini": today_bk,

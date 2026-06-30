@@ -13,7 +13,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { useAuth } from "@/context/AuthContext";
 import {
   BedDouble, AlertTriangle, Hourglass, Clock, Wallet,
-  CalendarRange, Users as UsersIcon, Sparkles, Wrench, Calendar, MessageCircle,
+  CalendarRange, Users as UsersIcon, Sparkles, Wrench, Calendar, MessageCircle, X,
 } from "lucide-react";
 
 const STAT_CARDS = [
@@ -125,6 +125,17 @@ export default function Dashboard() {
       await api.delete(`/bookings/${bookingDetail.id}`);
       toast.success("Booking dibatalkan");
       setBookingDetail(null); load();
+    } catch (e) { toast.error(e?.response?.data?.detail || "Gagal"); }
+  };
+
+  // Quick cancel langsung dari kartu kamar (tombol X)
+  const quickCancelBooking = async (bk) => {
+    if (!bk) return;
+    if (!window.confirm(`Batalkan booking ${bk.kode} (${bk.nama_tamu}, kamar ${bk.room_nomor})?`)) return;
+    try {
+      await api.delete(`/bookings/${bk.id}`);
+      toast.success(`Booking ${bk.kode} dibatalkan`);
+      load();
     } catch (e) { toast.error(e?.response?.data?.detail || "Gagal"); }
   };
 

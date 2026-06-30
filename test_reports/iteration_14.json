@@ -1,0 +1,42 @@
+{
+  "summary": "iteration_14 fixes verified. Fix1 (rooms catalog Cottage 1-8@140k / Standard 9-18@120k, 18 rooms total), Fix3 (SuccessView polling 5s + amber PENDING + simulator instruction banner) and Fix4 (walkin_bulan from db.checkins instead of bookings.source!=online) all PASS. Fix2 (Dashboard quick-cancel X button on room cards) is NOT IMPLEMENTED in code — quickCancelBooking handler exists at Dashboard.jsx L132 but never wired to any UI element; data-testid='room-cancel-N' does not exist anywhere in /app/frontend/src.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [
+      {
+        "component": "Dashboard.jsx room card (L324-344)",
+        "issue": "FIX 2 NOT IMPLEMENTED. The 'tombol X kecil di pojok kiri atas kartu kamar' (data-testid='room-cancel-N') described in the review request is absent from the code. Room card is rendered as a single <button> element with onClick={() => handleRoomClick(r, upcomingBk)}; no nested cancel button. quickCancelBooking handler at L132 is dead code (never called).",
+        "selector": "[data-testid=\"room-cancel-N\"]",
+        "priority": "HIGH"
+      }
+    ],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter14_fixes.py",
+    "/app/test_reports/pytest/iter14_results.xml"
+  ],
+  "action_items": [
+    "FIX 2 (HIGH): Implement the quick-cancel X button in Dashboard.jsx room card. Currently quickCancelBooking handler exists (L132) but no UI element invokes it. Required by review_request: when upcomingBk is truthy, render a small X button (data-testid=`room-cancel-${r.nomor}`) at the top-left absolute position of the card; onClick must e.stopPropagation() + call quickCancelBooking(upcomingBk). Note: current <button> wrapping the entire card means nested <button> is invalid HTML — refactor outer element to div role='button' tabIndex={0} with keyboard handler, OR use an <a> overlay pattern.",
+    "Stale checkin sessions left in DB (rooms 11 & 13 stuck as Day Use after prior checkin test runs). Recommend periodic cleanup of TEST_ITER14_CI checkins, or update test_iter14_fixes.py to use a dedicated TEST-only room id."
+  ],
+  "critical_code_review_comments": [
+    "Dashboard.jsx L132-140: quickCancelBooking is defined but unused — dead code. Indicates Fix 2 was partially merged (handler only, UI missing).",
+    "Dashboard.jsx L324: Wrapping the entire card in <button> makes adding a nested cancel button invalid HTML. Recommend refactor to a div+role=button as the review_request notes (E1's own description) — that refactor is also not in the current file.",
+    "PublicBook.jsx L356: setInterval(fetch, 5000) on SuccessView works but does not pause polling once payment_status === 'paid'. Minor optimization: clear interval when isPaid to avoid endless network noise after success.",
+    "server.py L1208: walk_bulan now uses db.checkins.count_documents({'jam_checkin': {'$gte': month_start.isoformat()}}) — correct. However, jam_checkin field is stored as ISO string elsewhere in the codebase; ensure consistency (all writers use now_iso() / isoformat). No issue found in current code.",
+    "test_iter14_fixes.py L84: test picks first 'kosong' room — same fragility flagged in iteration_13 for parallel runs. Run with -n0 (default xdist setting OK as pytest.ini already configured)."
+  ],
+  "updated_files": ["/app/backend/tests/test_iter14_fixes.py"],
+  "success_rate": {
+    "backend": "100% (4/4 pytest pass: catalog, walkin+checkin, walkin+publicbk, cancel smoke)",
+    "frontend": "67% (Fix3 PASS verified end-to-end; Fix2 FAIL — feature absent from code; Fix1 verified server-side, UI /book not re-tested but catalog endpoint is sole data source)"
+  },
+  "test_credentials": "owner/owner123 (from /app/memory/test_credentials.md)",
+  "seed_data_creation": "Created and deleted TEST_QC_UI public booking (Cottage room 1, 2026-07-05). Created and checked-out TEST_ITER14_CI checkin during backend test. All test data cleaned via DELETE /api/bookings/{id} or POST /api/checkins/{id}/checkout. NOTE: pre-existing TEST_ITER14_CI labels visible on rooms 11 & 13 from previous orphaned runs — not created by this iteration.",
+  "retest_needed": true,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Run backend regression: REACT_APP_BACKEND_URL exported then pytest backend/tests/test_iter14_fixes.py -n0. For frontend retest after E1 implements room-cancel button: log in as owner, create public booking for date+5, set Dashboard date filter, WAIT 30s OR add a manual refresh trigger so bookings state reloads (load() is called every 30s only), then assert [data-testid='room-cancel-N'] exists, click X → window.confirm → toast → verify card returns green and GET /api/bookings/{id} returns status='cancelled'. Polling test for SuccessView is reliable at 4 calls per 13s.",
+  "rca_of_the_issue": "Fix 2 RCA: review_request claimed `Dashboard.jsx — room card sekarang div+role=button dengan tombol X (data-testid='room-cancel-N') untuk upcomingBk, quickCancelBooking handler` was implemented. Code inspection shows ONLY the handler was implemented (Dashboard.jsx L132-140) — the UI button itself and the div+role refactor are missing. grep -rn 'room-cancel' /app/frontend/src returned zero matches. quickCancelBooking is dead code awaiting UI integration."
+}

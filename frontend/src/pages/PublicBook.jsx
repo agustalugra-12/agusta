@@ -350,20 +350,30 @@ function Row({ icon: Icon, label, value }) {
 function SuccessView({ bookingId }) {
   const [bk, setBk] = useState(null);
   useEffect(() => {
-    PUBLIC_API.get(`/public/bookings/${bookingId}`).then(r => setBk(r.data)).catch(() => {});
+    const fetch = () => PUBLIC_API.get(`/public/bookings/${bookingId}`).then(r => setBk(r.data)).catch(() => {});
+    fetch();
+    // poll status setiap 5 detik untuk auto-refresh pembayaran
+    const t = setInterval(fetch, 5000);
+    return () => clearInterval(t);
   }, [bookingId]);
 
   if (!bk) return <div className="min-h-screen grid place-items-center text-slate-500">Memuat...</div>;
+  const isPaid = bk.payment_status === "paid";
+  const isPending = bk.payment_status === "pending" || bk.status === "booking_pending";
   return (
-    <div className="min-h-screen bg-gradient-to-b from-emerald-50 via-white to-blue-50 grid place-items-center p-4">
-      <Card className="max-w-md w-full border-emerald-200">
+    <div className={`min-h-screen grid place-items-center p-4 bg-gradient-to-b ${isPaid ? "from-emerald-50 via-white to-blue-50" : "from-amber-50 via-white to-blue-50"}`}>
+      <Card className={`max-w-md w-full ${isPaid ? "border-emerald-200" : "border-amber-200"}`}>
         <CardContent className="p-6 sm:p-8 text-center space-y-4">
-          <div className="w-16 h-16 mx-auto rounded-full bg-emerald-100 grid place-items-center">
-            <CheckCircle2 className="w-9 h-9 text-emerald-600" />
+          <div className={`w-16 h-16 mx-auto rounded-full grid place-items-center ${isPaid ? "bg-emerald-100" : "bg-amber-100"}`}>
+            <CheckCircle2 className={`w-9 h-9 ${isPaid ? "text-emerald-600" : "text-amber-600"}`} />
           </div>
           <div>
-            <h2 className="text-2xl font-extrabold">Booking Berhasil Dibuat!</h2>
-            <p className="text-slate-600 text-sm mt-1">Simpan nomor booking di bawah untuk ditunjukkan saat kedatangan.</p>
+            <h2 className="text-2xl font-extrabold">{isPaid ? "Pembayaran Diterima!" : "Booking Berhasil Dibuat!"}</h2>
+            <p className="text-slate-600 text-sm mt-1">
+              {isPaid
+                ? "Booking Anda sudah terkonfirmasi. Simpan nomor booking di bawah."
+                : "Selesaikan pembayaran agar booking terkonfirmasi. Halaman ini akan auto-refresh setiap 5 detik."}
+            </p>
           </div>
           <div className="bg-slate-50 border border-slate-200 rounded-lg p-4 text-left space-y-2 text-sm">
             <div className="flex justify-between"><span className="text-slate-500">Nomor Booking</span><b data-testid="pb-success-kode">{bk.kode}</b></div>
@@ -372,16 +382,29 @@ function SuccessView({ bookingId }) {
             <div className="flex justify-between"><span className="text-slate-500">Check-In</span><b>{new Date(bk.jam_mulai).toLocaleString("id-ID", { dateStyle: "medium", timeStyle: "short" })}</b></div>
             <div className="flex justify-between border-t pt-2 mt-2"><span className="text-slate-500">Total</span><b className="text-blue-700">{fmtRp(bk.total)}</b></div>
             <div className="flex justify-between"><span className="text-slate-500">DP Minimum</span><b>{fmtRp(bk.dp_min)}</b></div>
-            <div className="flex justify-between"><span className="text-slate-500">Status Pembayaran</span><b className={bk.payment_status === "paid" ? "text-emerald-600" : "text-amber-600"}>{bk.payment_status?.toUpperCase()}</b></div>
+            <div className="flex justify-between"><span className="text-slate-500">Status Pembayaran</span>
+              <b data-testid="pb-success-paystatus" className={isPaid ? "text-emerald-600" : "text-amber-600"}>{bk.payment_status?.toUpperCase()}</b>
+            </div>
           </div>
-          <p className="text-xs text-slate-500">
-            Status pembayaran akan otomatis ter-update setelah transaksi Midtrans selesai.
-            Refund/cancel dapat dilakukan H-1 dengan biaya pembatalan 10% dari total pembayaran.
-          </p>
+          {isPending && (
+            <div className="bg-amber-50 border-2 border-amber-300 rounded-lg p-4 text-left text-xs space-y-2">
+              <p className="font-bold text-amber-900">⚠ Pembayaran Belum Selesai</p>
+              <p className="text-amber-800">Jika Anda memilih <b>Virtual Account</b>, pastikan untuk benar-benar transfer ke nomor VA yang ditampilkan di Snap. Saat <b>uang masuk</b>, sistem otomatis update status menjadi PAID.</p>
+              <p className="text-amber-700 text-[10px]">
+                <b>Untuk testing Sandbox:</b> buka <a className="underline" href="https://simulator.sandbox.midtrans.com" target="_blank" rel="noreferrer">simulator.sandbox.midtrans.com</a>, pilih bank yang sama, paste VA Number, klik Inquiry → Pay. Status di halaman ini akan auto-refresh setelah webhook diterima.
+              </p>
+            </div>
+          )}
+          {isPaid && (
+            <p className="text-xs text-slate-500">
+              Refund/cancel dapat dilakukan H-1 dengan biaya pembatalan 10% dari total pembayaran.
+              Mohon tunjukkan nomor booking saat kedatangan.
+            </p>
+          )}
           {bk.no_hp && (
             <a
               data-testid="pb-success-wa"
-              href={`https://wa.me/${bk.no_hp.replace(/^0/, "62").replace(/\D/g, "")}?text=${encodeURIComponent(`Halo Pelangi Homestay,\n\nSaya sudah booking dengan kode:\n*${bk.kode}*\nKamar ${bk.room_nomor} (${bk.room_tipe})\nCheck-in: ${new Date(bk.jam_mulai).toLocaleString("id-ID")}\n\nTerima kasih.`)}`}
+              href={`https://wa.me/${bk.no_hp.replace(/^0/, "62").replace(/\D/g, "")}?text=${encodeURIComponent(`Halo Pelangi Homestay,\n\nSaya sudah booking dengan kode:\n*${bk.kode}*\nKamar ${bk.room_nomor} (${bk.room_tipe})\nCheck-in: ${new Date(bk.jam_mulai).toLocaleString("id-ID")}\nStatus: ${bk.payment_status?.toUpperCase()}\n\nTerima kasih.`)}`}
               target="_blank" rel="noreferrer"
               className="inline-flex items-center justify-center gap-2 w-full px-4 h-11 rounded-md bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-bold"
             >
