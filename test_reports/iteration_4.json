@@ -1,0 +1,18 @@
+{
+  "summary": "E2E UI flow validated on Pelangi Homestay (owner/owner123): Login → Check-In (room 10) → Check-Out → Kasir → Housekeeping → back to kosong. All 5 flows passed successfully.",
+  "tested_scope": ["frontend", "integration"],
+  "passed": [
+    "Login: data-testid login-username/password/submit → lands on dashboard with room-grid",
+    "Check-In: room-10 kosong → form filled (ci-nama/ci-hp/ci-ktp/ci-kendaraan) → ci-submit → kamar 10 berubah Day Use dengan 'Budi Santoso'",
+    "Check-Out: klik room-10 (day_use) → preview total Rp 120.000 (tarif dasar) → co-submit → 'Transaksi Selesai' + struk muncul",
+    "Kasir: nav-kasir → prod-F001 + prod-D001 ditambah, pembayaran 30000 di input numeric ke-2, kasir-submit → toast 'berhasil' (KS-20260630094229-B949)",
+    "Housekeeping: hk-done-10 diklik → 'Kamar 10 selesai' toast, kamar keluar dari antrian",
+    "Final state: room-10 kembali ke 'Kosong' di dashboard"
+  ],
+  "failed": [],
+  "action_items": [],
+  "success_rate": {"backend": "skipped", "frontend": "100%"},
+  "retest_needed": false,
+  "full_testing_deferred": true,
+  "notes": "Backend testing skipped per instruction (already validated in iteration_3). Kasir transaction ID KS-20260630094229-B949 dan CI-20260630094314-4318 berhasil dibuat. Housekeeping queue cleared dan riwayat pembersihan mencatat kamar 10."
+}
