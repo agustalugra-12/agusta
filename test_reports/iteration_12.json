@@ -1,0 +1,59 @@
+{
+  "summary": "Phase D testing. Backend 8/8 PASS: GET /api/reports/booking-widgets returns all 8 numeric keys (booking_hari_ini=1, booking_pending=6, booking_paid=2, pendapatan_online_bulan=123600, midtrans_total_count=2, midtrans_total_sum=123600, booking_online_bulan=33, booking_walkin_bulan=29); $toDouble aggregation works correctly. POST /api/bookings/{id}/cancel-with-fee verified all 4 paths: success (refund=90000, fee=10000 from 100000), H-1 too late (400), wrong status (400), not found (404). Frontend: PublicBook SuccessView pb-success-wa PASS — phone 081234567890 correctly normalized to wa.me/6281234567890 with BKO code + Check-in in text. Booking Detail Dialog bd-wa-confirm PASS — phone 087761611631 → wa.me/6287761611631 with full confirmation template (booking code, room, jam, H-1 policy). CRITICAL BUG FOUND: 7 dashboard widgets (w-today/w-pending/w-paid/w-rev-online/w-mt-total/w-online-month/w-walkin-month) render fallback values (— / Rp 0 / 0 trx) because Dashboard.jsx never calls /api/reports/booking-widgets and never invokes setWidgets(). State is declared (line 39) but no fetch wired up.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {
+        "component": "Dashboard widgets row (Dashboard.jsx)",
+        "issue": "CRITICAL: widgets state declared (line 39: const [widgets, setWidgets] = useState(null);) but NEVER fetched. The load() function (lines 44-56) calls /reports/summary, /rooms, /checkins, /bookings only. No api.get('/reports/booking-widgets') and no setWidgets() anywhere in the file. As a result all 7 widgets render fallback values: w-today/w-pending/w-paid/w-online-month/w-walkin-month show '—', w-rev-online shows 'Rp 0', w-mt-total shows '0 trx'. Verified via UI screenshot — backend API returns correct values (booking_hari_ini=1, booking_pending=6, etc.) but UI is decoupled.",
+        "selector": "[data-testid='w-today'] / [data-testid='w-pending'] / [data-testid='w-paid'] / [data-testid='w-rev-online'] / [data-testid='w-mt-total'] / [data-testid='w-online-month'] / [data-testid='w-walkin-month']",
+        "priority": "HIGH"
+      }
+    ],
+    "integration_issues": [
+      {
+        "flow": "Dashboard → /api/reports/booking-widgets",
+        "issue": "Frontend never calls this endpoint; backend works perfectly (verified via curl + pytest). Add api.get('/reports/booking-widgets').then(r => setWidgets(r.data)) inside load() in Dashboard.jsx.",
+        "affected_selectors": ["[data-testid='w-today']", "[data-testid='w-pending']", "[data-testid='w-paid']", "[data-testid='w-rev-online']", "[data-testid='w-mt-total']", "[data-testid='w-online-month']", "[data-testid='w-walkin-month']"]
+      }
+    ],
+    "design_issues": [
+      {
+        "screen": "Booking Detail Dialog footer",
+        "issues": ["'Kirim Konfirmasi WA' button text is clipped (only 'Konfirmasi' partially visible) because the DialogFooter has 4 buttons crammed on one row at 1920px. Consider flex-wrap or icon-only on smaller widths, or shorter label like 'WhatsApp'. Cosmetic — link still works."]
+      }
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_phase_d.py",
+    "/app/test_reports/pytest/phase_d_results.xml"
+  ],
+  "action_items": [
+    "HIGH: In /app/frontend/src/pages/Dashboard.jsx load() function, add: const w = await api.get('/reports/booking-widgets'); setWidgets(w.data);  — without this, all 7 new widgets are non-functional even though backend is 100% correct.",
+    "LOW: Fix clipped 'Kirim Konfirmasi WA' label in DialogFooter (Dashboard.jsx ~line 460) — use shorter text or flex-wrap on the footer.",
+    "OPTIONAL: Show a Sonner toast after successful cancel-with-fee with message 'Refund OK: kembalian Rp X (fee Rp Y dipotong)' — current code in cancelBookingRefund (line ~130-140) needs verification (couldn't test UI flow since no booking_paid existed; backend POST verified)."
+  ],
+  "critical_code_review_comments": [
+    "Dashboard.jsx L44-56: load() doesn't include /reports/booking-widgets call. Fix is one line: add api.get('/reports/booking-widgets') to the Promise.all then setWidgets(w.data).",
+    "Dashboard.jsx L456: bd-wa-confirm href is built inline (long template literal). Consider extracting to a helper buildWAConfirmText(booking) for testability and reuse with public booking template.",
+    "server.py L1241: paid = int(b.get('amount_due') or b.get('total', 0)) — if amount_due is 0 (falsy), falls through to total. Intentional? May want explicit `amount_due if amount_due is not None else total`.",
+    "server.py L1239: H-1 check uses now() (UTC). If booking.jam_mulai is stored in UTC isoformat and user mental model is WIB (+07), 'H-1' edge cases (~24h boundary) may behave unexpectedly. Currently OK because both sides use UTC consistently, but worth a code comment.",
+    "PublicBook.jsx L384: inline regex `bk.no_hp.replace(/^0/, '62').replace(/\\D/g, '')` duplicates logic from waLink() in apiClient.js. Should call waLink(bk.no_hp, msg) for DRY (waLink already handles 0→62, +62, and stripping non-digits)."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_phase_d.py (NEW — 8 pytest cases for widgets + cancel-with-fee covering all 4 cancel branches)"
+  ],
+  "success_rate": {
+    "backend": "100% (8/8 pytest pass)",
+    "frontend": "40% — bd-wa-confirm OK, pb-success-wa OK, but 7/7 dashboard widgets broken (missing fetch); bd-cancel-refund button could not be UI-tested (no booking_paid in fixture; conditional render code is correct)"
+  },
+  "test_credentials": "owner/owner123. REACT_APP_BACKEND_URL=https://pwa-kasir-hotel.preview.emergentagent.com",
+  "seed_data_creation": "test_phase_d.py creates TEST_PhD_* bookings during test runs and cleans them up via mongo _cleanup() helper after each test. No leftover seed data after run (verified: 0 TEST_PhD_ bookings remain).",
+  "retest_needed": true,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "After E1 adds the missing widgets fetch in Dashboard.jsx load(), retest only the frontend widgets row (re-run the Playwright script that reads w-today through w-walkin-month and asserts non-em-dash values match the /api/reports/booking-widgets response). Backend pytest /app/backend/tests/test_phase_d.py is reusable regression — run with `pytest /app/backend/tests/test_phase_d.py --asyncio-mode=auto -v`. The bd-cancel-refund UI flow needs a booking_paid record to verify; use mongo to mutate one or trigger Midtrans webhook with status=settlement.",
+  "rca_of_the_issue": "BUG: Dashboard widgets show fallback values. ROOT CAUSE: In /app/frontend/src/pages/Dashboard.jsx, the widgets useState is declared at line 39 but the load() function at lines 44-56 only fetches summary/rooms/checkins/bookings — there is no api.get('/reports/booking-widgets') and no setWidgets() call anywhere in the file (verified via grep). The JSX uses widgets?.booking_hari_ini ?? '—' (line 251) which always evaluates to '—' since widgets stays null. REPRODUCTION: Login as owner → land on Dashboard → observe 5 of the 7 widgets show '—' (w-today, w-pending, w-paid, w-online-month, w-walkin-month) and the other 2 show 'Rp 0' / '0 trx' (because their fallback uses ||0 instead of ??). Meanwhile backend curl returns {booking_hari_ini:1, booking_pending:6, booking_paid:2, pendapatan_online_bulan:123600, midtrans_total_count:2, midtrans_total_sum:123600, booking_online_bulan:33, booking_walkin_bulan:29}. MITIGATION (one-line fix for main agent): modify the Promise.all in load() to include api.get('/reports/booking-widgets') and call setWidgets(w.data). Or add a separate fetch effect on mount."
+}

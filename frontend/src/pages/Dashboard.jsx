@@ -1,7 +1,7 @@
 import { useEffect, useState, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
-import api, { fmtRp, statusLabel, statusColor } from "@/lib/apiClient";
+import api, { fmtRp, statusLabel, statusColor, waLink } from "@/lib/apiClient";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import {
@@ -13,7 +13,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { useAuth } from "@/context/AuthContext";
 import {
   BedDouble, AlertTriangle, Hourglass, Clock, Wallet,
-  CalendarRange, Users as UsersIcon, Sparkles, Wrench, Calendar,
+  CalendarRange, Users as UsersIcon, Sparkles, Wrench, Calendar, MessageCircle,
 } from "lucide-react";
 
 const STAT_CARDS = [
@@ -36,6 +36,7 @@ export default function Dashboard() {
   const [rooms, setRooms] = useState([]);
   const [active, setActive] = useState([]);
   const [bookings, setBookings] = useState([]);
+  const [widgets, setWidgets] = useState(null);
   const [filterDate, setFilterDate] = useState(todayLocal());
   const [actionRoom, setActionRoom] = useState(null);
   const [statusForm, setStatusForm] = useState({ status: "", nama_tamu: "", catatan: "" });
@@ -122,6 +123,17 @@ export default function Dashboard() {
     try {
       await api.delete(`/bookings/${bookingDetail.id}`);
       toast.success("Booking dibatalkan");
+      setBookingDetail(null); load();
+    } catch (e) { toast.error(e?.response?.data?.detail || "Gagal"); }
+  };
+
+  const cancelBookingRefund = async () => {
+    if (!bookingDetail) return;
+    const alasan = window.prompt(`Refund booking ${bookingDetail.kode}? Biaya pembatalan 10% akan dipotong. Alasan (opsional):`);
+    if (alasan === null) return;
+    try {
+      const { data } = await api.post(`/bookings/${bookingDetail.id}/cancel-with-fee`, { alasan });
+      toast.success(`Refund OK: kembalian ${fmtRp(data.refund_amount)} (fee ${fmtRp(data.fee)} dipotong)`);
       setBookingDetail(null); load();
     } catch (e) { toast.error(e?.response?.data?.detail || "Gagal"); }
   };
@@ -232,6 +244,17 @@ export default function Dashboard() {
         <RevCard icon={Wallet} label="Pendapatan Hari Ini" value={fmtRp(summary?.pendapatan_hari_ini || 0)} hint={`Kamar ${fmtRp(summary?.pendapatan_kamar_hari_ini || 0)} • Kasir ${fmtRp(summary?.pendapatan_kasir_hari_ini || 0)}`} />
         <RevCard icon={CalendarRange} label="Pendapatan Bulan Ini" value={fmtRp(summary?.pendapatan_bulan_ini || 0)} hint="Total semua transaksi" />
         <RevCard icon={Wallet} label="Laba Bersih Bulan" value={fmtRp(summary?.laba_bersih_bulan_ini || 0)} hint={`Pengeluaran ${fmtRp(summary?.pengeluaran_bulan_ini || 0)}`} />
+      </div>
+
+      {/* Online Booking Widgets (Fase D) */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-3">
+        <MiniWidget label="Booking Hari Ini" value={widgets?.booking_hari_ini ?? "—"} color="#2563EB" testid="w-today" />
+        <MiniWidget label="Pending" value={widgets?.booking_pending ?? "—"} color="#F59E0B" testid="w-pending" />
+        <MiniWidget label="Paid" value={widgets?.booking_paid ?? "—"} color="#10B981" testid="w-paid" />
+        <MiniWidget label="Pendapatan Online" value={fmtRp(widgets?.pendapatan_online_bulan || 0)} color="#7C3AED" testid="w-rev-online" wide />
+        <MiniWidget label="Total Midtrans" value={`${widgets?.midtrans_total_count || 0} trx`} hint={fmtRp(widgets?.midtrans_total_sum || 0)} color="#0EA5E9" testid="w-mt-total" wide />
+        <MiniWidget label="Online (Bulan)" value={widgets?.booking_online_bulan ?? "—"} color="#06B6D4" testid="w-online-month" />
+        <MiniWidget label="Walk-In (Bulan)" value={widgets?.booking_walkin_bulan ?? "—"} color="#64748B" testid="w-walkin-month" />
       </div>
 
       {/* Room grid */}
@@ -427,6 +450,21 @@ export default function Dashboard() {
                 <Button data-testid="bd-cancel" variant="outline" onClick={cancelBookingDetail} className="text-red-600 border-red-300 hover:bg-red-50">Batalkan Booking</Button>
               </>
             )}
+            {!rescheduleMode && bookingDetail?.no_hp && (
+              <a
+                data-testid="bd-wa-confirm"
+                href={waLink(bookingDetail.no_hp, `Terima kasih telah melakukan reservasi di Pelangi Homestay.\n\nBooking Anda telah dikonfirmasi.\n\nNomor Booking: ${bookingDetail.kode}\nTipe Kamar: ${bookingDetail.room_tipe}\nNomor Kamar: ${bookingDetail.room_nomor}\nTanggal: ${new Date(bookingDetail.jam_mulai).toLocaleString("id-ID")}\n\nRefund/cancel dapat dilakukan H-1 dengan biaya pembatalan 10% dari total pembayaran.\n\nMohon tunjukkan nomor booking saat kedatangan.`)}
+                target="_blank" rel="noreferrer"
+                className="inline-flex items-center gap-2 px-3 h-9 rounded-md bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-semibold"
+              >
+                <MessageCircle className="w-4 h-4" /> Kirim Konfirmasi WA
+              </a>
+            )}
+            {!rescheduleMode && bookingDetail?.status === "booking_paid" && (
+              <Button data-testid="bd-cancel-refund" variant="outline" onClick={cancelBookingRefund} className="text-red-600 border-red-300 hover:bg-red-50">
+                Cancel + Refund (Fee 10%)
+              </Button>
+            )}
             {rescheduleMode && (
               <>
                 <Button data-testid="bd-resched-save" onClick={submitReschedule} className="bg-blue-700 hover:bg-blue-800">Simpan Jadwal Baru</Button>
@@ -489,5 +527,15 @@ function RevCard({ icon: Icon, label, value, hint }) {
         </div>
       </CardContent>
     </Card>
+  );
+}
+
+function MiniWidget({ label, value, hint, color, testid, wide }) {
+  return (
+    <div data-testid={testid} className={`rounded-xl border border-slate-200 bg-white p-3 ${wide ? "col-span-2" : ""}`}>
+      <div className="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">{label}</div>
+      <div className="text-lg font-extrabold mt-0.5 truncate" style={{ color }}>{value}</div>
+      {hint && <div className="text-[10px] text-slate-500 truncate">{hint}</div>}
+    </div>
   );
 }

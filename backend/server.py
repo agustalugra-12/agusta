@@ -1174,6 +1174,84 @@ async def list_bookings(status: Optional[str] = None, tipe: Optional[str] = None
     items = await db.bookings.find(q, {"_id": 0}).sort("jam_mulai", 1).to_list(1000)
     return items
 
+@api.get("/reports/booking-widgets")
+async def booking_widgets(user: dict = Depends(get_current_user)):
+    """Widget statistik booking untuk Dashboard."""
+    today_start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+    today_end = today_start + timedelta(days=1)
+    # Booking hari ini = jam_mulai dalam rentang hari ini
+    today_bk = await db.bookings.count_documents({
+        "jam_mulai": {"$gte": today_start.isoformat(), "$lt": today_end.isoformat()},
+        "status": {"$in": ["aktif", "booking_pending", "booking_paid", "checked_in"]},
+    })
+    pending_count = await db.bookings.count_documents({"status": "booking_pending"})
+    paid_count = await db.bookings.count_documents({"status": "booking_paid"})
+    # Pendapatan online = sum total dari booking_paid bulan ini
+    month_start = datetime.now(timezone.utc).replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    online_paid = await db.bookings.find({
+        "source": "online", "payment_status": "paid",
+        "paid_at": {"$gte": month_start.isoformat()},
+    }, {"_id": 0, "total": 1, "amount_due": 1}).to_list(1000)
+    pendapatan_online = sum(int(b.get("amount_due") or b.get("total", 0)) for b in online_paid)
+    # Total semua transaksi midtrans (lifetime). gross_amount disimpan sebagai string "61800.00"
+    mt_total = await db.payment_log.aggregate([
+        {"$match": {"transaction_status": {"$in": ["settlement", "capture"]}}},
+        {"$group": {"_id": None, "sum": {"$sum": {"$toDouble": "$gross_amount"}}, "count": {"$sum": 1}}},
+    ]).to_list(1)
+    mt_sum = int(mt_total[0]["sum"]) if mt_total else 0
+    mt_count = mt_total[0]["count"] if mt_total else 0
+    # Walk-in vs Online (bulan ini)
+    online_bulan = await db.bookings.count_documents({
+        "source": "online", "created_at": {"$gte": month_start.isoformat()},
+    })
+    walk_bulan = await db.bookings.count_documents({
+        "source": {"$ne": "online"}, "created_at": {"$gte": month_start.isoformat()},
+    })
+    return {
+        "booking_hari_ini": today_bk,
+        "booking_pending": pending_count,
+        "booking_paid": paid_count,
+        "pendapatan_online_bulan": pendapatan_online,
+        "midtrans_total_count": mt_count,
+        "midtrans_total_sum": mt_sum,
+        "booking_online_bulan": online_bulan,
+        "booking_walkin_bulan": walk_bulan,
+    }
+
+class CancelWithFeeBody(BaseModel):
+    alasan: Optional[str] = ""
+
+@api.post("/bookings/{bid}/cancel-with-fee")
+async def cancel_with_fee(bid: str, body: CancelWithFeeBody, user: dict = Depends(get_current_user)):
+    """Cancel booking dengan biaya pembatalan 10%. Hanya berlaku untuk booking_paid + masih H-1.
+    Return: {refund_amount, fee, original_total}
+    """
+    b = await db.bookings.find_one({"id": bid})
+    if not b:
+        raise HTTPException(404, "Booking tidak ditemukan")
+    if b.get("status") != "booking_paid":
+        raise HTTPException(400, f"Hanya booking lunas yang dapat di-refund (status: {b.get('status')})")
+    # Cek H-1: jam_mulai harus > sekarang + 1 hari? Spec user: "refund H-1" = paling lambat sehari sebelum check-in
+    start = datetime.fromisoformat(b["jam_mulai"])
+    if start.tzinfo is None:
+        start = start.replace(tzinfo=timezone.utc)
+    now = datetime.now(timezone.utc)
+    if (start - now).total_seconds() < 24 * 3600:
+        raise HTTPException(400, "Refund hanya dapat dilakukan paling lambat H-1 (24 jam sebelum check-in)")
+    paid = int(b.get("amount_due") or b.get("total", 0))
+    fee = round(paid * 0.10)
+    refund = paid - fee
+    await db.bookings.update_one({"id": bid}, {"$set": {
+        "status": "cancelled", "payment_status": "refunded",
+        "cancelled_at": now_iso(), "cancelled_by": user["nama"],
+        "cancel_reason": body.alasan, "refund_amount": refund, "cancel_fee": fee,
+    }})
+    await log_activity(user, "cancel_with_fee",
+                       f"Refund booking {b['kode']}: paid Rp{paid:,}, fee Rp{fee:,}, refund Rp{refund:,}".replace(",", "."),
+                       entity=b.get("room_nomor", ""))
+    return {"ok": True, "refund_amount": refund, "fee": fee, "original_paid": paid, "booking_kode": b["kode"]}
+
+
 @api.get("/bookings/availability")
 async def booking_availability(room_id: str, from_date: str, days: int = 14,
                                user: dict = Depends(get_current_user)):

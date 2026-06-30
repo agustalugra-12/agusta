@@ -375,9 +375,19 @@ function SuccessView({ bookingId }) {
             <div className="flex justify-between"><span className="text-slate-500">Status Pembayaran</span><b className={bk.payment_status === "paid" ? "text-emerald-600" : "text-amber-600"}>{bk.payment_status?.toUpperCase()}</b></div>
           </div>
           <p className="text-xs text-slate-500">
-            Pembayaran via Xendit akan dikirim ke WhatsApp Anda dalam beberapa saat.
-            Jika dalam 10 menit belum menerima link, silakan hubungi resepsionis.
+            Status pembayaran akan otomatis ter-update setelah transaksi Midtrans selesai.
+            Refund/cancel dapat dilakukan H-1 dengan biaya pembatalan 10% dari total pembayaran.
           </p>
+          {bk.no_hp && (
+            <a
+              data-testid="pb-success-wa"
+              href={`https://wa.me/${bk.no_hp.replace(/^0/, "62").replace(/\D/g, "")}?text=${encodeURIComponent(`Halo Pelangi Homestay,\n\nSaya sudah booking dengan kode:\n*${bk.kode}*\nKamar ${bk.room_nomor} (${bk.room_tipe})\nCheck-in: ${new Date(bk.jam_mulai).toLocaleString("id-ID")}\n\nTerima kasih.`)}`}
+              target="_blank" rel="noreferrer"
+              className="inline-flex items-center justify-center gap-2 w-full px-4 h-11 rounded-md bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-bold"
+            >
+              <CheckCircle2 className="w-4 h-4" /> Konfirmasi via WhatsApp
+            </a>
+          )}
           <Link to="/book" className="block text-sm text-blue-700 hover:underline">Buat booking lain</Link>
         </CardContent>
       </Card>
