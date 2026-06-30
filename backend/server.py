@@ -239,9 +239,10 @@ async def public_rooms_catalog():
 
 @api.get("/public/availability")
 async def public_availability(tanggal: str, tipe: Optional[str] = None):
-    """List kamar yang KOSONG pada tanggal tertentu (untuk halaman publik).
-    Status kamar yang tidak boleh dipilih: day_use, menginap, perlu_dibersihkan, maintenance,
-    DAN ada booking aktif/paid/pending pada tanggal tsb.
+    """List kamar tersedia pada tanggal tertentu (halaman publik).
+    Untuk tanggal MASA DEPAN, status realtime kamar (day_use/menginap/perlu_dibersihkan) TIDAK relevan
+    karena akan kembali kosong sebelum tanggal tersebut. Hanya `maintenance` (long-term) yang di-exclude.
+    Filter utama: tidak ada booking_pending/booking_paid/aktif yang overlap dengan tanggal target.
     """
     try:
         d = datetime.fromisoformat(tanggal)
@@ -249,9 +250,17 @@ async def public_availability(tanggal: str, tipe: Optional[str] = None):
         raise HTTPException(400, "Format tanggal harus YYYY-MM-DD")
     d_start = d.replace(hour=0, minute=0, second=0, microsecond=0)
     d_end = d_start + timedelta(days=1)
-    q: Dict[str, Any] = {"status": "kosong"}
+    # Untuk hari INI, kamar yang sedang dipakai (day_use/menginap/perlu_dibersihkan) tidak tersedia.
+    # Untuk hari LAIN (masa depan), hanya 'maintenance' yang dikecualikan.
+    today_local = datetime.now().strftime("%Y-%m-%d")
+    is_today = tanggal == today_local
+    q: Dict[str, Any] = {}
     if tipe:
         q["tipe"] = tipe
+    if is_today:
+        q["status"] = "kosong"
+    else:
+        q["status"] = {"$ne": "maintenance"}
     rooms = await db.rooms.find(q, {"_id": 0}).to_list(500)
     # Filter rooms yang punya booking overlap di tanggal tsb
     out = []

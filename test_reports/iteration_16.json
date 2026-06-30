@@ -1,0 +1,42 @@
+{
+  "summary": "Iteration 16 — Verified availability fix + BookingDetail dialog buttons (bd-cancel-pending, bd-cancel-refund) + payment info display. Backend 5/5 passed (1 skipped: no non-kosong Standard room to test future-date inclusion). Frontend end-to-end: pending-booking flow fully verified.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "BookingDetail Dialog", "issues": ["Missing DialogDescription (aria-describedby) — accessibility warning only; not blocking"]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter16_availability_and_refund.py",
+    "/app/test_reports/pytest/iter16_results.xml"
+  ],
+  "action_items": [
+    "(Optional) Add DialogDescription to BookingDetail dialog for a11y; warns in console.",
+    "(Optional) Provide an admin endpoint or seed helper to flip booking → booking_paid so the cancel-with-fee happy path (Rp X refund, fee Rp Y) can be tested without manual mongo edit. Currently only 400/precondition paths are covered automatically.",
+    "(Optional) Add GET /api/bookings/{id} for post-action verification (still 405)."
+  ],
+  "critical_code_review_comments": [
+    "server.py L240-277 public_availability now correctly toggles status filter on is_today: today→status='kosong', else→status!='maintenance'. Overlap check unchanged. Looks correct.",
+    "server.py L1234-1262 cancel_with_fee enforces status=='booking_paid' and H-1 (24h) — both 400 responses verified.",
+    "Dashboard.jsx L484-519 DialogFooter conditional rendering matches spec: status=='aktif'→reschedule+cancel; status=='booking_pending'→reschedule+cancel-pending; status=='booking_paid'→cancel-refund. WhatsApp link rendered for any booking with no_hp. Tutup always visible.",
+    "Dashboard.jsx L459-466 payment info block (subtotal/service_fee/total/amount_due) only shown when bookingDetail.total != null — good defensive coding for legacy walk-in bookings without those fields."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter16_availability_and_refund.py (new)"
+  ],
+  "success_rate": {
+    "backend": "100% (5/5 ran; 1 skipped due to seed data — no non-kosong Standard room)",
+    "frontend": "100% (8/8 assertions: dialog opens, badges visible incl. ONLINE/violet, payment block w/ subtotal+fee+total, bd-cancel-pending+bd-reschedule+bd-wa-confirm rendered, bd-cancel-refund correctly hidden, click cancel → toast 'Booking dibatalkan' → room 9 green/Kosong, pending counter decremented)"
+  },
+  "test_credentials": "owner/owner123",
+  "seed_data_creation": "Created public booking BKO-20260630160034-B1AC (Standard 9, 2026-07-03 14:00 WIB). Cancelled via bd-cancel-pending button during test — record persists as status='cancelled', not visible in Dashboard filters. Backend pytest also creates+cleans TEST_ITER16_cancelfee and TEST_ITER16_paidsim pending bookings.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Availability endpoint behavior: today→only 'kosong' rooms; future→all except 'maintenance' (minus overlap with aktif/booking_pending/booking_paid). For frontend, the future-date filter date input uses YYYY-MM-DD format; tomorrow is 2026-07-01 (today=2026-06-30 in test env). To test cancel-with-fee happy path you must DB-update a booking to status='booking_paid' with jam_mulai > now+24h; no admin endpoint exists. Token localStorage key = 'ph_token'.",
+  "rca_of_the_issue": "Original bug: /book page hid Standard 9/10/11/13 + Cottage 6/7 because public_availability filtered status='kosong' regardless of date. Rooms in transient day-use/perlu_dibersihkan states (relevant only today) were excluded from FUTURE-date results. Fix: split filter by is_today — for future dates, exclude only 'maintenance'. Verified by /api/public/availability?tanggal=2026-07-05 returning all 10 Standards + all 8 Cottages. Original Dashboard bug: BookingDetail dialog lacked refund/cancel buttons for online (booking_pending/booking_paid). Fix added bd-cancel-pending (DELETE /api/bookings/{id}) for pending and bd-cancel-refund (POST /api/bookings/{id}/cancel-with-fee) for paid, plus payment info block. Both UI paths verified end-to-end for the pending case."
+}

@@ -443,7 +443,12 @@ export default function Dashboard() {
                 <span className={`text-[10px] uppercase font-bold px-2 py-1 rounded ${bookingDetail.tipe === "menginap" ? "bg-blue-700 text-white" : "bg-orange-100 text-orange-800"}`}>
                   {bookingDetail.tipe === "menginap" ? "Menginap" : "Day Use"}
                 </span>
-                <span className="text-xs text-slate-500">Status: {bookingDetail.status}</span>
+                <span className={`text-[10px] uppercase font-bold px-2 py-1 rounded ${
+                  bookingDetail.status === "booking_paid" ? "bg-emerald-100 text-emerald-800" :
+                  bookingDetail.status === "booking_pending" ? "bg-amber-100 text-amber-800" :
+                  "bg-slate-100 text-slate-700"
+                }`}>{bookingDetail.status}</span>
+                {bookingDetail.source === "online" && <span className="text-[10px] uppercase font-bold px-2 py-1 rounded bg-violet-100 text-violet-800">Online</span>}
               </div>
               <div><span className="text-slate-500">Tamu:</span> <b data-testid="booking-detail-nama">{bookingDetail.nama_tamu}</b></div>
               <div><span className="text-slate-500">Kamar:</span> {bookingDetail.room_nomor} ({bookingDetail.room_tipe})</div>
@@ -451,6 +456,14 @@ export default function Dashboard() {
               {bookingDetail.jumlah_tamu && <div><span className="text-slate-500">Jumlah Tamu:</span> {bookingDetail.jumlah_tamu}</div>}
               <div><span className="text-slate-500">Jam Mulai:</span> {new Date(bookingDetail.jam_mulai).toLocaleString("id-ID")}</div>
               <div><span className="text-slate-500">Jam Selesai:</span> {new Date(bookingDetail.jam_selesai).toLocaleString("id-ID")}</div>
+              {(bookingDetail.total != null) && (
+                <div className="bg-slate-50 border border-slate-200 rounded p-2 text-xs space-y-1 mt-2">
+                  <div className="flex justify-between"><span className="text-slate-500">Subtotal</span><b>{fmtRp(bookingDetail.subtotal || 0)}</b></div>
+                  <div className="flex justify-between"><span className="text-slate-500">Service Fee 3%</span><b>{fmtRp(bookingDetail.service_fee || 0)}</b></div>
+                  <div className="flex justify-between border-t pt-1 mt-1"><span className="font-bold">Total</span><b className="text-blue-700">{fmtRp(bookingDetail.total)}</b></div>
+                  {bookingDetail.amount_due && <div className="flex justify-between"><span className="text-slate-500">Sudah dibayar</span><b className="text-emerald-700">{fmtRp(bookingDetail.amount_due)}</b></div>}
+                </div>
+              )}
               {bookingDetail.catatan && <div className="italic text-slate-600">&ldquo;{bookingDetail.catatan}&rdquo;</div>}
               <div className="text-[10px] text-slate-400">Dibuat oleh {bookingDetail.created_by}</div>
             </div>
@@ -468,11 +481,17 @@ export default function Dashboard() {
               </div>
             </div>
           )}
-          <DialogFooter className="flex-col gap-2 sm:flex-row">
+          <DialogFooter className="flex-wrap gap-2">
             {!rescheduleMode && bookingDetail?.status === "aktif" && (
               <>
                 <Button data-testid="bd-reschedule" variant="outline" onClick={() => setRescheduleMode(true)}>Reschedule</Button>
                 <Button data-testid="bd-cancel" variant="outline" onClick={cancelBookingDetail} className="text-red-600 border-red-300 hover:bg-red-50">Batalkan Booking</Button>
+              </>
+            )}
+            {!rescheduleMode && bookingDetail?.status === "booking_pending" && (
+              <>
+                <Button data-testid="bd-reschedule" variant="outline" onClick={() => setRescheduleMode(true)}>Reschedule</Button>
+                <Button data-testid="bd-cancel-pending" variant="outline" onClick={cancelBookingDetail} className="text-red-600 border-red-300 hover:bg-red-50">Batalkan Booking (Belum Dibayar)</Button>
               </>
             )}
             {!rescheduleMode && bookingDetail?.no_hp && (
@@ -482,7 +501,7 @@ export default function Dashboard() {
                 target="_blank" rel="noreferrer"
                 className="inline-flex items-center gap-2 px-3 h-9 rounded-md bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-semibold"
               >
-                <MessageCircle className="w-4 h-4" /> Kirim Konfirmasi WA
+                <MessageCircle className="w-4 h-4" /> WhatsApp
               </a>
             )}
             {!rescheduleMode && bookingDetail?.status === "booking_paid" && (
