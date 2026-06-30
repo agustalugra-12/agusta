@@ -1,0 +1,41 @@
+{
+  "summary": "Regression verification after fix for Edit Booking. Backend PUT /api/bookings/{bid} is implemented (server.py lines 805-844) with overlap-exclude-self, status==aktif guard, room re-resolve, and updated_at/updated_by audit fields. DialogTitle in Bookings.jsx now conditional ('Edit Booking' / 'Booking Baru'). All 5 pytest cases in test_bookings_edit.py PASS. End-to-end UI flow (login owner -> /bookings -> click edit -> verify title 'Edit Booking' -> change nama_tamu -> Simpan -> PUT 200 -> toast 'diperbarui' -> modal closes -> card reflects new name) PASSES. Dashboard 'Booked' ribbon also re-verified visually (Room 7 brown, '30 Jun, 11.20' ribbon, Booked badge, guest 'nanta', legend includes Booked).",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {
+        "screen": "Bookings edit dialog",
+        "issues": [
+          "Console warning persists: 'Missing Description or aria-describedby for DialogContent' (a11y, non-blocking)",
+          "Hydration warning: <span> as child of <option> inside <select data-testid=bk-room> due to build instrumentation injecting x-component span around r.nomor. Functional but noisy; pre-existing, not caused by this fix."
+        ]
+      }
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_bookings_edit.py",
+    "/app/test_reports/pytest/bookings_edit_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "PUT handler correctly excludes self (`'id': {'$ne': bid}`) in overlap check - matches review comment from iteration_5",
+    "PUT handler correctly enforces status=='aktif' guard so cancelled/checked-in bookings cannot be edited",
+    "PUT handler refreshes room_nomor/room_tipe when room_id changes - good",
+    "log_activity 'update_booking' added for audit trail - good",
+    "Minor: PUT does not return updated doc explicitly stripped of _id at insert time, but `find_one(... , {'_id': 0})` is used at return - correct",
+    "Minor (non-blocking): DialogContent still missing aria-describedby (a11y). Add a hidden DialogDescription for cleaner console."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100% (5/5 pytest)", "frontend": "100% (edit flow + dashboard ribbon)"},
+  "test_credentials": "owner/owner123 (from /app/memory/test_credentials.md)",
+  "seed_data_creation": "Pytest fixture created TEST_-prefixed bookings and auto-cancelled them; UI test cleaned up edited booking via cancel button at end.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Edit Booking feature fully working end-to-end. Backend PUT /api/bookings/{bid} implemented and tested. Frontend DialogTitle conditional working. Only outstanding minor items are a11y warnings (aria-describedby on DialogContent) and pre-existing hydration warning about <span> inside <option> from build instrumentation - both non-functional. Dashboard Booked ribbon continues to render correctly.",
+  "rca_of_the_issue": "Original issue (iteration_5): backend route was missing causing 405 + frontend title always showed 'Booking Baru'. Fix in iteration_6 added PUT handler and made DialogTitle conditional on editId. Verified via pytest + Playwright e2e."
+}

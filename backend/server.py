@@ -802,6 +802,47 @@ async def list_bookings(status: Optional[str] = None, tipe: Optional[str] = None
     items = await db.bookings.find(q, {"_id": 0}).sort("jam_mulai", 1).to_list(1000)
     return items
 
+@api.put("/bookings/{bid}")
+async def update_booking(bid: str, body: BookingCreate, user: dict = Depends(get_current_user)):
+    b = await db.bookings.find_one({"id": bid})
+    if not b:
+        raise HTTPException(404, "Booking tidak ditemukan")
+    if b["status"] != "aktif":
+        raise HTTPException(400, "Hanya booking aktif yang dapat diubah")
+    if body.tipe not in ("day_use", "menginap"):
+        raise HTTPException(400, "Tipe booking tidak valid")
+    r = await db.rooms.find_one({"id": body.room_id})
+    if not r:
+        raise HTTPException(404, "Kamar tidak ditemukan")
+    start = _parse_iso(body.jam_mulai, "jam_mulai")
+    if body.jam_selesai:
+        end = _parse_iso(body.jam_selesai, "jam_selesai")
+    else:
+        if body.tipe == "menginap":
+            raise HTTPException(400, "Booking menginap wajib mengisi jam_selesai")
+        end = start + timedelta(hours=6)
+    if end <= start:
+        raise HTTPException(400, "Jam selesai harus setelah jam mulai")
+    overlap = await db.bookings.find_one({
+        "id": {"$ne": bid},
+        "room_id": body.room_id, "status": "aktif",
+        "jam_mulai": {"$lt": end.isoformat()},
+        "jam_selesai": {"$gt": start.isoformat()},
+    })
+    if overlap:
+        raise HTTPException(400, f"Kamar sudah dibooking pada rentang ini ({overlap.get('kode')})")
+    update_fields = {
+        "room_id": body.room_id, "room_nomor": r["nomor"], "room_tipe": r["tipe"],
+        "tipe": body.tipe, "nama_tamu": body.nama_tamu, "no_hp": body.no_hp,
+        "no_identitas": body.no_identitas, "kendaraan": body.kendaraan, "jumlah_tamu": body.jumlah_tamu,
+        "jam_mulai": start.isoformat(), "jam_selesai": end.isoformat(),
+        "catatan": body.catatan, "updated_at": now_iso(), "updated_by": user["nama"],
+    }
+    await db.bookings.update_one({"id": bid}, {"$set": update_fields})
+    await log_activity(user, "update_booking", f"Edit booking {b['kode']} kamar {r['nomor']} untuk {body.nama_tamu}", entity=r["nomor"])
+    doc = await db.bookings.find_one({"id": bid}, {"_id": 0})
+    return doc
+
 @api.delete("/bookings/{bid}")
 async def cancel_booking(bid: str, user: dict = Depends(get_current_user)):
     b = await db.bookings.find_one({"id": bid})

@@ -155,7 +155,7 @@ export default function Bookings() {
 
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent className="max-w-lg">
-          <DialogHeader><DialogTitle>Booking Baru</DialogTitle></DialogHeader>
+          <DialogHeader><DialogTitle>{editId ? "Edit Booking" : "Booking Baru"}</DialogTitle></DialogHeader>
           <div className="grid grid-cols-2 gap-3 max-h-[70vh] overflow-y-auto">
             <div className="col-span-2">
               <Label>Tipe Booking</Label>
