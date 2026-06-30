@@ -34,6 +34,9 @@ Aplikasi web + Android PWA "Pelangi Homestay Management System" untuk operasiona
 - **(Feb 2026)** Override status realtime saat filter ≠ hari ini: kamar `day_use/menginap/perlu_dibersihkan/maintenance` ditampilkan "Kosong" untuk tanggal selain hari ini (status realtime hanya berlaku untuk hari ini).
 - **(Feb 2026)** Booking Detail Dialog di Dashboard: klik kartu kamar yang punya booking pada tanggal filter → modal detail tamu + tombol Reschedule (PUT /api/bookings/{id}) & Batalkan (DELETE).
 - **(Feb 2026)** Move Room: pindahkan tamu day_use/menginap ke kamar kosong lain via endpoint `POST /api/rooms/{room_id}/move` (kamar lama → `perlu_dibersihkan`; kamar baru ambil alih status + info; untuk day_use, checkin aktif diupdate ke room_id baru). UI di action dialog Dashboard.
+- **(Feb 2026)** **Service Fee 3%**: ditambahkan otomatis ke semua check-in/check-out (calc_tagihan menghasilkan subtotal+service_fee+total) dan booking publik. Tampil di CheckOut.jsx + struk + summary Bookings.jsx.
+- **(Feb 2026)** **Saran tanggal alternatif**: endpoint `GET /api/bookings/availability` mengembalikan 14 hari slot ketersediaan. UI di Bookings.jsx menampilkan tombol tanggal kosong otomatis saat user dapat error overlap.
+- **(Feb 2026)** **Public Booking Page** (`/book`, no login): 2-step flow (pilih kamar → form), katalog Standard & Cottage dengan foto + fasilitas, summary tarif + service fee + DP 50%, mobile-friendly. Endpoint baru tanpa auth: `/api/public/rooms-catalog`, `/api/public/availability`, `/api/public/bookings`, `/api/public/bookings/{bid}`. Status booking baru: `booking_pending`, `booking_paid`, `cancelled`. Source: `online` vs `walk_in`. *(Fase B selesai; Fase C — integrasi Xendit untuk auto-paid — pending API key user.)*
 
 ## Backlog / Next Phase
 **P0**
