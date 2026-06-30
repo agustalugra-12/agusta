@@ -1,0 +1,69 @@
+{
+  "summary": "Phase A & B testing complete: service-fee 3% applied at checkout & public booking, /api/bookings/availability returns slots & marks booked dates, public /api/public/* (catalog, availability, bookings) all working without auth, UI /book full 2-step flow PASS (catalog → form → submit → success page), mobile viewport 390x844 has no overflow. Found 1 critical backend bug (TZ compare in /bookings/availability) — FIXED. Found 1 frontend bug (Dashboard date filter omits booking_pending/booking_paid) — REPORTED.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [
+      {
+        "flow": "Dashboard date filter should show booking_pending/booking_paid as 'Booked' (brown)",
+        "issue": "Dashboard.jsx line 49 fetches `api.get('/bookings', { params: { status: 'aktif' } })`. Public bookings (status='booking_pending') and paid bookings (status='booking_paid') are excluded from `bookings` state → `bookingsOnDate` filter never sees them → room cards remain green on date with pending/paid bookings. Verified: created public booking on room 1 for 2026-07-08, set Dashboard date filter to 2026-07-08, room 1 stayed green (only the pre-existing 'aktif' booking on room 7 showed brown).",
+        "affected_selectors": ["room-card-{nomor}", "Booked ({n}) legend"],
+        "fix_hint": "Remove status filter or use status in ['aktif','booking_pending','booking_paid']. Example: api.get('/bookings').then(r => setBookings(r.data.filter(b => ['aktif','booking_pending','booking_paid'].includes(b.status))))"
+      }
+    ],
+    "design_issues": []
+  },
+  "test_results": {
+    "BACKEND_pytest_test_phase_ab_py": "11/11 PASS",
+    "test_checkin_checkout_includes_service_fee": "PASS — subtotal=120000, service_fee=3600, total=123600, persisted via GET",
+    "test_checkout_insufficient_payment_400": "PASS — paying only 120000 returns 400 (needs 123600 incl. fee)",
+    "test_availability_returns_slots": "PASS — 14 slots returned with date/available/reason",
+    "test_availability_marks_booked_date": "PASS (after fix) — booked date has available=false and reason contains booking kode",
+    "test_public_rooms_catalog_no_auth": "PASS — Standard & Cottage groups returned",
+    "test_public_availability_no_auth": "PASS",
+    "test_public_availability_bad_date": "PASS — returns 400",
+    "test_public_booking_standard_calc": "PASS — subtotal=120000, fee=3600, total=123600, dp_min=61800, status='booking_pending', source='online', overlap rejected with 400",
+    "test_public_booking_cottage_calc": "PASS — subtotal=140000, fee=4200, total=144200, dp_min=72100",
+    "test_public_booking_invalid_date": "PASS — 400 validation error",
+    "test_public_booking_room_not_kosong": "PASS — 400 'Kamar tidak tersedia'",
+    "UI_public_book_page_no_auth_loads": "PASS — header 'Pelangi Homestay', hero 'Booking Day Use', step indicator, date picker (pb-tanggal), 3 filter buttons (pb-tipe-all/std/cot), 2 catalog cards visible",
+    "UI_public_book_flow_step1_to_step2": "PASS — clicking pb-room-1 navigates to step 2 form",
+    "UI_public_book_summary_calculations": "PASS — pb-service-fee=Rp 3.600, pb-total=Rp 123.600, pb-dp=Rp 61.800",
+    "UI_public_book_submit_to_success": "PASS — redirect to /book/sukses/{id}, pb-success-kode='BKO-...'",
+    "UI_public_book_mobile_390x844": "PASS — overflow_x=0, no horizontal scroll",
+    "UI_dashboard_date_filter_with_booking_pending": "FAIL — public booking (booking_pending) does NOT trigger brown coloring on Dashboard date filter (see frontend_issues.integration_issues[0])"
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_phase_ab.py",
+    "/app/test_reports/pytest/phase_ab_results.xml"
+  ],
+  "action_items": [
+    "FRONTEND: Dashboard.jsx line ~49 — change `api.get('/bookings', { params: { status: 'aktif' } })` to fetch ALL booking statuses (or status in [aktif, booking_pending, booking_paid]) so public/online bookings also color room cards as 'Booked' on the filtered date as per spec.",
+    "OPTIONAL: PublicBook.jsx — image alt text could be more descriptive for SEO; consider adding loading skeleton while catalog loads."
+  ],
+  "critical_code_review_comments": [
+    "server.py booking_availability (line ~1018, FIXED by testing agent): `datetime.fromisoformat('YYYY-MM-DD')` returns NAIVE datetime, but stored bookings use AWARE ISO strings. Comparison `bs < d_end` with `bs` aware and `d_end` naive raised TypeError → 500. Patched by adding `if base.tzinfo is None: base = base.replace(tzinfo=timezone.utc)`.",
+    "server.py public_create_booking (line ~287): hard-codes 6h block. For 'menginap' future support, expose tipe param. Minor.",
+    "server.py /bookings POST (line ~975) overlap query uses status='aktif' only; should also block against booking_pending/booking_paid to be consistent with availability endpoint. Currently a public pending booking could be overlapped by an internal day_use booking and vice-versa for the room_id+timespan in cross-flow. Note: public_create_booking already checks all 3 statuses, but internal create_booking still only checks 'aktif'.",
+    "Dashboard.jsx (line 49): filter status='aktif' silently breaks 'Booked' coloring for public/paid bookings. See action_items.",
+    "PublicBook.jsx: PUBLIC_API axios instance bypasses auth interceptors — good design, no token sent for /public/* endpoints. Console clean, no auth/CORS errors. Validation toast triggers on missing nama/no_hp/no_identitas before submit.",
+    "PublicBook.jsx SuccessView still mentions 'Pembayaran via Xendit akan dikirim ke WhatsApp' — copy is fine for Fase C placeholder but should be updated when Xendit lands."
+  ],
+  "updated_files": [
+    "/app/backend/server.py (Fixed: booking_availability TZ-aware datetime parsing)",
+    "/app/backend/tests/test_phase_ab.py (NEW: 11 regression tests for Phase A & B)"
+  ],
+  "success_rate": {
+    "backend": "100% (11/11 after 1 fix)",
+    "frontend": "~85% (5/6 scenarios PASS — Dashboard date-filter integration with booking_pending fails)"
+  },
+  "test_credentials": "owner / owner123 (from /app/memory/test_credentials.md). Public endpoints require no auth.",
+  "seed_data_creation": "Created/cleaned: 2 internal checkins (TEST_ServiceFee, TEST_InsufFee), 4 bookings (TEST_Avail, TEST_Public_Std, TEST_Public_Cot, TEST_UI_Public, TEST_DASH_PEND). All deleted via DELETE /api/bookings/{id} or completed checkout. Verified no residual TEST_ rows.",
+  "retest_needed": true,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Phase A (service fee) + Phase B (alt-dates availability + public /book) are mostly done. ONE fixable frontend bug remains: Dashboard.jsx fetches bookings with status='aktif' only — must include booking_pending/booking_paid for the date-filter coloring spec. After fix, re-test: create public booking → set Dashboard date filter to booking date → verify room card turns brown + legend 'Booked (n)' increments. Phase C (Xendit) & D (WA/widgets) intentionally not tested. data-testids confirmed working: pb-tanggal, pb-tipe-all/std/cot, pb-catalog-Standard/Cottage, pb-room-{N}, pb-nama, pb-hp, pb-ktp, pb-jumlah, pb-kendaraan, pb-jam, pb-catatan, pb-service-fee, pb-total, pb-dp, pb-submit, pb-success-kode. Also co-service-fee in CheckOut (not UI-tested but persistence via API confirmed). booking-est-summary / alt-dates data-testids exist but UI test for alt-dates inside Bookings.jsx modal was not exercised (modal interaction skipped due to token budget).",
+  "rca_of_the_issue": "Bug 1 (FIXED): server.py booking_availability did `datetime.fromisoformat(from_date)` where from_date='YYYY-MM-DD' yields naive dt; bookings stored with .isoformat() on UTC-aware dt include +00:00. The list iteration `if bs < d_end and be > d_start` mixed aware and naive datetimes → TypeError → 500 Internal Server Error. Fix: force UTC tzinfo on base. Mitigation: also consider switching all booking time storage to a canonical UTC ISO with explicit Z suffix to avoid future TZ ambiguity. Bug 2 (REPORTED): Dashboard.jsx only requests aktif bookings → bookingsOnDate excludes booking_pending/booking_paid → spec violation. Fix: drop status filter or include the 3 occupy-statuses."
+}

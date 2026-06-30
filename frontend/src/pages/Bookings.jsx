@@ -1,6 +1,6 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
-import api, { fmtDateTime } from "@/lib/apiClient";
+import api, { fmtRp, fmtDateTime } from "@/lib/apiClient";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -54,8 +54,37 @@ export default function Bookings() {
       else await api.post("/bookings", payload);
       toast.success(editId ? "Booking diperbarui" : "Booking dibuat");
       setOpen(false); setEditId(null); load();
-    } catch (e) { toast.error(e?.response?.data?.detail || "Gagal"); }
+    } catch (e) {
+      const msg = e?.response?.data?.detail || "Gagal";
+      toast.error(msg);
+      // Jika gagal karena overlap, fetch tanggal alternatif
+      if (/sudah dibooking|tersedia/i.test(msg) && form.room_id) {
+        try {
+          const dStr = form.jam_mulai.slice(0, 10);
+          const { data } = await api.get("/bookings/availability", { params: { room_id: form.room_id, from_date: dStr, days: 14 } });
+          setAvailability(data);
+        } catch (err) { /* ignore — availability lookup is best-effort */ }
+      }
+    }
   };
+
+  const [availability, setAvailability] = useState(null);
+  const pickAlternativeDate = (dateStr) => {
+    // ganti hanya tanggal di jam_mulai/jam_selesai, jaga jam
+    const replaceDate = (iso, newDate) => `${newDate}${iso.slice(10)}`;
+    setForm(f => ({ ...f, jam_mulai: replaceDate(f.jam_mulai, dateStr), jam_selesai: replaceDate(f.jam_selesai, dateStr) }));
+    setAvailability(null);
+  };
+
+  const selectedRoom = rooms.find(r => r.id === form.room_id);
+  const estTotal = useMemo(() => {
+    if (!selectedRoom || form.tipe !== "day_use") return null;
+    // estimasi tarif dasar 6 jam saja (tidak hitung overtime untuk booking)
+    const subtotal = selectedRoom.tarif;
+    const svc = Math.round(subtotal * 0.03);
+    return { subtotal, service_fee: svc, total: subtotal + svc };
+  }, [selectedRoom, form.tipe]);
+
 
   const openEdit = (b) => {
     const toLocal = (iso) => { const d = new Date(iso); d.setMinutes(d.getMinutes() - d.getTimezoneOffset()); return d.toISOString().slice(0, 16); };
@@ -105,7 +134,7 @@ export default function Bookings() {
         <TabsList>
           <TabsTrigger value="aktif" data-testid="filter-aktif">Aktif</TabsTrigger>
           <TabsTrigger value="checked_in" data-testid="filter-checked">Sudah Check-In</TabsTrigger>
-          <TabsTrigger value="dibatalkan" data-testid="filter-dibatalkan">Dibatalkan</TabsTrigger>
+          <TabsTrigger value="cancelled" data-testid="filter-dibatalkan">Dibatalkan</TabsTrigger>
           <TabsTrigger value="all" data-testid="filter-all">Semua</TabsTrigger>
         </TabsList>
       </Tabs>
@@ -132,7 +161,7 @@ export default function Bookings() {
                 {fmtDateTime(b.jam_mulai)} → {fmtDateTime(b.jam_selesai)}
               </div>
               {b.no_hp && <div className="text-xs text-slate-500">HP: {b.no_hp}</div>}
-              {b.catatan && <div className="text-xs text-slate-500 italic">"{b.catatan}"</div>}
+              {b.catatan && <div className="text-xs text-slate-500 italic">&ldquo;{b.catatan}&rdquo;</div>}
               <div className="text-[10px] text-slate-400">Status: {b.status} • dibuat oleh {b.created_by}</div>
               {b.status === "aktif" && (
                 <div className="flex gap-2 pt-2 border-t border-slate-100">
@@ -179,6 +208,28 @@ export default function Bookings() {
             <div><Label>{form.tipe === "menginap" ? "Tanggal Check-In" : "Jam Check-In"}</Label><Input data-testid="bk-mulai" type="datetime-local" value={form.jam_mulai} onChange={(e) => onMulaiChange(e.target.value)} /></div>
             <div><Label>{form.tipe === "menginap" ? "Tanggal Check-Out" : "Estimasi Selesai"}</Label><Input data-testid="bk-selesai" type="datetime-local" value={form.jam_selesai} onChange={(e) => setForm(f => ({ ...f, jam_selesai: e.target.value }))} /></div>
             <div className="col-span-2"><Label>Catatan</Label><Textarea value={form.catatan} onChange={(e) => setForm(f => ({ ...f, catatan: e.target.value }))} rows={2} /></div>
+            {estTotal && (
+              <div data-testid="booking-est-summary" className="col-span-2 rounded-lg bg-blue-50 border border-blue-200 p-3 text-sm space-y-1">
+                <div className="flex justify-between"><span className="text-slate-600">Tarif Kamar (6 jam)</span><b>{fmtRp(estTotal.subtotal)}</b></div>
+                <div className="flex justify-between"><span className="text-slate-600">Service Fee (3%)</span><b data-testid="booking-service-fee">{fmtRp(estTotal.service_fee)}</b></div>
+                <div className="flex justify-between text-base pt-1 border-t border-blue-200 mt-1"><span className="font-bold">Estimasi Total</span><b className="text-blue-700">{fmtRp(estTotal.total)}</b></div>
+                <p className="text-[10px] text-slate-500">*Belum termasuk overtime. Service fee 3% ditambahkan saat check-out.</p>
+              </div>
+            )}
+            {availability && (
+              <div data-testid="alt-dates" className="col-span-2 rounded-lg bg-amber-50 border border-amber-200 p-3 text-sm">
+                <p className="font-semibold text-amber-900 mb-2">Kamar {availability.room_nomor} tidak tersedia di tanggal pilihan. Tanggal alternatif yang masih kosong:</p>
+                <div className="grid grid-cols-3 sm:grid-cols-5 gap-2">
+                  {availability.slots.filter(s => s.available).slice(0, 10).map(s => (
+                    <Button key={s.date} type="button" data-testid={`alt-${s.date}`} size="sm" variant="outline" onClick={() => pickAlternativeDate(s.date)} className="text-xs border-amber-300 hover:bg-amber-100">
+                      {new Date(`${s.date}T00:00:00`).toLocaleDateString("id-ID", { day: "2-digit", month: "short" })}
+                    </Button>
+                  ))}
+                  {availability.slots.filter(s => s.available).length === 0 && <span className="text-xs text-slate-500 col-span-full">Tidak ada slot kosong dalam 14 hari kedepan.</span>}
+                </div>
+                <Button type="button" size="sm" variant="ghost" onClick={() => setAvailability(null)} className="text-xs mt-2 h-7">Tutup</Button>
+              </div>
+            )}
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setOpen(false)}>Batal</Button>

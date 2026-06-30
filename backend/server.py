@@ -202,6 +202,142 @@ class BookingUpdate(BaseModel):
     room_id: Optional[str] = None
     tipe: Optional[str] = None
 
+# ---- Public Booking (no-auth) ----
+class PublicBookingCreate(BaseModel):
+    nama_tamu: str
+    no_hp: str
+    no_identitas: str = ""
+    jumlah_tamu: int = 1
+    kendaraan: str = ""
+    room_id: str
+    tanggal: str  # YYYY-MM-DD
+    jam_checkin: str  # HH:mm (24h)
+    catatan: str = ""
+
+@api.get("/public/rooms-catalog")
+async def public_rooms_catalog():
+    """Katalog kamar untuk halaman publik. Mengelompokkan berdasarkan tipe.
+    Tidak mengekspos field internal seperti info / status detail.
+    """
+    rooms = await db.rooms.find({}, {"_id": 0}).to_list(500)
+    rooms.sort(key=lambda r: (0 if r["tipe"] == "Standard" else 1, int(r["nomor"]) if r["nomor"].isdigit() else 9999))
+    grouped: Dict[str, Any] = {}
+    for r in rooms:
+        t = r["tipe"]
+        if t not in grouped:
+            grouped[t] = {
+                "tipe": t,
+                "tarif": r["tarif"],
+                "fasilitas": [
+                    "AC", "Wi-Fi gratis", "TV LED", "Kamar mandi dalam",
+                    "Air panas", "Handuk & toiletries",
+                ] + (["Cottage Style", "Area Outdoor"] if t == "Cottage" else []),
+                "rooms": [],
+            }
+        grouped[t]["rooms"].append({"id": r["id"], "nomor": r["nomor"]})
+    return list(grouped.values())
+
+@api.get("/public/availability")
+async def public_availability(tanggal: str, tipe: Optional[str] = None):
+    """List kamar yang KOSONG pada tanggal tertentu (untuk halaman publik).
+    Status kamar yang tidak boleh dipilih: day_use, menginap, perlu_dibersihkan, maintenance,
+    DAN ada booking aktif/paid/pending pada tanggal tsb.
+    """
+    try:
+        d = datetime.fromisoformat(tanggal)
+    except Exception:
+        raise HTTPException(400, "Format tanggal harus YYYY-MM-DD")
+    d_start = d.replace(hour=0, minute=0, second=0, microsecond=0)
+    d_end = d_start + timedelta(days=1)
+    q: Dict[str, Any] = {"status": "kosong"}
+    if tipe:
+        q["tipe"] = tipe
+    rooms = await db.rooms.find(q, {"_id": 0}).to_list(500)
+    # Filter rooms yang punya booking overlap di tanggal tsb
+    out = []
+    for r in rooms:
+        bk = await db.bookings.find_one({
+            "room_id": r["id"],
+            "status": {"$in": ["aktif", "booking_paid", "booking_pending"]},
+            "jam_mulai": {"$lt": d_end.isoformat()},
+            "jam_selesai": {"$gt": d_start.isoformat()},
+        })
+        if not bk:
+            out.append({"id": r["id"], "nomor": r["nomor"], "tipe": r["tipe"], "tarif": r["tarif"]})
+    out.sort(key=lambda r: (0 if r["tipe"] == "Standard" else 1, int(r["nomor"]) if r["nomor"].isdigit() else 9999))
+    return {"tanggal": tanggal, "tipe": tipe, "rooms": out}
+
+@api.post("/public/bookings")
+async def public_create_booking(body: PublicBookingCreate):
+    """Booking publik (tanpa login). Membuat booking dengan status 'booking_pending'.
+    Tarif = tarif kamar + 3% service fee. Wajib bayar (DP 50% min) via Xendit (Fase C).
+    Sementara Xendit belum ada, booking tetap berstatus pending sampai resepsionis approve.
+    """
+    r = await db.rooms.find_one({"id": body.room_id})
+    if not r:
+        raise HTTPException(404, "Kamar tidak ditemukan")
+    if r["status"] != "kosong":
+        raise HTTPException(400, "Kamar tidak tersedia")
+    # Parse tanggal + jam check-in (WIB +07:00)
+    try:
+        local_in = datetime.fromisoformat(f"{body.tanggal}T{body.jam_checkin}:00+07:00")
+    except Exception:
+        raise HTTPException(400, "Format tanggal/jam tidak valid")
+    start = local_in.astimezone(timezone.utc)
+    end = start + timedelta(hours=6)  # day use 6 jam default
+    # Validasi overlap (semua status booking yang block: aktif, booking_pending, booking_paid)
+    overlap = await db.bookings.find_one({
+        "room_id": body.room_id,
+        "status": {"$in": ["aktif", "booking_pending", "booking_paid"]},
+        "jam_mulai": {"$lt": end.isoformat()},
+        "jam_selesai": {"$gt": start.isoformat()},
+    })
+    if overlap:
+        raise HTTPException(400, f"Kamar sudah dibooking pada rentang ini ({overlap.get('kode')})")
+    subtotal = r["tarif"]
+    service_fee = round(subtotal * SERVICE_FEE_PCT)
+    total = subtotal + service_fee
+    dp_min = round(total * 0.5)
+    kode = f"BKO-{datetime.now().strftime('%Y%m%d%H%M%S')}-{uuid.uuid4().hex[:4].upper()}"
+    doc = {
+        "id": str(uuid.uuid4()), "kode": kode,
+        "room_id": body.room_id, "room_nomor": r["nomor"], "room_tipe": r["tipe"],
+        "tipe": "day_use",
+        "nama_tamu": body.nama_tamu, "no_hp": body.no_hp,
+        "no_identitas": body.no_identitas, "kendaraan": body.kendaraan,
+        "jumlah_tamu": body.jumlah_tamu,
+        "jam_mulai": start.isoformat(), "jam_selesai": end.isoformat(),
+        "catatan": body.catatan,
+        "status": "booking_pending",          # status booking utama (untuk public booking)
+        "payment_status": "pending",          # pending | paid | expired | failed | refunded
+        "subtotal": subtotal, "service_fee": service_fee, "total": total, "dp_min": dp_min,
+        "source": "online",                   # online | walk_in
+        "invoice_id": None, "payment_id": None,
+        "created_at": now_iso(), "created_by": body.nama_tamu,
+    }
+    await db.bookings.insert_one(doc)
+    await db.audit_log.insert_one({
+        "id": str(uuid.uuid4()), "user_id": None, "username": "public",
+        "action": "public_create_booking",
+        "detail": f"Public booking {kode} kamar {r['nomor']} ({r['tipe']}) untuk {body.nama_tamu}",
+        "entity": r["nomor"], "timestamp": now_iso(),
+    })
+    doc.pop("_id", None)
+    return doc
+
+@api.get("/public/bookings/{bid}")
+async def public_get_booking(bid: str):
+    b = await db.bookings.find_one({"id": bid}, {"_id": 0})
+    if not b:
+        raise HTTPException(404, "Booking tidak ditemukan")
+    # batasi field yang dikembalikan ke publik
+    safe = {k: b.get(k) for k in [
+        "id", "kode", "room_nomor", "room_tipe", "tipe", "nama_tamu", "no_hp",
+        "jumlah_tamu", "jam_mulai", "jam_selesai", "status", "payment_status",
+        "subtotal", "service_fee", "total", "dp_min", "invoice_id",
+    ]}
+    return safe
+
 # ---- Auth Endpoints ----
 @api.post("/auth/login")
 async def login(body: LoginIn, response: Response):
@@ -442,6 +578,8 @@ async def move_room(room_id: str, body: MoveRoomBody, user: dict = Depends(get_c
     return {"ok": True, "from": old["nomor"], "to": new["nomor"], "status": new_status}
 
 # ---- Check-in / Check-out ----
+SERVICE_FEE_PCT = 0.03  # 3% service fee diaplikasikan ke checkin & booking
+
 def calc_tagihan(tarif_dasar: int, jam_checkin: datetime, jam_checkout: datetime, overtime_manual: Optional[int] = None):
     delta = jam_checkout - jam_checkin
     total_jam = delta.total_seconds() / 3600.0
@@ -451,14 +589,20 @@ def calc_tagihan(tarif_dasar: int, jam_checkin: datetime, jam_checkout: datetime
     else:
         overtime_hours = max(0, int(-(-(total_jam - base_hours) // 1))) if total_jam > base_hours else 0
     biaya_tambahan = overtime_hours * 20000
-    total = tarif_dasar + biaya_tambahan
+    subtotal = tarif_dasar + biaya_tambahan
+    service_fee = round(subtotal * SERVICE_FEE_PCT)
+    total = subtotal + service_fee
     return {
         "durasi_jam": round(total_jam, 2),
         "overtime_jam": overtime_hours,
         "biaya_tambahan": biaya_tambahan,
         "tarif_dasar": tarif_dasar,
+        "subtotal": subtotal,
+        "service_fee": service_fee,
+        "service_fee_pct": SERVICE_FEE_PCT,
         "total": total,
     }
+
 
 @api.post("/checkins")
 async def create_checkin(body: CheckinCreate, user: dict = Depends(get_current_user)):
@@ -599,6 +743,8 @@ async def checkout(checkin_id: str, body: CheckoutIn, user: dict = Depends(get_c
         "durasi_jam": calc["durasi_jam"],
         "overtime_jam": calc["overtime_jam"],
         "biaya_tambahan": calc["biaya_tambahan"],
+        "subtotal": calc["subtotal"],
+        "service_fee": calc["service_fee"],
         "total": calc["total"],
         "pembayaran": body.pembayaran,
         "status": "selesai",
@@ -857,6 +1003,50 @@ async def list_bookings(status: Optional[str] = None, tipe: Optional[str] = None
     items = await db.bookings.find(q, {"_id": 0}).sort("jam_mulai", 1).to_list(1000)
     return items
 
+@api.get("/bookings/availability")
+async def booking_availability(room_id: str, from_date: str, days: int = 14,
+                               user: dict = Depends(get_current_user)):
+    """Cek ketersediaan kamar per hari (zona lokal +07:00 / WIB)
+    untuk menampilkan saran tanggal alternatif jika kamar penuh.
+    Returns: { from_date, room_id, slots: [{date, available, reason}] }
+    """
+    r = await db.rooms.find_one({"id": room_id})
+    if not r:
+        raise HTTPException(404, "Kamar tidak ditemukan")
+    days = max(1, min(days, 60))
+    try:
+        base = datetime.fromisoformat(from_date)
+        if base.tzinfo is None:
+            base = base.replace(tzinfo=timezone.utc)
+    except Exception:
+        raise HTTPException(400, "from_date harus YYYY-MM-DD")
+    # Ambil semua booking aktif untuk kamar ini dalam window from..from+days
+    end_window = base + timedelta(days=days)
+    bks = await db.bookings.find({
+        "room_id": room_id,
+        "status": {"$in": ["aktif", "booking_paid", "booking_pending"]},
+        "jam_mulai": {"$lt": end_window.isoformat()},
+        "jam_selesai": {"$gt": base.isoformat()},
+    }, {"_id": 0}).to_list(500)
+    slots = []
+    for i in range(days):
+        d = base + timedelta(days=i)
+        d_start = d.replace(hour=0, minute=0, second=0, microsecond=0)
+        d_end = d_start + timedelta(days=1)
+        conflict = None
+        for b in bks:
+            bs = datetime.fromisoformat(b["jam_mulai"])
+            be = datetime.fromisoformat(b["jam_selesai"])
+            if bs < d_end and be > d_start:
+                conflict = b
+                break
+        slots.append({
+            "date": d.strftime("%Y-%m-%d"),
+            "available": conflict is None,
+            "reason": f"Booking {conflict['kode']} ({conflict.get('tipe','')})" if conflict else "",
+        })
+    return {"room_id": room_id, "room_nomor": r["nomor"], "room_tipe": r["tipe"], "from_date": from_date, "days": days, "slots": slots}
+
 @api.put("/bookings/{bid}")
 async def update_booking(bid: str, body: BookingCreate, user: dict = Depends(get_current_user)):
     b = await db.bookings.find_one({"id": bid})
@@ -902,8 +1092,9 @@ async def update_booking(bid: str, body: BookingCreate, user: dict = Depends(get
 async def cancel_booking(bid: str, user: dict = Depends(get_current_user)):
     b = await db.bookings.find_one({"id": bid})
     if not b: raise HTTPException(404, "Booking tidak ditemukan")
-    if b["status"] != "aktif": raise HTTPException(400, "Booking sudah tidak aktif")
-    await db.bookings.update_one({"id": bid}, {"$set": {"status": "dibatalkan", "cancelled_at": now_iso()}})
+    if b["status"] not in ("aktif", "booking_pending", "booking_paid"):
+        raise HTTPException(400, "Booking sudah tidak dapat dibatalkan")
+    await db.bookings.update_one({"id": bid}, {"$set": {"status": "cancelled", "cancelled_at": now_iso(), "cancelled_by": user["nama"]}})
     await log_activity(user, "cancel_booking", f"Batalkan booking {b['kode']} kamar {b['room_nomor']}")
     return {"ok": True}
 

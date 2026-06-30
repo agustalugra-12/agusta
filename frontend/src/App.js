@@ -17,6 +17,7 @@ import Laporan from "@/pages/Laporan";
 import Pengguna from "@/pages/Pengguna";
 import Audit from "@/pages/Audit";
 import Bookings from "@/pages/Bookings";
+import PublicBook from "@/pages/PublicBook";
 import "@/App.css";
 
 function Protected({ children, ownerOnly = false }) {
@@ -32,6 +33,8 @@ function AppRoutes() {
   return (
     <Routes>
       <Route path="/login" element={<Login />} />
+      <Route path="/book" element={<PublicBook />} />
+      <Route path="/book/sukses/:bookingId" element={<PublicBook successView />} />
       <Route element={<Protected><Layout /></Protected>}>
         <Route path="/" element={<Dashboard />} />
         <Route path="/rooms" element={<Rooms />} />

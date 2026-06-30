@@ -1,0 +1,345 @@
+import { useEffect, useMemo, useState } from "react";
+import { useParams, useNavigate, Link } from "react-router-dom";
+import axios from "axios";
+import { toast } from "sonner";
+import { Card, CardContent } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
+import {
+  BedDouble, Wifi, Snowflake, Tv, Droplets, Bath, Trees, CheckCircle2,
+  Calendar, Clock, User, Phone, IdCard, Car, Users as UsersIcon, Building2, ArrowRight,
+} from "lucide-react";
+
+// API client tanpa auth (untuk endpoint /api/public/*)
+const PUBLIC_API = axios.create({ baseURL: `${process.env.REACT_APP_BACKEND_URL}/api` });
+const fmtRp = (n) => "Rp " + Number(n || 0).toLocaleString("id-ID");
+const todayStr = () => {
+  const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+};
+
+const FACILITY_ICONS = {
+  "AC": Snowflake, "Wi-Fi gratis": Wifi, "TV LED": Tv,
+  "Kamar mandi dalam": Bath, "Air panas": Droplets, "Handuk & toiletries": CheckCircle2,
+  "Cottage Style": BedDouble, "Area Outdoor": Trees,
+};
+
+// Placeholder images (akan diganti foto asli nanti)
+const ROOM_IMAGES = {
+  Standard: "https://images.unsplash.com/photo-1590490360182-c33d57733427?w=1200&q=70",
+  Cottage: "https://images.unsplash.com/photo-1602002418082-a4443e081dd1?w=1200&q=70",
+};
+
+export default function PublicBook({ successView = false }) {
+  const { bookingId } = useParams();
+  if (successView) return <SuccessView bookingId={bookingId} />;
+  return <BookingForm />;
+}
+
+function BookingForm() {
+  const [catalog, setCatalog] = useState([]);
+  const [tanggal, setTanggal] = useState(todayStr());
+  const [tipe, setTipe] = useState("");           // filter tipe (kosong = semua)
+  const [availability, setAvailability] = useState({ rooms: [] });
+  const [step, setStep] = useState(1);            // 1 = pilih kamar, 2 = form
+  const [selectedRoom, setSelectedRoom] = useState(null); // {id, nomor, tipe, tarif}
+  const [form, setForm] = useState({
+    nama_tamu: "", no_hp: "", no_identitas: "", jumlah_tamu: 1, kendaraan: "",
+    jam_checkin: "13:00", catatan: "",
+  });
+  const [submitting, setSubmitting] = useState(false);
+  const nav = useNavigate();
+
+  useEffect(() => {
+    PUBLIC_API.get("/public/rooms-catalog").then(r => setCatalog(r.data)).catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    if (!tanggal) return;
+    PUBLIC_API.get("/public/availability", { params: { tanggal, tipe: tipe || undefined } })
+      .then(r => setAvailability(r.data))
+      .catch(() => setAvailability({ rooms: [] }));
+  }, [tanggal, tipe]);
+
+  const summary = useMemo(() => {
+    if (!selectedRoom) return null;
+    const subtotal = selectedRoom.tarif;
+    const svc = Math.round(subtotal * 0.03);
+    const total = subtotal + svc;
+    return { subtotal, service_fee: svc, total, dp_min: Math.round(total * 0.5) };
+  }, [selectedRoom]);
+
+  const onSelectRoom = (room) => {
+    setSelectedRoom(room);
+    setStep(2);
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  };
+
+  const submit = async () => {
+    if (!form.nama_tamu.trim() || !form.no_hp.trim() || !form.no_identitas.trim()) {
+      toast.error("Lengkapi nama, no HP, dan no identitas");
+      return;
+    }
+    if (!selectedRoom) { toast.error("Pilih kamar dulu"); return; }
+    setSubmitting(true);
+    try {
+      const { data } = await PUBLIC_API.post("/public/bookings", {
+        nama_tamu: form.nama_tamu.trim(),
+        no_hp: form.no_hp.trim(),
+        no_identitas: form.no_identitas.trim(),
+        jumlah_tamu: Number(form.jumlah_tamu) || 1,
+        kendaraan: form.kendaraan.trim(),
+        room_id: selectedRoom.id,
+        tanggal, jam_checkin: form.jam_checkin,
+        catatan: form.catatan.trim(),
+      });
+      toast.success("Booking berhasil dibuat!");
+      nav(`/book/sukses/${data.id}`);
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Gagal membuat booking");
+    } finally { setSubmitting(false); }
+  };
+
+  return (
+    <div className="min-h-screen bg-gradient-to-b from-blue-50 via-white to-amber-50">
+      {/* Header */}
+      <header className="sticky top-0 z-10 bg-white/90 backdrop-blur border-b border-slate-200">
+        <div className="max-w-5xl mx-auto px-4 sm:px-6 py-3 flex items-center justify-between">
+          <div className="flex items-center gap-2.5">
+            <div className="w-9 h-9 rounded-lg bg-gradient-to-br from-blue-600 to-amber-500 grid place-items-center text-white font-extrabold">P</div>
+            <div>
+              <div className="text-xs uppercase tracking-[0.2em] text-slate-500">Pelangi</div>
+              <div className="font-extrabold leading-none">Homestay</div>
+            </div>
+          </div>
+          <Link to="/login" className="text-xs text-slate-500 hover:text-blue-700">Staff Login</Link>
+        </div>
+      </header>
+
+      <main className="max-w-5xl mx-auto px-4 sm:px-6 py-6 sm:py-10 space-y-8">
+        {/* Hero */}
+        <section className="text-center space-y-3">
+          <p className="text-xs uppercase tracking-[0.3em] text-amber-700">Reservasi Online</p>
+          <h1 className="text-3xl sm:text-5xl font-extrabold tracking-tight text-slate-900">
+            Booking Day Use dalam<br className="hidden sm:block" /> hitungan menit
+          </h1>
+          <p className="text-slate-600 max-w-xl mx-auto">
+            Kamar nyaman, harga jujur, konfirmasi instan. Pilih tanggal, pilih kamar, selesai.
+          </p>
+        </section>
+
+        {/* Step indicator */}
+        <div className="flex items-center justify-center gap-2 text-xs">
+          <StepDot active={step >= 1} done={step > 1} label="Pilih Kamar" />
+          <div className="w-6 h-px bg-slate-300" />
+          <StepDot active={step >= 2} done={false} label="Isi Data & Bayar" />
+        </div>
+
+        {step === 1 && (
+          <>
+            {/* Date picker */}
+            <Card className="border-slate-200 shadow-sm">
+              <CardContent className="p-4 sm:p-5 grid sm:grid-cols-[1fr_auto] gap-3 items-end">
+                <div>
+                  <Label className="text-xs font-semibold uppercase tracking-wider text-slate-500">Tanggal Kunjungan</Label>
+                  <Input data-testid="pb-tanggal" type="date" value={tanggal} min={todayStr()} onChange={(e) => setTanggal(e.target.value)} className="h-12 mt-1.5 text-base" />
+                </div>
+                <div className="flex gap-2">
+                  <Button data-testid="pb-tipe-all" type="button" variant={tipe === "" ? "default" : "outline"} className={tipe === "" ? "h-12 bg-blue-700" : "h-12"} onClick={() => setTipe("")}>Semua</Button>
+                  <Button data-testid="pb-tipe-std" type="button" variant={tipe === "Standard" ? "default" : "outline"} className={tipe === "Standard" ? "h-12 bg-blue-700" : "h-12"} onClick={() => setTipe("Standard")}>Standard</Button>
+                  <Button data-testid="pb-tipe-cot" type="button" variant={tipe === "Cottage" ? "default" : "outline"} className={tipe === "Cottage" ? "h-12 bg-amber-600" : "h-12"} onClick={() => setTipe("Cottage")}>Cottage</Button>
+                </div>
+              </CardContent>
+            </Card>
+
+            {/* Catalog (per tipe dengan foto + fasilitas) */}
+            <div className="grid sm:grid-cols-2 gap-4 sm:gap-6">
+              {catalog.map((c) => {
+                const availOfTipe = availability.rooms.filter(r => r.tipe === c.tipe);
+                return (
+                  <Card key={c.tipe} data-testid={`pb-catalog-${c.tipe}`} className="border-slate-200 overflow-hidden shadow-sm">
+                    <div className="aspect-[16/10] bg-slate-100 overflow-hidden">
+                      <img src={ROOM_IMAGES[c.tipe]} alt={c.tipe} className="w-full h-full object-cover" />
+                    </div>
+                    <CardContent className="p-5 space-y-4">
+                      <div className="flex items-start justify-between gap-3">
+                        <div>
+                          <div className="text-xs uppercase tracking-wider text-slate-500">Kamar</div>
+                          <h3 className="text-xl font-extrabold">{c.tipe}</h3>
+                        </div>
+                        <div className="text-right">
+                          <div className="text-2xl font-extrabold text-blue-700">{fmtRp(c.tarif)}</div>
+                          <div className="text-[10px] uppercase tracking-wider text-slate-500">/ 6 jam</div>
+                        </div>
+                      </div>
+                      <div className="flex flex-wrap gap-2">
+                        {c.fasilitas.map((f) => {
+                          const Ico = FACILITY_ICONS[f] || CheckCircle2;
+                          return (
+                            <span key={f} className="inline-flex items-center gap-1 text-[11px] px-2 py-1 rounded-full bg-slate-100 text-slate-700">
+                              <Ico className="w-3 h-3" /> {f}
+                            </span>
+                          );
+                        })}
+                      </div>
+                      <div className="pt-2 border-t border-slate-100">
+                        <div className="text-xs text-slate-500 mb-2">
+                          {availOfTipe.length > 0 ? `${availOfTipe.length} kamar tersedia` : "Kamar habis di tanggal ini"}
+                        </div>
+                        <div className="flex flex-wrap gap-1.5">
+                          {availOfTipe.length === 0 && (
+                            <span className="text-xs text-red-600">Coba pilih tanggal lain</span>
+                          )}
+                          {availOfTipe.map((r) => (
+                            <button
+                              key={r.id}
+                              data-testid={`pb-room-${r.nomor}`}
+                              onClick={() => onSelectRoom(r)}
+                              className="px-3 py-1.5 text-xs font-bold border-2 border-blue-200 hover:border-blue-600 hover:bg-blue-50 rounded-md transition-colors"
+                            >
+                              Kamar {r.nomor}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    </CardContent>
+                  </Card>
+                );
+              })}
+              {catalog.length === 0 && (
+                <div className="col-span-full text-center text-slate-500 py-10">Memuat katalog...</div>
+              )}
+            </div>
+          </>
+        )}
+
+        {step === 2 && selectedRoom && summary && (
+          <div className="grid md:grid-cols-[1fr_360px] gap-6">
+            {/* Form */}
+            <Card className="border-slate-200">
+              <CardContent className="p-5 sm:p-6 space-y-4">
+                <button onClick={() => setStep(1)} className="text-sm text-blue-700 hover:underline">&larr; Pilih kamar lain</button>
+                <h2 className="text-2xl font-extrabold">Data Tamu</h2>
+                <FieldIcon icon={User} label="Nama Lengkap"><Input data-testid="pb-nama" value={form.nama_tamu} onChange={(e) => setForm(f => ({ ...f, nama_tamu: e.target.value }))} className="h-12" /></FieldIcon>
+                <FieldIcon icon={Phone} label="Nomor WhatsApp"><Input data-testid="pb-hp" placeholder="08xxxxxxxxxx" value={form.no_hp} onChange={(e) => setForm(f => ({ ...f, no_hp: e.target.value }))} className="h-12" /></FieldIcon>
+                <FieldIcon icon={IdCard} label="Nomor Identitas (KTP/Paspor)"><Input data-testid="pb-ktp" value={form.no_identitas} onChange={(e) => setForm(f => ({ ...f, no_identitas: e.target.value }))} className="h-12" /></FieldIcon>
+                <div className="grid grid-cols-2 gap-3">
+                  <FieldIcon icon={UsersIcon} label="Jumlah Tamu"><Input data-testid="pb-jumlah" type="number" min="1" value={form.jumlah_tamu} onChange={(e) => setForm(f => ({ ...f, jumlah_tamu: e.target.value }))} className="h-12" /></FieldIcon>
+                  <FieldIcon icon={Car} label="Kendaraan"><Input data-testid="pb-kendaraan" placeholder="Mis: B 1234 ABC" value={form.kendaraan} onChange={(e) => setForm(f => ({ ...f, kendaraan: e.target.value }))} className="h-12" /></FieldIcon>
+                </div>
+                <FieldIcon icon={Clock} label="Jam Check-In">
+                  <Input data-testid="pb-jam" type="time" value={form.jam_checkin} onChange={(e) => setForm(f => ({ ...f, jam_checkin: e.target.value }))} className="h-12" />
+                </FieldIcon>
+                <div>
+                  <Label className="text-xs font-semibold uppercase tracking-wider text-slate-500">Catatan (opsional)</Label>
+                  <Textarea data-testid="pb-catatan" value={form.catatan} onChange={(e) => setForm(f => ({ ...f, catatan: e.target.value }))} className="mt-1.5" rows={3} placeholder="Mis: request lantai bawah, late check-in, dll" />
+                </div>
+              </CardContent>
+            </Card>
+
+            {/* Summary sidebar */}
+            <Card className="border-slate-200 h-fit md:sticky md:top-20">
+              <CardContent className="p-5 space-y-4">
+                <div>
+                  <div className="text-xs uppercase tracking-wider text-slate-500">Booking Anda</div>
+                  <div className="font-extrabold text-lg">{selectedRoom.tipe} • Kamar {selectedRoom.nomor}</div>
+                </div>
+                <div className="space-y-2 text-sm border-t border-slate-100 pt-3">
+                  <Row icon={Calendar} label="Tanggal" value={new Date(`${tanggal}T00:00:00`).toLocaleDateString("id-ID", { weekday: "short", day: "2-digit", month: "long", year: "numeric" })} />
+                  <Row icon={Clock} label="Check-In" value={`${form.jam_checkin} (6 jam)`} />
+                  <Row icon={Building2} label="Tipe" value={selectedRoom.tipe} />
+                </div>
+                <div className="space-y-1.5 border-t border-slate-100 pt-3 text-sm">
+                  <div className="flex justify-between"><span className="text-slate-600">Tarif Kamar</span><b>{fmtRp(summary.subtotal)}</b></div>
+                  <div className="flex justify-between"><span className="text-slate-600">Service Fee (3%)</span><b data-testid="pb-service-fee">{fmtRp(summary.service_fee)}</b></div>
+                  <div className="flex justify-between text-base pt-1.5 border-t border-slate-200 mt-1.5"><span className="font-bold">Total</span><b className="text-blue-700" data-testid="pb-total">{fmtRp(summary.total)}</b></div>
+                  <div className="flex justify-between text-xs"><span className="text-slate-500">DP minimum (50%)</span><b data-testid="pb-dp">{fmtRp(summary.dp_min)}</b></div>
+                </div>
+                <Button data-testid="pb-submit" disabled={submitting} onClick={submit} className="w-full h-12 bg-gradient-to-r from-blue-700 to-blue-600 hover:from-blue-800 hover:to-blue-700 text-base font-bold">
+                  {submitting ? "Memproses..." : "Bayar Sekarang"} <ArrowRight className="w-4 h-4 ml-2" />
+                </Button>
+                <p className="text-[10px] text-center text-slate-500">
+                  Dengan menekan tombol, Anda menyetujui kebijakan reservasi.
+                  Refund/cancel dapat dilakukan H-1 dengan biaya 10% dari total pembayaran.
+                </p>
+              </CardContent>
+            </Card>
+          </div>
+        )}
+
+        {/* Footer info */}
+        <footer className="text-center text-xs text-slate-500 pt-8 border-t border-slate-200">
+          <p>Pelangi Homestay &middot; Operasional Day Use & Menginap</p>
+          <p className="mt-1">Butuh bantuan? Hubungi resepsionis kami.</p>
+        </footer>
+      </main>
+    </div>
+  );
+}
+
+function StepDot({ active, done, label }) {
+  return (
+    <div className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full ${active ? "bg-blue-700 text-white" : "bg-slate-200 text-slate-600"}`}>
+      <span className="w-1.5 h-1.5 rounded-full bg-current" />
+      <span className="font-semibold">{label}</span>
+      {done && <CheckCircle2 className="w-3 h-3" />}
+    </div>
+  );
+}
+
+function FieldIcon({ icon: Icon, label, children }) {
+  return (
+    <div>
+      <Label className="text-xs font-semibold uppercase tracking-wider text-slate-500 inline-flex items-center gap-1.5"><Icon className="w-3 h-3" /> {label}</Label>
+      <div className="mt-1.5">{children}</div>
+    </div>
+  );
+}
+
+function Row({ icon: Icon, label, value }) {
+  return (
+    <div className="flex items-center justify-between gap-2">
+      <span className="inline-flex items-center gap-1.5 text-slate-600"><Icon className="w-3.5 h-3.5" /> {label}</span>
+      <b className="text-right">{value}</b>
+    </div>
+  );
+}
+
+function SuccessView({ bookingId }) {
+  const [bk, setBk] = useState(null);
+  useEffect(() => {
+    PUBLIC_API.get(`/public/bookings/${bookingId}`).then(r => setBk(r.data)).catch(() => {});
+  }, [bookingId]);
+
+  if (!bk) return <div className="min-h-screen grid place-items-center text-slate-500">Memuat...</div>;
+  return (
+    <div className="min-h-screen bg-gradient-to-b from-emerald-50 via-white to-blue-50 grid place-items-center p-4">
+      <Card className="max-w-md w-full border-emerald-200">
+        <CardContent className="p-6 sm:p-8 text-center space-y-4">
+          <div className="w-16 h-16 mx-auto rounded-full bg-emerald-100 grid place-items-center">
+            <CheckCircle2 className="w-9 h-9 text-emerald-600" />
+          </div>
+          <div>
+            <h2 className="text-2xl font-extrabold">Booking Berhasil Dibuat!</h2>
+            <p className="text-slate-600 text-sm mt-1">Simpan nomor booking di bawah untuk ditunjukkan saat kedatangan.</p>
+          </div>
+          <div className="bg-slate-50 border border-slate-200 rounded-lg p-4 text-left space-y-2 text-sm">
+            <div className="flex justify-between"><span className="text-slate-500">Nomor Booking</span><b data-testid="pb-success-kode">{bk.kode}</b></div>
+            <div className="flex justify-between"><span className="text-slate-500">Nama</span><b>{bk.nama_tamu}</b></div>
+            <div className="flex justify-between"><span className="text-slate-500">Kamar</span><b>{bk.room_nomor} ({bk.room_tipe})</b></div>
+            <div className="flex justify-between"><span className="text-slate-500">Check-In</span><b>{new Date(bk.jam_mulai).toLocaleString("id-ID", { dateStyle: "medium", timeStyle: "short" })}</b></div>
+            <div className="flex justify-between border-t pt-2 mt-2"><span className="text-slate-500">Total</span><b className="text-blue-700">{fmtRp(bk.total)}</b></div>
+            <div className="flex justify-between"><span className="text-slate-500">DP Minimum</span><b>{fmtRp(bk.dp_min)}</b></div>
+            <div className="flex justify-between"><span className="text-slate-500">Status Pembayaran</span><b className={bk.payment_status === "paid" ? "text-emerald-600" : "text-amber-600"}>{bk.payment_status?.toUpperCase()}</b></div>
+          </div>
+          <p className="text-xs text-slate-500">
+            Pembayaran via Xendit akan dikirim ke WhatsApp Anda dalam beberapa saat.
+            Jika dalam 10 menit belum menerima link, silakan hubungi resepsionis.
+          </p>
+          <Link to="/book" className="block text-sm text-blue-700 hover:underline">Buat booking lain</Link>
+        </CardContent>
+      </Card>
+    </div>
+  );
+}

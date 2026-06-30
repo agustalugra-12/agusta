@@ -41,7 +41,9 @@ export default function CheckOut() {
     const hours = (outIso - inIso) / 3600000;
     const ot = overtimeNum !== undefined ? Math.max(0, overtimeNum) : Math.max(0, Math.ceil(hours - 6));
     const biaya = ot * 20000;
-    return { durasi_jam: hours.toFixed(2), overtime_jam: ot, biaya_tambahan: biaya, total: ci.tarif_dasar + biaya };
+    const subtotal = ci.tarif_dasar + biaya;
+    const serviceFee = Math.round(subtotal * 0.03);
+    return { durasi_jam: hours.toFixed(2), overtime_jam: ot, biaya_tambahan: biaya, subtotal, service_fee: serviceFee, total: subtotal + serviceFee };
   })();
   const total = localCalc ? localCalc.total : (preview?.total || 0);
 
@@ -50,8 +52,7 @@ export default function CheckOut() {
     if (pays.length === 1 && pays[0].metode === "tunai" && (pays[0].jumlah === 0 || pays[0].jumlah === "0")) {
       setPays([{ metode: "tunai", jumlah: total }]);
     }
-    // eslint-disable-next-line
-  }, [total]);
+  }, [total, pays]);
 
   const totalPay = pays.reduce((a, p) => a + (Number(p.jumlah) || 0), 0);
   const kurang = total - totalPay;
@@ -116,6 +117,8 @@ export default function CheckOut() {
           <Row label="Tarif Dasar" value={fmtRp(ci.tarif_dasar)} />
           <Row label="Durasi" value={localCalc ? `${localCalc.durasi_jam} jam` : (preview ? `${preview.durasi_jam} jam` : "-")} />
           <Row label="Overtime" value={localCalc ? `${localCalc.overtime_jam} jam = ${fmtRp(localCalc.biaya_tambahan)}` : (preview ? `${preview.overtime_jam} jam = ${fmtRp(preview.biaya_tambahan)}` : "-")} />
+          <Row label="Subtotal" value={fmtRp(localCalc ? localCalc.subtotal : (preview?.subtotal || 0))} />
+          <Row label="Service Fee (3%)" value={<span data-testid="co-service-fee">{fmtRp(localCalc ? localCalc.service_fee : (preview?.service_fee || 0))}</span>} />
         </CardContent>
       </Card>
 
@@ -203,6 +206,8 @@ function Receipt({ ci }) {
       <div className="grid grid-cols-2 gap-1 text-xs">
         <div>Tarif Dasar</div><div className="text-right">{fmtRp(ci.tarif_dasar)}</div>
         <div>Overtime ({ci.overtime_jam} jam)</div><div className="text-right">{fmtRp(ci.biaya_tambahan)}</div>
+        <div>Subtotal</div><div className="text-right">{fmtRp(ci.subtotal ?? (ci.tarif_dasar + (ci.biaya_tambahan || 0)))}</div>
+        <div>Service Fee (3%)</div><div className="text-right">{fmtRp(ci.service_fee || 0)}</div>
         <div className="font-bold pt-1 border-t mt-1">TOTAL</div>
         <div className="font-bold pt-1 border-t mt-1 text-right">{fmtRp(ci.total)}</div>
       </div>
