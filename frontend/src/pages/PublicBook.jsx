@@ -19,6 +19,18 @@ const todayStr = () => {
   const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 };
 
+function loadSnapScript(snapUrl, clientKey) {
+  return new Promise((resolve, reject) => {
+    if (window.snap) { resolve(window.snap); return; }
+    const s = document.createElement("script");
+    s.src = snapUrl;
+    s.setAttribute("data-client-key", clientKey);
+    s.onload = () => window.snap ? resolve(window.snap) : reject(new Error("Snap not ready"));
+    s.onerror = () => reject(new Error("Failed to load Snap.js"));
+    document.body.appendChild(s);
+  });
+}
+
 const FACILITY_ICONS = {
   "AC": Snowflake, "Wi-Fi gratis": Wifi, "TV LED": Tv,
   "Kamar mandi dalam": Bath, "Air panas": Droplets, "Handuk & toiletries": CheckCircle2,
@@ -49,6 +61,7 @@ function BookingForm() {
     jam_checkin: "13:00", catatan: "",
   });
   const [submitting, setSubmitting] = useState(false);
+  const [paymentOption, setPaymentOption] = useState("dp50"); // dp50 | full
   const nav = useNavigate();
 
   useEffect(() => {
@@ -84,7 +97,8 @@ function BookingForm() {
     if (!selectedRoom) { toast.error("Pilih kamar dulu"); return; }
     setSubmitting(true);
     try {
-      const { data } = await PUBLIC_API.post("/public/bookings", {
+      // 1. Buat booking
+      const { data: bk } = await PUBLIC_API.post("/public/bookings", {
         nama_tamu: form.nama_tamu.trim(),
         no_hp: form.no_hp.trim(),
         no_identitas: form.no_identitas.trim(),
@@ -94,11 +108,24 @@ function BookingForm() {
         tanggal, jam_checkin: form.jam_checkin,
         catatan: form.catatan.trim(),
       });
-      toast.success("Booking berhasil dibuat!");
-      nav(`/book/sukses/${data.id}`);
+      // 2. Buat Snap token
+      const { data: tx } = await PUBLIC_API.post("/payments/midtrans/create-snap-token", {
+        booking_id: bk.id, payment_option: paymentOption,
+      });
+      // 3. Load Snap.js lazy lalu buka popup
+      const { data: cfg } = await PUBLIC_API.get("/payments/midtrans/config");
+      const snap = await loadSnapScript(cfg.snap_url, tx.client_key);
+      toast.dismiss();
+      snap.pay(tx.transaction_token, {
+        onSuccess: () => { toast.success("Pembayaran berhasil!"); nav(`/book/sukses/${bk.id}`); },
+        onPending: () => { toast.info("Pembayaran pending - selesaikan sesuai instruksi"); nav(`/book/sukses/${bk.id}`); },
+        onError: () => { toast.error("Pembayaran gagal - silakan coba lagi"); setSubmitting(false); },
+        onClose: () => { toast.warning("Popup pembayaran ditutup. Booking masih PENDING di /book/sukses"); nav(`/book/sukses/${bk.id}`); },
+      });
     } catch (e) {
       toast.error(e?.response?.data?.detail || "Gagal membuat booking");
-    } finally { setSubmitting(false); }
+      setSubmitting(false);
+    }
   };
 
   return (
@@ -254,7 +281,21 @@ function BookingForm() {
                   <div className="flex justify-between"><span className="text-slate-600">Tarif Kamar</span><b>{fmtRp(summary.subtotal)}</b></div>
                   <div className="flex justify-between"><span className="text-slate-600">Service Fee (3%)</span><b data-testid="pb-service-fee">{fmtRp(summary.service_fee)}</b></div>
                   <div className="flex justify-between text-base pt-1.5 border-t border-slate-200 mt-1.5"><span className="font-bold">Total</span><b className="text-blue-700" data-testid="pb-total">{fmtRp(summary.total)}</b></div>
-                  <div className="flex justify-between text-xs"><span className="text-slate-500">DP minimum (50%)</span><b data-testid="pb-dp">{fmtRp(summary.dp_min)}</b></div>
+                </div>
+                <div className="border-t border-slate-100 pt-3">
+                  <Label className="text-xs font-semibold uppercase tracking-wider text-slate-500">Opsi Pembayaran</Label>
+                  <div className="grid grid-cols-2 gap-2 mt-2">
+                    <button data-testid="pb-pay-dp50" type="button" onClick={() => setPaymentOption("dp50")} className={`p-3 rounded-lg border-2 text-left transition-colors ${paymentOption === "dp50" ? "border-blue-600 bg-blue-50" : "border-slate-200 hover:border-slate-300"}`}>
+                      <div className="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">DP 50%</div>
+                      <div className="font-extrabold text-blue-700" data-testid="pb-dp">{fmtRp(summary.dp_min)}</div>
+                      <div className="text-[10px] text-slate-500">Sisa di lokasi</div>
+                    </button>
+                    <button data-testid="pb-pay-full" type="button" onClick={() => setPaymentOption("full")} className={`p-3 rounded-lg border-2 text-left transition-colors ${paymentOption === "full" ? "border-blue-600 bg-blue-50" : "border-slate-200 hover:border-slate-300"}`}>
+                      <div className="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">Bayar Penuh</div>
+                      <div className="font-extrabold text-blue-700">{fmtRp(summary.total)}</div>
+                      <div className="text-[10px] text-slate-500">Tanpa sisa</div>
+                    </button>
+                  </div>
                 </div>
                 <Button data-testid="pb-submit" disabled={submitting} onClick={submit} className="w-full h-12 bg-gradient-to-r from-blue-700 to-blue-600 hover:from-blue-800 hover:to-blue-700 text-base font-bold">
                   {submitting ? "Memproses..." : "Bayar Sekarang"} <ArrowRight className="w-4 h-4 ml-2" />

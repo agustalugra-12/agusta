@@ -1,0 +1,65 @@
+{
+  "summary": "Phase C Midtrans Snap (Sandbox) integration fully verified end-to-end. 14/14 backend pytest PASS covering /config, /create-snap-token (dp50+full+validation), /notification (signature, status mapping settlement/pending/expire/deny, idempotent), /status. Frontend /book complete flow PASS: form fills → POST /public/bookings (200) → POST /create-snap-token (200) → GET /config (200) → snap.js lazy-loaded from app.sandbox.midtrans.com → window.snap.pay() opens Midtrans Snap popup with Rp61.800 DP50% prefilled and VA list (BCA/Mandiri/BNI/BRI/Permata/CIMB/SeaBank/etc) visible.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "PublicBook /book mobile (390x844)", "issues": ["pb-pay-dp50 and pb-pay-full sit side-by-side at ~154px each (39% each + gap). Spec asked for 'full width' on mobile. Functional and tappable but if true full-width stacking is required, change grid-cols-2 to grid-cols-1 below a sm: breakpoint. Minor cosmetic only."]}
+    ]
+  },
+  "test_results": {
+    "BACKEND_pytest_test_midtrans_py": "14/14 PASS",
+    "test_midtrans_config": "PASS — client_key, is_production=false, snap_url=sandbox snap.js verified",
+    "test_create_snap_token_dp50": "PASS — token returned, gross_amount==dp_min, booking.invoice_id updated, payment_log created with transaction_status='initiated'",
+    "test_create_snap_token_full": "PASS — gross_amount==total",
+    "test_create_snap_token_booking_not_found": "PASS — 404",
+    "test_create_snap_token_invalid_option": "PASS — 400 for option='half'",
+    "test_create_snap_token_wrong_status": "PASS — after webhook cancels booking, second snap-token attempt returns 400",
+    "test_webhook_invalid_signature": "PASS — 403 'Signature Midtrans tidak valid'",
+    "test_webhook_missing_fields": "PASS — 400 'Payload Midtrans tidak lengkap'",
+    "test_webhook_settlement": "PASS — booking.status='booking_paid', payment_status='paid', paid_at set",
+    "test_webhook_pending": "PASS — booking.status unchanged (still booking_pending), payment_status='pending'",
+    "test_webhook_expire": "PASS — status='cancelled', payment_status='expired'",
+    "test_webhook_deny": "PASS — status='cancelled', payment_status='failed'",
+    "test_webhook_idempotent": "PASS — same notification 2x: payment_log updates in place (no duplicate), booking stays booking_paid",
+    "test_get_status_not_found": "PASS — 404 for unknown order_id",
+    "FRONTEND_publicbook_e2e_desktop": "PASS — viewport 1920x1080. Date+room select → step 2 form → dp50 default (border-blue-600), click pb-pay-full toggles highlight, click pb-submit triggers: POST /api/public/bookings → 200, POST /api/payments/midtrans/create-snap-token → 200, GET /api/payments/midtrans/config → 200, GET https://app.sandbox.midtrans.com/snap/snap.js → 200, window.snap.pay() called, Midtrans Snap popup rendered with Rp61.800 DP50%, OrderID prefix BKO-..., VA selector full list visible. Screenshot /tmp/final.png confirms TEST sandbox banner top-right corner.",
+    "FRONTEND_publicbook_mobile_390x844": "PASS layout-wise: sidebar (BOOKING ANDA + OPSI PEMBAYARAN) stacks BELOW the form (dp50.y=1420 > nama.y=472). Payment option buttons sit side-by-side at 154px each (2-col grid), not full-width stacked. Functional but cosmetic deviation from spec wording 'full width'."
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_midtrans.py",
+    "/app/test_reports/pytest/midtrans_results.xml"
+  ],
+  "action_items": [
+    "OPTIONAL: For strictly full-width mobile payment buttons, change the OPSI PEMBAYARAN grid in PublicBook.jsx from grid-cols-2 to grid-cols-1 sm:grid-cols-2 (current 2-col stays on all viewports). Low priority — buttons are still tappable on 390px.",
+    "OPTIONAL hardening: backend webhook stores notification_payload (good). Consider adding rate-limit on /api/payments/midtrans/notification since it's no-auth public, and reject if order_id was created >24h ago for replay safety. Non-blocking.",
+    "Reminder for prod: set webhook URL in Midtrans dashboard → Settings → Payment Notification URL = https://pwa-kasir-hotel.preview.emergentagent.com/api/payments/midtrans/notification (currently must be set manually as noted)."
+  ],
+  "critical_code_review_comments": [
+    "server.py L389: order_id = `{kode}-{HHMMSS}{rand3}` — good uniqueness per attempt; multiple snap-token calls on same booking generate fresh order_ids and payment_log rows (verified). Old payment_logs are left orphaned — acceptable but you may want a 'superseded' flag on prior logs to prevent confusion if multiple attempts.",
+    "server.py L383: dp_min fallback uses `round(total*0.5)` if booking.dp_min missing. public_create_booking always sets dp_min so this fallback is defensive — OK.",
+    "server.py L448: `if not all([order_id, status_code, gross_amount, signature_key])` correctly rejects partial payloads with 400. transaction_status is NOT in the required list — Midtrans always sends it but defensively could add. Minor.",
+    "server.py L477-481: capture+fraud_status='challenge' branch keeps booking status unchanged (only payment_status='challenge') — correct per Midtrans 3DS flow. Good.",
+    "server.py L488: refund handling only updates payment_status, not booking.status — by design (refund of already paid booking; status remains booking_paid). Add a comment or future enhancement to set status='refunded' or similar terminal state if business requires.",
+    "PublicBook.jsx L116-117: re-fetches /payments/midtrans/config every submit (cacheable). Minor perf; can call once on mount alongside catalog.",
+    "PublicBook.jsx L22-32 loadSnapScript: idempotent (checks window.snap), but does not remove script on unmount. Acceptable for SPA.",
+    "snap.js loads inline scripts that violate the CSP set by the app (warning in console). Backend / hosting CSP doesn't include 'unsafe-inline' for script-src. Snap popup still rendered + functional because Snap iframe operates in its own origin, but tighten CSP later or whitelist app.sandbox.midtrans.com (currently the warning is only for postMessage cross-origin which is benign)."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_midtrans.py (NEW: 14 pytest cases covering full Midtrans Snap sandbox integration)"
+  ],
+  "success_rate": {
+    "backend": "100% (14/14 pytest)",
+    "frontend": "100% functional (Snap popup rendered with correct DP50% amount, all 4 backend network calls returned 200, snap.js loaded from sandbox CDN, window.snap.pay invoked)"
+  },
+  "test_credentials": "owner/owner123. Midtrans sandbox SERVER_KEY=Mid-server-q5-wHV0Ie4QwLnV7zu8e7enJ already in /app/backend/.env. CLIENT_KEY=Mid-client-96SeuHeUoYtpLMHG.",
+  "seed_data_creation": "Created during testing: 13 public bookings (TEST_MTR_*) on far-future dates (35-90 days out) with status flowing booking_pending → various terminal states (booking_paid/cancelled). payment_log entries auto-created. These can be cleaned up via DELETE /api/bookings/{id} for ones still aktif/booking_pending/booking_paid, or left as historical test data.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Phase C (Midtrans Snap sandbox) is complete and verified. /app/backend/tests/test_midtrans.py is a reusable regression suite — run before any change to /api/payments/midtrans/*. Test creates real Midtrans Snap tokens against sandbox (requires SERVER_KEY in env). Webhook is simulated by computing SHA512(order_id+status_code+gross_amount+SERVER_KEY). For Phase D (WhatsApp + widgets), no infra dependency on Phase C tests. Note: end-to-end actual payment confirmation (clicking BCA VA, paying, receiving real Midtrans webhook to update booking_paid) was NOT tested — would require running through Midtrans sandbox simulator UI. The webhook handler logic itself is fully verified via direct POST with valid signatures.",
+  "rca_of_the_issue": "N/A — Phase C is a new feature implementation, not a bug. All assertions in the review request pass."
+}
