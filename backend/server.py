@@ -1233,33 +1233,61 @@ class CancelWithFeeBody(BaseModel):
 
 @api.post("/bookings/{bid}/cancel-with-fee")
 async def cancel_with_fee(bid: str, body: CancelWithFeeBody, user: dict = Depends(get_current_user)):
-    """Cancel booking dengan biaya pembatalan 10%. Hanya berlaku untuk booking_paid + masih H-1.
-    Return: {refund_amount, fee, original_total}
+    """Cancel booking dengan biaya pembatalan 10% (online dan walk-in).
+    - booking_paid: refund = paid - 10% fee. Fee diakui sebagai revenue.
+    - booking_pending / aktif: no refund (belum ada uang masuk), 10% fee dicatat sebagai piutang/audit.
+    Return: {refund_amount, fee, original_total, status}
+    """
+    b = await db.bookings.find_one({"id": bid})
+    if not b:
+        raise HTTPException(404, "Booking tidak ditemukan")
+    if b.get("status") not in ("aktif", "booking_pending", "booking_paid"):
+        raise HTTPException(400, f"Booking tidak dapat dibatalkan (status: {b.get('status')})")
+    total = int(b.get("total") or 0)
+    fee = round(total * 0.10) if total else 0
+    paid = int(b.get("amount_due") or 0)
+    refund = max(0, paid - fee) if b.get("status") == "booking_paid" else 0
+    now = now_iso()
+    update_fields = {
+        "status": "cancelled", "cancelled_at": now, "cancelled_by": user["nama"],
+        "cancel_reason": body.alasan, "cancel_fee": fee, "refund_amount": refund,
+    }
+    if b.get("status") == "booking_paid":
+        update_fields["payment_status"] = "refunded" if refund > 0 else "forfeited"
+    await db.bookings.update_one({"id": bid}, {"$set": update_fields})
+    detail = (
+        f"Cancel booking {b['kode']}: total Rp{total:,}, fee Rp{fee:,}, "
+        f"{'refund Rp' + format(refund, ',') if refund > 0 else 'tidak ada refund'}"
+    ).replace(",", ".")
+    await log_activity(user, "cancel_with_fee", detail, entity=b.get("room_nomor", ""))
+    return {
+        "ok": True, "refund_amount": refund, "fee": fee, "original_paid": paid,
+        "original_total": total, "booking_kode": b["kode"], "previous_status": b.get("status"),
+    }
+
+class NoShowBody(BaseModel):
+    alasan: Optional[str] = ""
+
+@api.post("/bookings/{bid}/no-show")
+async def mark_no_show(bid: str, body: NoShowBody, user: dict = Depends(get_current_user)):
+    """Tandai booking sebagai NO-SHOW (tamu tidak datang).
+    Hanya berlaku untuk booking_paid. DP/Full payment TIDAK direfund, tetap masuk pembukuan sebagai revenue.
     """
     b = await db.bookings.find_one({"id": bid})
     if not b:
         raise HTTPException(404, "Booking tidak ditemukan")
     if b.get("status") != "booking_paid":
-        raise HTTPException(400, f"Hanya booking lunas yang dapat di-refund (status: {b.get('status')})")
-    # Cek H-1: jam_mulai harus > sekarang + 1 hari? Spec user: "refund H-1" = paling lambat sehari sebelum check-in
-    start = datetime.fromisoformat(b["jam_mulai"])
-    if start.tzinfo is None:
-        start = start.replace(tzinfo=timezone.utc)
-    now = datetime.now(timezone.utc)
-    if (start - now).total_seconds() < 24 * 3600:
-        raise HTTPException(400, "Refund hanya dapat dilakukan paling lambat H-1 (24 jam sebelum check-in)")
-    paid = int(b.get("amount_due") or b.get("total", 0))
-    fee = round(paid * 0.10)
-    refund = paid - fee
+        raise HTTPException(400, f"Hanya booking lunas yang dapat ditandai no-show (status: {b.get('status')})")
+    paid = int(b.get("amount_due") or 0)
+    now = now_iso()
     await db.bookings.update_one({"id": bid}, {"$set": {
-        "status": "cancelled", "payment_status": "refunded",
-        "cancelled_at": now_iso(), "cancelled_by": user["nama"],
-        "cancel_reason": body.alasan, "refund_amount": refund, "cancel_fee": fee,
+        "status": "no_show", "payment_status": "kept",
+        "no_show_at": now, "no_show_by": user["nama"], "no_show_reason": body.alasan,
     }})
-    await log_activity(user, "cancel_with_fee",
-                       f"Refund booking {b['kode']}: paid Rp{paid:,}, fee Rp{fee:,}, refund Rp{refund:,}".replace(",", "."),
+    await log_activity(user, "no_show",
+                       f"No-show booking {b['kode']} kamar {b.get('room_nomor','')}: Rp{paid:,} tetap masuk pembukuan".replace(",", "."),
                        entity=b.get("room_nomor", ""))
-    return {"ok": True, "refund_amount": refund, "fee": fee, "original_paid": paid, "booking_kode": b["kode"]}
+    return {"ok": True, "amount_retained": paid, "booking_kode": b["kode"]}
 
 
 @api.get("/bookings/availability")

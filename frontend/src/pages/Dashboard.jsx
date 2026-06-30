@@ -120,33 +120,49 @@ export default function Dashboard() {
 
   const cancelBookingDetail = async () => {
     if (!bookingDetail) return;
-    if (!window.confirm(`Batalkan booking ${bookingDetail.kode}?`)) return;
+    const totalNum = Number(bookingDetail.total || 0);
+    const fee = Math.round(totalNum * 0.10);
+    const paid = Number(bookingDetail.amount_due || 0);
+    const refund = bookingDetail.status === "booking_paid" ? Math.max(0, paid - fee) : 0;
+    const msg = bookingDetail.status === "booking_paid"
+      ? `Batalkan booking ${bookingDetail.kode}? Fee 10% (${fmtRp(fee)}) dipotong dari pembayaran. Refund: ${fmtRp(refund)}.`
+      : `Batalkan booking ${bookingDetail.kode}? Fee 10% (${fmtRp(fee)}) akan dicatat sebagai biaya pembatalan.`;
+    if (!window.confirm(msg)) return;
     try {
-      await api.delete(`/bookings/${bookingDetail.id}`);
-      toast.success("Booking dibatalkan");
+      const { data } = await api.post(`/bookings/${bookingDetail.id}/cancel-with-fee`, { alasan: "" });
+      const tmsg = data.refund_amount > 0
+        ? `Booking dibatalkan. Refund ${fmtRp(data.refund_amount)} (fee ${fmtRp(data.fee)})`
+        : `Booking dibatalkan. Fee ${fmtRp(data.fee)} tercatat.`;
+      toast.success(tmsg);
       setBookingDetail(null); load();
     } catch (e) { toast.error(e?.response?.data?.detail || "Gagal"); }
   };
 
-  // Quick cancel langsung dari kartu kamar (tombol X)
+  // Mark No-Show (tamu tidak datang): hanya untuk booking_paid, DP/full payment tidak direfund
+  const markNoShow = async () => {
+    if (!bookingDetail) return;
+    const paid = Number(bookingDetail.amount_due || 0);
+    if (!window.confirm(`Tandai booking ${bookingDetail.kode} sebagai NO-SHOW?\nPembayaran ${fmtRp(paid)} TIDAK direfund dan tetap masuk pembukuan.`)) return;
+    try {
+      const { data } = await api.post(`/bookings/${bookingDetail.id}/no-show`, { alasan: "" });
+      toast.success(`No-show ditandai. ${fmtRp(data.amount_retained)} masuk pembukuan.`);
+      setBookingDetail(null); load();
+    } catch (e) { toast.error(e?.response?.data?.detail || "Gagal"); }
+  };
+
+  // Quick cancel langsung dari kartu kamar (tombol X) - juga apply 10% fee universal
   const quickCancelBooking = async (bk) => {
     if (!bk) return;
-    if (!window.confirm(`Batalkan booking ${bk.kode} (${bk.nama_tamu}, kamar ${bk.room_nomor})?`)) return;
+    const totalNum = Number(bk.total || 0);
+    const fee = Math.round(totalNum * 0.10);
+    if (!window.confirm(`Batalkan booking ${bk.kode} (${bk.nama_tamu}, kamar ${bk.room_nomor})? Fee pembatalan 10% (${fmtRp(fee)}) akan dicatat.`)) return;
     try {
-      await api.delete(`/bookings/${bk.id}`);
-      toast.success(`Booking ${bk.kode} dibatalkan`);
+      const { data } = await api.post(`/bookings/${bk.id}/cancel-with-fee`, { alasan: "" });
+      const tmsg = data.refund_amount > 0
+        ? `Booking dibatalkan. Refund ${fmtRp(data.refund_amount)} (fee ${fmtRp(data.fee)})`
+        : `Booking ${bk.kode} dibatalkan. Fee ${fmtRp(data.fee)} tercatat.`;
+      toast.success(tmsg);
       load();
-    } catch (e) { toast.error(e?.response?.data?.detail || "Gagal"); }
-  };
-
-  const cancelBookingRefund = async () => {
-    if (!bookingDetail) return;
-    const alasan = window.prompt(`Refund booking ${bookingDetail.kode}? Biaya pembatalan 10% akan dipotong. Alasan (opsional):`);
-    if (alasan === null) return;
-    try {
-      const { data } = await api.post(`/bookings/${bookingDetail.id}/cancel-with-fee`, { alasan });
-      toast.success(`Refund OK: kembalian ${fmtRp(data.refund_amount)} (fee ${fmtRp(data.fee)} dipotong)`);
-      setBookingDetail(null); load();
     } catch (e) { toast.error(e?.response?.data?.detail || "Gagal"); }
   };
 
@@ -485,13 +501,13 @@ export default function Dashboard() {
             {!rescheduleMode && bookingDetail?.status === "aktif" && (
               <>
                 <Button data-testid="bd-reschedule" variant="outline" onClick={() => setRescheduleMode(true)}>Reschedule</Button>
-                <Button data-testid="bd-cancel" variant="outline" onClick={cancelBookingDetail} className="text-red-600 border-red-300 hover:bg-red-50">Batalkan Booking</Button>
+                <Button data-testid="bd-cancel" variant="outline" onClick={cancelBookingDetail} className="text-red-600 border-red-300 hover:bg-red-50">Batalkan (Fee 10%)</Button>
               </>
             )}
             {!rescheduleMode && bookingDetail?.status === "booking_pending" && (
               <>
                 <Button data-testid="bd-reschedule" variant="outline" onClick={() => setRescheduleMode(true)}>Reschedule</Button>
-                <Button data-testid="bd-cancel-pending" variant="outline" onClick={cancelBookingDetail} className="text-red-600 border-red-300 hover:bg-red-50">Batalkan Booking (Belum Dibayar)</Button>
+                <Button data-testid="bd-cancel-pending" variant="outline" onClick={cancelBookingDetail} className="text-red-600 border-red-300 hover:bg-red-50">Batalkan (Fee 10%)</Button>
               </>
             )}
             {!rescheduleMode && bookingDetail?.no_hp && (
@@ -505,9 +521,14 @@ export default function Dashboard() {
               </a>
             )}
             {!rescheduleMode && bookingDetail?.status === "booking_paid" && (
-              <Button data-testid="bd-cancel-refund" variant="outline" onClick={cancelBookingRefund} className="text-red-600 border-red-300 hover:bg-red-50">
-                Cancel + Refund (Fee 10%)
-              </Button>
+              <>
+                <Button data-testid="bd-cancel-refund" variant="outline" onClick={cancelBookingDetail} className="text-red-600 border-red-300 hover:bg-red-50">
+                  Batalkan + Refund (Fee 10%)
+                </Button>
+                <Button data-testid="bd-no-show" variant="outline" onClick={markNoShow} className="text-amber-700 border-amber-400 hover:bg-amber-50">
+                  Tandai No-Show
+                </Button>
+              </>
             )}
             {rescheduleMode && (
               <>
