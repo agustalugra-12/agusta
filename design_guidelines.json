@@ -1,0 +1,96 @@
+{
+  "theme": "light",
+  "archetype": "4",
+  "archetype_name": "Swiss & High-Contrast (Adapted for Soft Utility POS)",
+  "typography": {
+    "heading_font": "Manrope",
+    "body_font": "Work Sans",
+    "scale": {
+      "h1": "text-4xl sm:text-5xl tracking-tight font-extrabold",
+      "h2": "text-2xl sm:text-3xl tracking-tight font-bold",
+      "h3": "text-xl sm:text-2xl font-semibold",
+      "h4": "text-lg font-semibold",
+      "body": "text-base leading-relaxed",
+      "small": "text-sm text-slate-500",
+      "tiny_label": "text-xs font-bold uppercase tracking-[0.2em]"
+    }
+  },
+  "colors": {
+    "primary": "#1E40AF", 
+    "primary_hover": "#1E3A8A",
+    "primary_foreground": "#FFFFFF",
+    "background": "#F8FAFC",
+    "surface": "#FFFFFF",
+    "text_main": "#0F172A",
+    "text_muted": "#64748B",
+    "border": "#E2E8F0",
+    "status": {
+      "kosong": "#10B981",
+      "day_use": "#EF4444",
+      "menginap": "#3B82F6",
+      "perlu_dibersihkan": "#F97316",
+      "maintenance": "#EAB308"
+    }
+  },
+  "layout_and_spacing": {
+    "philosophy": "Generous Spacing & Large Touch Targets for Mobile POS",
+    "container_padding": "p-4 sm:p-6 lg:p-8",
+    "button_height": "h-14",
+    "button_padding": "px-8 py-4",
+    "grid_dashboard": "grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-6",
+    "grid_rooms": "grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3 sm:gap-4",
+    "surface_style": "bg-white rounded-xl border border-slate-200 shadow-sm",
+    "glassmorphism": "backdrop-blur-xl bg-white/80 border-b border-slate-200"
+  },
+  "components": {
+    "buttons": "Large, full-width on mobile, text-lg font-semibold, rounded-xl. Use primary color for main actions, stark white with border for secondary.",
+    "cards": "Neumorphic-lite: Flat white background, 1px subtle border, no heavy shadow unless hovered. Rounded-xl.",
+    "inputs": "Height h-14, text-base (prevents iOS zoom), rounded-lg, border-slate-300 focus:ring-2 focus:ring-primary focus:border-primary.",
+    "navigation": "Bottom navigation bar for mobile (fixed, glassmorphism), Sidebar for desktop.",
+    "room_grid_item": "Aspect-square or slightly tall. Massive room number typography. Color-coded background based on status with white text for high contrast. Needs tap interaction to open quick action drawer.",
+    "pos_cart": "Sidebar on desktop, sliding bottom sheet or full-screen modal on mobile.",
+    "data_testid_rule": "All interactive elements MUST have data-testid attributes (e.g., data-testid='checkout-button')."
+  },
+  "motion_and_interaction": {
+    "hover_state": "-translate-y-1 shadow-md transition-all duration-200",
+    "active_state": "scale-95",
+    "loading": "Use skeleton screens (animate-pulse) instead of spinners for data loading to reduce perceived wait time.",
+    "page_transition": "Fade in and slight slide-up."
+  },
+  "icons_and_assets": {
+    "library": "@phosphor-icons/react",
+    "installation": "yarn add @phosphor-icons/react",
+    "usage": "Use bold or fill weights for readability on mobile."
+  },
+  "media": {
+    "image_urls": [
+      {
+        "url": "https://images.pexels.com/photos/35747338/pexels-photo-35747338.jpeg",
+        "category": "auth_background",
+        "description": "Elegant hotel reception area featuring glass bubbles and minimalist design."
+      },
+      {
+        "url": "https://images.unsplash.com/photo-1534432182912-63863115e106?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA1Mjh8MHwxfHNlYXJjaHwxfHxjb2ZmZWUlMjBhbmQlMjBwYXN0cnklMjBjYWZlfGVufDB8fHx8MTc4MjA3NzcxMHww&ixlib=rb-4.1.0&q=85",
+        "category": "pos_placeholder",
+        "description": "Baked pastry on bowl. Use as placeholder for POS items if no image is uploaded."
+      },
+      {
+        "url": "https://images.unsplash.com/photo-1686164748506-4311ba437c24",
+        "category": "dashboard_hero",
+        "description": "Modern homestay exterior for the main dashboard header or owner reports."
+      }
+    ]
+  },
+  "instructions_to_main_agent": [
+    "Initialize React with Tailwind CSS and Shadcn UI using .js files (NO TypeScript).",
+    "Ensure the app is configured as a PWA (manifest.json, service worker) for offline readiness.",
+    "Implement the Layout: Mobile users get a bottom tab navigation (Dashboard, Rooms, POS, Settings), desktop gets a left sidebar.",
+    "Build the Room Grid with 18 items. Map the exact colors provided in the guidelines to the room states. Click should open a quick-action Dialog/Drawer.",
+    "Build the Check-in form as a multi-step wizard or single scrollable page with large inputs. Include an input for KTP photo upload.",
+    "For the POS system, use a 2-column layout on desktop (Products left, Cart right) and a floating Cart button on mobile that opens a Drawer.",
+    "Ensure ALL interactive elements (buttons, inputs, tabs) have a `data-testid` attribute for testing.",
+    "Use @phosphor-icons/react for all icons, keeping them large (e.g., size={24} or {32} on mobile).",
+    "Prioritize performance and large touch targets (min h-14 for buttons and inputs).",
+    "Follow the color scheme strictly: Deep blue primary, white/off-white backgrounds, and specific status colors."
+  ]
+}
