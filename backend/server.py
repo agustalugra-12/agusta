@@ -1280,6 +1280,112 @@ async def cancel_with_fee(bid: str, body: CancelWithFeeBody, user: dict = Depend
 class NoShowBody(BaseModel):
     alasan: Optional[str] = ""
 
+class ManualMarkPaidBody(BaseModel):
+    alasan: Optional[str] = ""
+    metode: Optional[str] = "transfer_manual"  # transfer_manual / cash / etc
+    nominal: Optional[int] = None  # if not provided, use total
+
+@api.post("/bookings/{bid}/mark-paid-manual")
+async def mark_paid_manual(bid: str, body: ManualMarkPaidBody, user: dict = Depends(get_current_user)):
+    """Staff verifikasi pembayaran manual (transfer rekening). Ubah booking_pending → booking_paid.
+    Hanya untuk staff (auth required). Catat di audit + payment_log.
+    """
+    b = await db.bookings.find_one({"id": bid})
+    if not b:
+        raise HTTPException(404, "Booking tidak ditemukan")
+    if b.get("status") != "booking_pending":
+        raise HTTPException(400, f"Hanya booking_pending yang dapat dikonfirmasi manual (status: {b.get('status')})")
+    nominal = body.nominal if body.nominal else int(b.get("total", 0))
+    now = now_iso()
+    await db.bookings.update_one({"id": bid}, {"$set": {
+        "status": "booking_paid", "payment_status": "paid",
+        "amount_due": nominal, "payment_type": body.metode,
+        "paid_at": now, "manual_paid_by": user["nama"], "manual_paid_reason": body.alasan,
+        "updated_at": now,
+    }})
+    await db.payment_log.insert_one({
+        "id": str(uuid.uuid4()), "booking_id": b["id"], "booking_kode": b["kode"],
+        "order_id": f"MANUAL-{b['kode']}", "transaction_token": None, "redirect_url": None,
+        "gross_amount": str(nominal), "payment_option": "manual",
+        "transaction_status": "settlement", "status_code": "200",
+        "payment_type": body.metode, "fraud_status": None,
+        "created_at": now, "updated_at": now,
+        "manual_verified_by": user["nama"], "manual_verified_reason": body.alasan,
+    })
+    await log_activity(user, "manual_paid",
+                       f"Konfirmasi manual booking {b['kode']} kamar {b.get('room_nomor','')}: Rp{nominal:,} via {body.metode}".replace(",", "."),
+                       entity=b.get("room_nomor", ""))
+    return {"ok": True, "booking_kode": b["kode"], "amount": nominal, "status": "booking_paid"}
+
+@api.get("/public/bank-accounts")
+async def public_bank_accounts():
+    """Daftar rekening bank untuk transfer manual (tampil di halaman publik /book)."""
+    accounts = [
+        {"bank": "BCA", "nomor": os.environ.get("BANK_BCA_NUMBER", "1234567890"),
+         "atas_nama": os.environ.get("BANK_BCA_NAME", "Pelangi Homestay")},
+        {"bank": "Mandiri", "nomor": os.environ.get("BANK_MANDIRI_NUMBER", "0987654321"),
+         "atas_nama": os.environ.get("BANK_MANDIRI_NAME", "Pelangi Homestay")},
+    ]
+    return {"accounts": accounts, "instruksi": "Transfer sesuai nominal yang tertera, kemudian klik tombol 'Saya Sudah Transfer' untuk verifikasi oleh resepsionis."}
+
+@api.get("/reports/cancellation-revenue")
+async def cancellation_revenue(from_date: str, to_date: str, user: dict = Depends(get_current_user)):
+    """Pendapatan dari cancel fee (10% × total) + no-show retention (amount_due booking_paid yang jadi no_show).
+    from_date/to_date: YYYY-MM-DD (inclusive).
+    Returns: { cancel_fees_total, no_show_total, grand_total, by_day:[...], items:[...] }
+    """
+    try:
+        d_from = datetime.fromisoformat(from_date).replace(hour=0, minute=0, second=0, microsecond=0)
+        d_to = datetime.fromisoformat(to_date).replace(hour=23, minute=59, second=59, microsecond=999999)
+    except Exception:
+        raise HTTPException(400, "Format tanggal harus YYYY-MM-DD")
+    cancels = await db.bookings.find({
+        "status": "cancelled", "cancel_fee": {"$gt": 0},
+        "cancelled_at": {"$gte": d_from.isoformat(), "$lte": d_to.isoformat()},
+    }, {"_id": 0}).to_list(2000)
+    no_shows = await db.bookings.find({
+        "status": "no_show",
+        "no_show_at": {"$gte": d_from.isoformat(), "$lte": d_to.isoformat()},
+    }, {"_id": 0}).to_list(2000)
+    cancel_total = sum(int(b.get("cancel_fee") or 0) for b in cancels)
+    noshow_total = sum(int(b.get("amount_due") or 0) for b in no_shows)
+    # group per hari
+    by_day: Dict[str, Dict[str, int]] = {}
+    for b in cancels:
+        day = (b.get("cancelled_at") or "")[:10]
+        by_day.setdefault(day, {"cancel_fee": 0, "no_show": 0})
+        by_day[day]["cancel_fee"] += int(b.get("cancel_fee") or 0)
+    for b in no_shows:
+        day = (b.get("no_show_at") or "")[:10]
+        by_day.setdefault(day, {"cancel_fee": 0, "no_show": 0})
+        by_day[day]["no_show"] += int(b.get("amount_due") or 0)
+    chart = sorted([{"tanggal": k, **v, "total": v["cancel_fee"] + v["no_show"]} for k, v in by_day.items()], key=lambda x: x["tanggal"])
+    items = []
+    for b in cancels:
+        items.append({"tipe": "cancel", "kode": b["kode"], "room_nomor": b.get("room_nomor"),
+                      "nama_tamu": b.get("nama_tamu"), "tanggal": (b.get("cancelled_at") or "")[:19],
+                      "nominal": int(b.get("cancel_fee") or 0),
+                      "alasan": b.get("cancel_reason") or "",
+                      "petugas": b.get("cancelled_by") or "",
+                      "source": b.get("source") or "walk_in"})
+    for b in no_shows:
+        items.append({"tipe": "no_show", "kode": b["kode"], "room_nomor": b.get("room_nomor"),
+                      "nama_tamu": b.get("nama_tamu"), "tanggal": (b.get("no_show_at") or "")[:19],
+                      "nominal": int(b.get("amount_due") or 0),
+                      "alasan": b.get("no_show_reason") or "",
+                      "petugas": b.get("no_show_by") or "",
+                      "source": b.get("source") or "walk_in"})
+    items.sort(key=lambda x: x["tanggal"], reverse=True)
+    return {
+        "from_date": from_date, "to_date": to_date,
+        "cancel_fees_total": cancel_total,
+        "no_show_total": noshow_total,
+        "grand_total": cancel_total + noshow_total,
+        "cancel_count": len(cancels), "no_show_count": len(no_shows),
+        "by_day": chart, "items": items,
+    }
+
+
 @api.post("/bookings/{bid}/no-show")
 async def mark_no_show(bid: str, body: NoShowBody, user: dict = Depends(get_current_user)):
     """Tandai booking sebagai NO-SHOW (tamu tidak datang).

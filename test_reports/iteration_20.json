@@ -1,0 +1,35 @@
+{
+  "summary": "Iter20 — Verified two new features end-to-end: (A) /api/reports/cancellation-revenue (auth, date validation, full payload shape, arithmetic consistency); (B) /api/bookings/{id}/mark-paid-manual (404, 401, state machine booking_pending→booking_paid + payment_log MANUAL-{kode}/settlement + audit manual_paid + 400 on non-pending); (C) /api/public/bank-accounts (no auth, default BCA + Mandiri + instruksi). Frontend: Laporan /laporan tab-cancel renders 3 stat cards (Cancel Fees Rp 63.860, No-Show Retention Rp 0, Grand Total Rp 63.860), stacked bar chart per day, 5-row table with red CANCEL badges and Export CSV. Dashboard booking_pending dialog shows 3 buttons (bd-reschedule, bd-mark-paid-manual emerald, bd-cancel-pending red); clicking bd-mark-paid-manual with prompt nominal=50000 flips booking to booking_paid + payment_type=transfer_manual + amount_due=50000 + paid_at set. /book/sukses/{id} SuccessView pending shows pb-manual-transfer box with pb-bank-BCA (1234567890) + pb-bank-Mandiri (0987654321) + Salin copy buttons + pb-wa-konfirmasi-manual linking to wa.me with kode. Backend pytest 10/10 PASS. Smoke regression (iter17 cancel + no_show + iter19 reschedule) 26/26 PASS.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter20_cancel_revenue_manual_pay.py",
+    "/app/test_reports/pytest/iter20_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "server.py L1288-1318 mark_paid_manual: correctly idempotent-guarded by status=='booking_pending' (returns 400 on retry). Persists payment_type, manual_paid_by, manual_paid_reason. Inserts payment_log with order_id='MANUAL-{kode}' transaction_status='settlement' — consistent with Midtrans webhook shape so reports/joins don't branch. Audit 'manual_paid' logged with entity=room_nomor. No issues.",
+    "server.py L1331-1386 cancellation_revenue: clean date parsing → 400 on bad format; queries cancelled+cancel_fee>0 and no_show separately; arithmetic grand_total==cancel_fees_total+no_show_total verified live. items[] shape stable, sorted desc by tanggal; by_day chart sorted asc — UI-friendly. _id excluded via projection.",
+    "server.py L1320-1329 public_bank_accounts: env-driven with safe defaults; no auth, returns instruksi text — appropriate for /book SuccessView consumption.",
+    "Dashboard.jsx L142 markPaidManual handler + L524 bd-mark-paid-manual button: prompt() flow is minimal but functional; consider future replacement with shadcn Dialog for nominal input + 'metode' selector (cash/transfer_manual) — non-blocking enhancement.",
+    "PublicBook.jsx L401-427 manual-transfer block fetches bank-accounts on mount, renders array map with stable keys; clipboard salin uses navigator.clipboard.writeText with toast feedback; WA link encodes kode + nominal correctly.",
+    "Laporan.jsx LaporanCancel (L318+): stat cards + stacked bar (recharts) + items table with color-coded badges (red=cancel, amber=no_show); Export CSV builds blob client-side — fine for ≤2000 items per cancellation_revenue cap."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter20_cancel_revenue_manual_pay.py"
+  ],
+  "success_rate": {
+    "backend": "100% (10/10 iter20 pytest + 26/26 iter17+iter19 regression)",
+    "frontend": "100% — live E2E: Laporan tab-cancel (cards/chart/table/export), Dashboard 3-button pending dialog + mark-paid-manual flips status, /book/sukses/{id} pb-manual-transfer + pb-bank-BCA + pb-bank-Mandiri + pb-wa-konfirmasi-manual rendered."
+  },
+  "test_credentials": "owner/owner123 (per /app/memory/test_credentials.md). Confirmed working via Bearer token + login form.",
+  "seed_data_creation": "Each TestMarkPaidManual test creates a TEST_ITER20 booking via POST /api/public/bookings (yields booking_pending), then per-test fixture deletes it. Cancellation_revenue test uses existing 5 entries seeded by main agent (Rp63.860 total).",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Run iter20 pytest with `pytest -n 0`. Single-GET booking endpoint /api/bookings/{id} returns 405 — use list and filter by id. payment_log not exposed via API — verified directly via mongosh in test. Login page uses placeholder-based selector 'input[placeholder*=owner]' (no name attr); after Masuk, redirects to '/' not '/dashboard'. Public SuccessView URL is /book/sukses/{id}.",
+  "rca of the issue": "N/A — both features implemented correctly and pass spec on first review. Only non-blocking polish item: markPaidManual currently uses window.prompt for nominal — could be upgraded to a shadcn Dialog with metode selector (transfer_manual/cash) when staff need a structured form."
+}

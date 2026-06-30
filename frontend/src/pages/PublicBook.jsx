@@ -349,9 +349,11 @@ function Row({ icon: Icon, label, value }) {
 
 function SuccessView({ bookingId }) {
   const [bk, setBk] = useState(null);
+  const [banks, setBanks] = useState(null);
   useEffect(() => {
     const fetch = () => PUBLIC_API.get(`/public/bookings/${bookingId}`).then(r => setBk(r.data)).catch(() => {});
     fetch();
+    PUBLIC_API.get(`/public/bank-accounts`).then(r => setBanks(r.data)).catch(() => {});
     // poll status setiap 5 detik untuk auto-refresh pembayaran
     const t = setInterval(fetch, 5000);
     return () => clearInterval(t);
@@ -393,6 +395,36 @@ function SuccessView({ bookingId }) {
               <p className="text-amber-700 text-[10px]">
                 <b>Untuk testing Sandbox:</b> buka <a className="underline" href="https://simulator.sandbox.midtrans.com" target="_blank" rel="noreferrer">simulator.sandbox.midtrans.com</a>, pilih bank yang sama, paste VA Number, klik Inquiry → Pay. Status di halaman ini akan auto-refresh setelah webhook diterima.
               </p>
+            </div>
+          )}
+          {isPending && banks?.accounts && (
+            <div data-testid="pb-manual-transfer" className="bg-blue-50 border-2 border-blue-300 rounded-lg p-4 text-left text-xs space-y-3">
+              <p className="font-bold text-blue-900">💳 Alternatif: Transfer Manual ke Rekening</p>
+              <p className="text-blue-800 text-[11px]">Transfer minimum DP <b>{fmtRp(bk.dp_min)}</b> atau full <b>{fmtRp(bk.total)}</b> ke salah satu rekening:</p>
+              <div className="space-y-2">
+                {banks.accounts.map((acc, i) => (
+                  <div key={i} className="bg-white rounded-md p-2 border border-blue-200" data-testid={`pb-bank-${acc.bank}`}>
+                    <div className="flex items-center justify-between">
+                      <span className="font-bold text-blue-900">{acc.bank}</span>
+                      <button
+                        onClick={() => { navigator.clipboard.writeText(acc.nomor); toast.success("Nomor rekening disalin"); }}
+                        className="text-[10px] px-2 py-0.5 bg-blue-100 hover:bg-blue-200 rounded text-blue-800"
+                      >Salin</button>
+                    </div>
+                    <div className="font-mono text-sm text-slate-800">{acc.nomor}</div>
+                    <div className="text-[10px] text-slate-500">a.n. {acc.atas_nama}</div>
+                  </div>
+                ))}
+              </div>
+              <p className="text-blue-700 text-[10px]">{banks.instruksi}</p>
+              <a
+                data-testid="pb-wa-konfirmasi-manual"
+                href={`https://wa.me/${bk.no_hp.replace(/^0/, "62").replace(/\D/g, "")}?text=${encodeURIComponent(`Halo, saya sudah transfer untuk booking *${bk.kode}* sebesar Rp ${(bk.dp_min || bk.total).toLocaleString("id-ID")}. Mohon verifikasi pembayaran saya. Terima kasih.`)}`}
+                target="_blank" rel="noreferrer"
+                className="block w-full text-center px-3 h-10 leading-10 rounded-md bg-blue-700 hover:bg-blue-800 text-white text-xs font-bold"
+              >
+                Saya Sudah Transfer — Minta Verifikasi via WhatsApp
+              </a>
             </div>
           )}
           {isPaid && (

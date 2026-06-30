@@ -74,6 +74,7 @@ export default function Laporan() {
           <TabsTrigger value="kasir" data-testid="tab-kasir">Laporan Kasir</TabsTrigger>
           <TabsTrigger value="items" data-testid="tab-items">Item Terjual</TabsTrigger>
           <TabsTrigger value="top" data-testid="tab-top">Produk Terlaris</TabsTrigger>
+          <TabsTrigger value="cancel" data-testid="tab-cancel">Cancel & No-Show</TabsTrigger>
         </TabsList>
 
         <div className="mt-4 space-y-4">
@@ -83,6 +84,7 @@ export default function Laporan() {
           <TabsContent value="kamar"><LaporanKamar from={from} to={to} /></TabsContent>
           <TabsContent value="kasir"><LaporanKasir from={from} to={to} /></TabsContent>
           <TabsContent value="items"><LaporanItems from={from} to={to} /></TabsContent>
+          <TabsContent value="cancel"><LaporanCancel from={from} to={to} /></TabsContent>
           <TabsContent value="top"><TopProducts /></TabsContent>
         </div>
       </Tabs>
@@ -309,6 +311,88 @@ function TopProducts() {
           </tbody>
         </table>
       </CardContent></Card>
+    </div>
+  );
+}
+
+function LaporanCancel({ from, to }) {
+  const [data, setData] = useState(null);
+  useEffect(() => {
+    api.get("/reports/cancellation-revenue", { params: { from_date: from, to_date: to } })
+      .then(r => setData(r.data)).catch(() => setData(null));
+  }, [from, to]);
+  if (!data) return <Card className="border-slate-200"><CardContent className="p-6 text-center text-slate-500">Memuat...</CardContent></Card>;
+  const exportCsv = () => {
+    const rows = data.items.map(it => [it.tipe, it.kode, it.room_nomor, it.nama_tamu, it.source, it.tanggal, it.nominal, it.petugas, it.alasan]);
+    downloadCsv(`pendapatan-cancel-noshow-${from}-${to}.csv`,
+      ["Tipe", "Kode Booking", "Kamar", "Nama Tamu", "Source", "Tanggal", "Nominal", "Petugas", "Alasan"], rows);
+  };
+  return (
+    <div className="space-y-4">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+        <Stat label="Cancel Fees" value={fmtRp(data.cancel_fees_total)} color="#DC2626" />
+        <Stat label="No-Show Retention" value={fmtRp(data.no_show_total)} color="#D97706" />
+        <Stat label="Grand Total Pendapatan" value={fmtRp(data.grand_total)} color="#059669" />
+      </div>
+      <Card className="border-slate-200">
+        <CardContent className="p-4">
+          <div className="flex items-center justify-between mb-3">
+            <div>
+              <h3 className="font-bold">Grafik per Hari</h3>
+              <p className="text-xs text-slate-500">{data.cancel_count} cancel + {data.no_show_count} no-show</p>
+            </div>
+            <Button data-testid="cancel-export" size="sm" variant="outline" onClick={exportCsv}>Export CSV</Button>
+          </div>
+          <div className="h-64">
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={data.by_day}>
+                <CartesianGrid strokeDasharray="3 3" />
+                <XAxis dataKey="tanggal" />
+                <YAxis tickFormatter={(v) => `Rp${(v / 1000).toFixed(0)}k`} />
+                <Tooltip formatter={(v) => fmtRp(v)} />
+                <Legend />
+                <Bar dataKey="cancel_fee" name="Cancel Fee" fill="#DC2626" stackId="a" />
+                <Bar dataKey="no_show" name="No-Show" fill="#D97706" stackId="a" />
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        </CardContent>
+      </Card>
+      <Card className="border-slate-200">
+        <CardContent className="p-0 overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead className="bg-slate-50 text-xs uppercase tracking-wider text-slate-600">
+              <tr>
+                <th className="text-left p-3">Tipe</th>
+                <th className="text-left p-3">Kode</th>
+                <th className="text-left p-3">Kamar</th>
+                <th className="text-left p-3">Tamu</th>
+                <th className="text-left p-3">Source</th>
+                <th className="text-left p-3">Tanggal</th>
+                <th className="text-right p-3">Nominal</th>
+                <th className="text-left p-3">Petugas</th>
+              </tr>
+            </thead>
+            <tbody>
+              {data.items.map((it, i) => (
+                <tr key={i} className="border-t border-slate-100" data-testid={`cancel-row-${i}`}>
+                  <td className="p-3">
+                    <span className={`text-[10px] uppercase font-bold px-2 py-0.5 rounded ${it.tipe === "no_show" ? "bg-amber-100 text-amber-700" : "bg-red-100 text-red-700"}`}>{it.tipe}</span>
+                  </td>
+                  <td className="p-3 font-mono text-xs">{it.kode}</td>
+                  <td className="p-3">{it.room_nomor}</td>
+                  <td className="p-3">{it.nama_tamu}</td>
+                  <td className="p-3 text-xs uppercase">{it.source}</td>
+                  <td className="p-3 text-xs">{it.tanggal}</td>
+                  <td className="p-3 text-right font-bold">{fmtRp(it.nominal)}</td>
+                  <td className="p-3 text-xs">{it.petugas}</td>
+                </tr>
+              ))}
+              {data.items.length === 0 && <tr><td colSpan={8} className="p-6 text-center text-slate-500">Tidak ada cancel/no-show dalam rentang ini</td></tr>}
+            </tbody>
+          </table>
+        </CardContent>
+      </Card>
     </div>
   );
 }

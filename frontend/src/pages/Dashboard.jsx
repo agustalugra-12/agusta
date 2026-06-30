@@ -138,6 +138,20 @@ export default function Dashboard() {
     } catch (e) { toast.error(e?.response?.data?.detail || "Gagal"); }
   };
 
+  // Konfirmasi pembayaran manual (transfer rekening) — staff verify booking_pending → booking_paid
+  const markPaidManual = async () => {
+    if (!bookingDetail) return;
+    const total = Number(bookingDetail.total || 0);
+    const nominalStr = window.prompt(`Konfirmasi pembayaran manual untuk ${bookingDetail.kode}.\nNominal yang diterima (default: ${fmtRp(total)}):`, total);
+    if (nominalStr === null) return;
+    const nominal = Number(nominalStr) || total;
+    try {
+      const { data } = await api.post(`/bookings/${bookingDetail.id}/mark-paid-manual`, { nominal, metode: "transfer_manual" });
+      toast.success(`Booking ${data.booking_kode} dikonfirmasi PAID (${fmtRp(data.amount)})`);
+      setBookingDetail(null); load();
+    } catch (e) { toast.error(e?.response?.data?.detail || "Gagal"); }
+  };
+
   // Mark No-Show (tamu tidak datang): hanya untuk booking_paid, DP/full payment tidak direfund
   const markNoShow = async () => {
     if (!bookingDetail) return;
@@ -507,6 +521,9 @@ export default function Dashboard() {
             {!rescheduleMode && bookingDetail?.status === "booking_pending" && (
               <>
                 <Button data-testid="bd-reschedule" variant="outline" onClick={() => setRescheduleMode(true)}>Reschedule</Button>
+                <Button data-testid="bd-mark-paid-manual" variant="outline" onClick={markPaidManual} className="text-emerald-700 border-emerald-400 hover:bg-emerald-50">
+                  Konfirmasi Pembayaran Manual
+                </Button>
                 <Button data-testid="bd-cancel-pending" variant="outline" onClick={cancelBookingDetail} className="text-red-600 border-red-300 hover:bg-red-50">Batalkan (Fee 10%)</Button>
               </>
             )}
