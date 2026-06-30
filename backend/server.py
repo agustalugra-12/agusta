@@ -124,10 +124,12 @@ class CheckinCreate(BaseModel):
     room_id: str
     catatan: str = ""
     foto_identitas_url: Optional[str] = ""
+    jam_checkin: Optional[str] = None  # ISO datetime; default = now
 
 class CheckoutIn(BaseModel):
     pembayaran: List[Dict[str, Any]] = []  # [{"metode":"tunai","jumlah":100000}]
     overtime_manual: Optional[int] = None  # jika ingin override jam overtime
+    jam_checkout: Optional[str] = None  # opsional, ISO datetime
     catatan: str = ""
 
 class ProductCreate(BaseModel):
@@ -415,6 +417,16 @@ async def create_checkin(body: CheckinCreate, user: dict = Depends(get_current_u
             "last_visit": now_iso(),
             "created_at": now_iso(),
         })
+    # parse jam_checkin
+    jam_ci_iso = now_iso()
+    if body.jam_checkin:
+        try:
+            d = datetime.fromisoformat(body.jam_checkin.replace("Z", "+00:00"))
+            if d.tzinfo is None:
+                d = d.replace(tzinfo=timezone.utc)
+            jam_ci_iso = d.astimezone(timezone.utc).isoformat()
+        except Exception:
+            raise HTTPException(400, "Format jam check-in tidak valid")
     # number generator
     trx_no = f"CI-{datetime.now().strftime('%Y%m%d%H%M%S')}-{uuid.uuid4().hex[:4].upper()}"
     doc = {
@@ -430,7 +442,7 @@ async def create_checkin(body: CheckinCreate, user: dict = Depends(get_current_u
         "room_nomor": r["nomor"],
         "room_tipe": r["tipe"],
         "tarif_dasar": r["tarif"],
-        "jam_checkin": now_iso(),
+        "jam_checkin": jam_ci_iso,
         "jam_checkout": None,
         "durasi_jam": 0,
         "overtime_jam": 0,
@@ -488,7 +500,17 @@ async def checkout(checkin_id: str, body: CheckoutIn, user: dict = Depends(get_c
     if c["status"] != "aktif":
         raise HTTPException(400, "Check-in sudah selesai")
     now = datetime.now(timezone.utc)
+    if body.jam_checkout:
+        try:
+            d = datetime.fromisoformat(body.jam_checkout.replace("Z", "+00:00"))
+            if d.tzinfo is None:
+                d = d.replace(tzinfo=timezone.utc)
+            now = d.astimezone(timezone.utc)
+        except Exception:
+            raise HTTPException(400, "Format jam check-out tidak valid")
     ci = datetime.fromisoformat(c["jam_checkin"])
+    if now < ci:
+        raise HTTPException(400, "Jam check-out tidak boleh sebelum jam check-in")
     calc = calc_tagihan(c["tarif_dasar"], ci, now, body.overtime_manual)
     total_bayar = sum(int(p.get("jumlah", 0)) for p in body.pembayaran)
     if total_bayar < calc["total"]:

@@ -14,6 +14,10 @@ export default function CheckOut() {
   const nav = useNavigate();
   const [ci, setCi] = useState(null);
   const [overtimeOverride, setOvertimeOverride] = useState("");
+  const [jamCheckout, setJamCheckout] = useState(() => {
+    const d = new Date(); d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
+    return d.toISOString().slice(0, 16);
+  });
   const [pays, setPays] = useState([{ metode: "tunai", jumlah: 0 }]);
   const [catatan, setCatatan] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -28,9 +32,26 @@ export default function CheckOut() {
 
   const preview = ci?.preview;
   const overtimeNum = overtimeOverride === "" ? undefined : Number(overtimeOverride);
-  const total = overtimeNum !== undefined && preview
-    ? preview.tarif_dasar + Math.max(0, overtimeNum) * 20000
-    : preview?.total || 0;
+  // Hitung ulang berdasarkan jamCheckout yg dipilih (jika berbeda dari preview)
+  const localCalc = (() => {
+    if (!ci || !jamCheckout) return null;
+    const inIso = new Date(ci.jam_checkin);
+    const outIso = new Date(jamCheckout);
+    if (outIso < inIso) return null;
+    const hours = (outIso - inIso) / 3600000;
+    const ot = overtimeNum !== undefined ? Math.max(0, overtimeNum) : Math.max(0, Math.ceil(hours - 6));
+    const biaya = ot * 20000;
+    return { durasi_jam: hours.toFixed(2), overtime_jam: ot, biaya_tambahan: biaya, total: ci.tarif_dasar + biaya };
+  })();
+  const total = localCalc ? localCalc.total : (preview?.total || 0);
+
+  // Sync default payment amount when total recalculated and user has the default single 'tunai' row at 0
+  useEffect(() => {
+    if (pays.length === 1 && pays[0].metode === "tunai" && (pays[0].jumlah === 0 || pays[0].jumlah === "0")) {
+      setPays([{ metode: "tunai", jumlah: total }]);
+    }
+    // eslint-disable-next-line
+  }, [total]);
 
   const totalPay = pays.reduce((a, p) => a + (Number(p.jumlah) || 0), 0);
   const kurang = total - totalPay;
@@ -42,6 +63,7 @@ export default function CheckOut() {
       const { data } = await api.post(`/checkins/${checkinId}/checkout`, {
         pembayaran: pays.filter(p => Number(p.jumlah) > 0).map(p => ({ metode: p.metode, jumlah: Number(p.jumlah) })),
         overtime_manual: overtimeNum,
+        jam_checkout: jamCheckout ? new Date(jamCheckout).toISOString() : undefined,
         catatan,
       });
       setDone(data);
@@ -87,10 +109,13 @@ export default function CheckOut() {
       <Card className="border-slate-200">
         <CardContent className="p-5 sm:p-6 grid sm:grid-cols-2 gap-4 text-sm">
           <Row label="Jam Check-In" value={fmtDateTime(ci.jam_checkin)} />
-          <Row label="Jam Sekarang" value={fmtDateTime(new Date().toISOString())} />
+          <div>
+            <div className="text-xs uppercase tracking-wider text-slate-500">Jam Check-Out (bisa diubah)</div>
+            <Input data-testid="co-jam" type="datetime-local" value={jamCheckout} onChange={(e) => setJamCheckout(e.target.value)} className="h-10 mt-1" />
+          </div>
           <Row label="Tarif Dasar" value={fmtRp(ci.tarif_dasar)} />
-          <Row label="Durasi" value={preview ? `${preview.durasi_jam} jam` : "-"} />
-          <Row label="Overtime (auto)" value={preview ? `${preview.overtime_jam} jam = ${fmtRp(preview.biaya_tambahan)}` : "-"} />
+          <Row label="Durasi" value={localCalc ? `${localCalc.durasi_jam} jam` : (preview ? `${preview.durasi_jam} jam` : "-")} />
+          <Row label="Overtime" value={localCalc ? `${localCalc.overtime_jam} jam = ${fmtRp(localCalc.biaya_tambahan)}` : (preview ? `${preview.overtime_jam} jam = ${fmtRp(preview.biaya_tambahan)}` : "-")} />
         </CardContent>
       </Card>
 

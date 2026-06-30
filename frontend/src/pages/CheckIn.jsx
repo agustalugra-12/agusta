@@ -13,10 +13,24 @@ export default function CheckIn() {
   const { roomId } = useParams();
   const nav = useNavigate();
   const [room, setRoom] = useState(null);
+  // default jam_checkin = sekarang dalam format datetime-local (lokal browser)
+  const initLocal = () => {
+    const d = new Date(); d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
+    return d.toISOString().slice(0, 16);
+  };
   const [form, setForm] = useState({
     nama_tamu: "", no_hp: "", no_identitas: "", kendaraan: "", jumlah_tamu: 1, catatan: "",
+    jam_checkin: initLocal(),
   });
   const [submitting, setSubmitting] = useState(false);
+
+  // Estimasi check-out = jam_checkin + 6 jam
+  const estCheckout = (() => {
+    if (!form.jam_checkin) return "";
+    const d = new Date(form.jam_checkin);
+    d.setHours(d.getHours() + 6);
+    return d.toLocaleString("id-ID", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" });
+  })();
 
   useEffect(() => {
     api.get("/rooms").then(r => {
@@ -32,7 +46,13 @@ export default function CheckIn() {
     if (!form.nama_tamu.trim()) { toast.error("Nama tamu wajib diisi"); return; }
     setSubmitting(true);
     try {
-      const { data } = await api.post("/checkins", { ...form, room_id: roomId, jumlah_tamu: Number(form.jumlah_tamu) || 1 });
+      // konversi datetime-local ke ISO dengan timezone lokal
+      const localIso = form.jam_checkin ? new Date(form.jam_checkin).toISOString() : undefined;
+      const { data } = await api.post("/checkins", {
+        ...form, room_id: roomId,
+        jumlah_tamu: Number(form.jumlah_tamu) || 1,
+        jam_checkin: localIso,
+      });
       toast.success(`Check-in berhasil • ${data.trx_no}`);
       nav("/");
     } catch (e) {
@@ -83,6 +103,16 @@ export default function CheckIn() {
             <Field label="Jumlah Tamu" testid="ci-jumlah">
               <Input type="number" min="1" value={form.jumlah_tamu} onChange={(e) => setForm(f => ({ ...f, jumlah_tamu: e.target.value }))} className="h-12" />
             </Field>
+            <Field label="Jam Check-In" testid="ci-jam">
+              <Input type="datetime-local" value={form.jam_checkin} onChange={(e) => setForm(f => ({ ...f, jam_checkin: e.target.value }))} className="h-12" />
+            </Field>
+            <div className="sm:col-span-2 rounded-lg bg-blue-50 border border-blue-200 p-3 text-sm flex items-center justify-between flex-wrap gap-2">
+              <div>
+                <div className="text-blue-700 font-semibold">Estimasi jam check-out (6 jam dari check-in)</div>
+                <div className="text-xs text-slate-600">Setelah lewat 6 jam akan dikenakan overtime Rp 20.000 / jam saat check-out.</div>
+              </div>
+              <div className="text-lg font-extrabold text-blue-700">{estCheckout || "—"}</div>
+            </div>
             <div className="sm:col-span-2">
               <Label>Catatan</Label>
               <Textarea data-testid="ci-catatan" value={form.catatan} onChange={(e) => setForm(f => ({ ...f, catatan: e.target.value }))} className="mt-1.5" rows={3} />
