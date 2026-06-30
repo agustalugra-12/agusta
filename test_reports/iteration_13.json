@@ -1,0 +1,41 @@
+{
+  "summary": "RETEST iteration_12 bug fix: Dashboard.jsx load() now fetches /api/reports/booking-widgets and calls setWidgets(w.data). VERIFIED PASS: all 7 dashboard widgets render actual numeric values matching API. Backend smoke regression (test_phase_d.py 8/8 PASS): widgets endpoint shape + numeric + $toDouble; cancel-with-fee all 4 paths (success, too-late, wrong-status, not-found). bd-wa-confirm + pb-success-wa already verified in iteration_12 (code unchanged).",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {
+        "screen": "Booking Detail Dialog footer",
+        "issues": ["LEFTOVER FROM ITER_12 (cosmetic, unchanged): 'Kirim Konfirmasi WA' button text clipped due to 4 buttons in DialogFooter at 1920px. Functional but visual issue."]
+      }
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_phase_d.py",
+    "/app/test_reports/pytest/phase_d_results.xml"
+  ],
+  "action_items": [
+    "OPTIONAL/LOW: shorten 'Kirim Konfirmasi WA' label or wrap DialogFooter (iter_12 leftover, cosmetic only).",
+    "BACKEND TEST HYGIENE: test_phase_d.py picks the first kosong room — running it twice rapidly without cleanup can fail with 'Kamar sudah dibooking pada rentang ini' because parallel xdist workers (-n auto from pytest.ini) collide. Workaround: run with -n0, or update _create_booking_paid() to use a unique offset per worker. NOT a product bug — test infra only."
+  ],
+  "critical_code_review_comments": [
+    "Dashboard.jsx L44-57: Promise.all now fetches 5 endpoints serially-parallel including /reports/booking-widgets. polled every 30s — fine for now, but consider adding loading state to widgets row (currently silently re-renders).",
+    "Dashboard.jsx L252-258: ?? '—' fallback works for booking_hari_ini/pending/paid/online_month/walkin_month but for w-rev-online and w-mt-total uses || 0 which would display 'Rp 0' / '0 trx' silently if widgets===null. Considered correct after fetch lands, but pre-fetch flash shows 0 not '—'. Minor UX inconsistency.",
+    "test_phase_d.py L66: `room = next((r for r in rooms if r.get('status') == 'kosong'), rooms[0])` picks first kosong room — fragile under parallel test execution. Recommend selecting a different room per test or using a TEST-only room."
+  ],
+  "updated_files": [],
+  "success_rate": {
+    "backend": "100% (8/8 pytest pass after sequential run + stale TEST_PHASE_D cleanup)",
+    "frontend": "100% (7/7 widgets verified: w-today=1, w-pending=6, w-paid=2, w-rev-online=Rp 123.600, w-mt-total=2 trx, w-online-month=33, w-walkin-month=29 — all match GET /api/reports/booking-widgets)"
+  },
+  "test_credentials": "owner/owner123 (from /app/memory/test_credentials.md)",
+  "seed_data_creation": "Cleared 2 stale TEST_PHASE_D bookings from a prior crashed run via mongosh `db.bookings.deleteMany({catatan:'TEST_PHASE_D'})`. Current test_phase_d.py self-cleans via _cleanup() after each test.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Dashboard widgets fix is fully verified. Backend regression test_phase_d.py must be run with `-n0` to avoid xdist worker room conflict, and ensure /app/backend/.env is sourced (MONGO_URL, DB_NAME) plus REACT_APP_BACKEND_URL exported before pytest. Outstanding from iter_12 (not retested here, deferred): bd-cancel-refund UI flow on a booking_paid record (needs Midtrans webhook simulation or mongo mutation).",
+  "rca_of_the_issue": "BUG (iter_12): Dashboard widgets showed fallback values. FIX VERIFIED: Dashboard.jsx load() Promise.all now includes api.get('/reports/booking-widgets') at line 51 and setWidgets(w.data) at line 55. Re-tested via Playwright + DOM scrape + parallel /api/reports/booking-widgets fetch — all 7 widgets show actual values matching API exactly (1, 6, 2, Rp 123.600, 2 trx, 33, 29)."
+}

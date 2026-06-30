@@ -43,15 +43,16 @@ export default function Dashboard() {
 
   const load = async () => {
     try {
-      const [s, r, c, b] = await Promise.all([
+      const [s, r, c, b, w] = await Promise.all([
         api.get("/reports/summary"),
         api.get("/rooms"),
         api.get("/checkins", { params: { status: "aktif" } }),
         api.get("/bookings"),
+        api.get("/reports/booking-widgets"),
       ]);
       // tampilkan semua booking yang menempati kamar: aktif, booking_pending, booking_paid
       const occupying = b.data.filter(x => ["aktif", "booking_pending", "booking_paid"].includes(x.status));
-      setSummary(s.data); setRooms(r.data); setActive(c.data); setBookings(occupying);
+      setSummary(s.data); setRooms(r.data); setActive(c.data); setBookings(occupying); setWidgets(w.data);
     } catch (e) { console.error(e); }
   };
 
