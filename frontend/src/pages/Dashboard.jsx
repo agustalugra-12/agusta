@@ -138,6 +138,45 @@ export default function Dashboard() {
     } catch (e) { toast.error(e?.response?.data?.detail || "Gagal"); }
   };
 
+  // Collect sisa pelunasan (DP 50% yang belum lunas)
+  const collectBalance = async () => {
+    if (!bookingDetail) return;
+    const total = Number(bookingDetail.total || 0);
+    const paid = Number(bookingDetail.amount_due || 0);
+    const sisa = Math.max(0, total - paid);
+    if (sisa <= 0) { toast.info("Booking sudah lunas"); return; }
+    const metode = window.prompt(`Metode pembayaran sisa Rp ${sisa.toLocaleString("id-ID")}: ketik 'cash' atau 'qris'`, "cash");
+    if (!metode) return;
+    const m = metode.trim().toLowerCase();
+    if (m !== "cash" && m !== "qris") { toast.error("Metode harus cash atau qris"); return; }
+    const nomStr = window.prompt(`Nominal yang diterima (default: Rp ${sisa.toLocaleString("id-ID")}):`, sisa);
+    if (!nomStr) return;
+    const nominal = Number(nomStr) || sisa;
+    try {
+      const { data } = await api.post(`/bookings/${bookingDetail.id}/collect-balance`, { nominal, metode: m });
+      const msg = data.remaining > 0
+        ? `Diterima Rp ${data.amount_collected.toLocaleString("id-ID")} (${m.toUpperCase()}). Sisa Rp ${data.remaining.toLocaleString("id-ID")}.`
+        : `Pelunasan diterima Rp ${data.amount_collected.toLocaleString("id-ID")} (${m.toUpperCase()}). Booking LUNAS.`;
+      toast.success(msg);
+      setBookingDetail(null); load();
+    } catch (e) { toast.error(e?.response?.data?.detail || "Gagal"); }
+  };
+
+  // Check-in tamu dari booking (booking_paid → checked_in)
+  const checkinFromBooking = async () => {
+    if (!bookingDetail) return;
+    const total = Number(bookingDetail.total || 0);
+    const paid = Number(bookingDetail.amount_due || 0);
+    const sisa = Math.max(0, total - paid);
+    const warn = sisa > 0 ? `\nPERHATIAN: Sisa pembayaran Rp ${sisa.toLocaleString("id-ID")} belum di-collect. Lanjutkan check-in?` : "";
+    if (!window.confirm(`Check-in tamu ${bookingDetail.nama_tamu} (kamar ${bookingDetail.room_nomor})?${warn}`)) return;
+    try {
+      const { data } = await api.post(`/bookings/${bookingDetail.id}/checkin`, {});
+      toast.success(`Check-in OK. TRX ${data.trx_no}${data.remaining > 0 ? ` (sisa Rp ${data.remaining.toLocaleString("id-ID")})` : ""}`);
+      setBookingDetail(null); load();
+    } catch (e) { toast.error(e?.response?.data?.detail || "Gagal"); }
+  };
+
   // Konfirmasi pembayaran manual (transfer rekening) — staff verify booking_pending → booking_paid
   const markPaidManual = async () => {
     if (!bookingDetail) return;
@@ -491,7 +530,13 @@ export default function Dashboard() {
                   <div className="flex justify-between"><span className="text-slate-500">Subtotal</span><b>{fmtRp(bookingDetail.subtotal || 0)}</b></div>
                   <div className="flex justify-between"><span className="text-slate-500">Service Fee 3%</span><b>{fmtRp(bookingDetail.service_fee || 0)}</b></div>
                   <div className="flex justify-between border-t pt-1 mt-1"><span className="font-bold">Total</span><b className="text-blue-700">{fmtRp(bookingDetail.total)}</b></div>
-                  {bookingDetail.amount_due && <div className="flex justify-between"><span className="text-slate-500">Sudah dibayar</span><b className="text-emerald-700">{fmtRp(bookingDetail.amount_due)}</b></div>}
+                  {bookingDetail.amount_due > 0 && <div className="flex justify-between"><span className="text-slate-500">Sudah dibayar</span><b className="text-emerald-700">{fmtRp(bookingDetail.amount_due)}</b></div>}
+                  {bookingDetail.status === "booking_paid" && Number(bookingDetail.total || 0) - Number(bookingDetail.amount_due || 0) > 0 && (
+                    <div className="flex justify-between pt-1 border-t border-amber-300 bg-amber-50 -mx-2 -mb-1 mt-1 px-2 pb-1 rounded-b">
+                      <span className="font-bold text-amber-800">SISA harus dibayar</span>
+                      <b className="text-amber-900">{fmtRp(Number(bookingDetail.total || 0) - Number(bookingDetail.amount_due || 0))}</b>
+                    </div>
+                  )}
                 </div>
               )}
               {bookingDetail.catatan && <div className="italic text-slate-600">&ldquo;{bookingDetail.catatan}&rdquo;</div>}
@@ -539,6 +584,14 @@ export default function Dashboard() {
             )}
             {!rescheduleMode && bookingDetail?.status === "booking_paid" && (
               <>
+                <Button data-testid="bd-checkin" onClick={checkinFromBooking} className="bg-emerald-600 hover:bg-emerald-700 text-white">
+                  Check-in Tamu
+                </Button>
+                {Number(bookingDetail.total || 0) - Number(bookingDetail.amount_due || 0) > 0 && (
+                  <Button data-testid="bd-collect" variant="outline" onClick={collectBalance} className="text-blue-700 border-blue-400 hover:bg-blue-50">
+                    Collect Sisa Rp {(Number(bookingDetail.total || 0) - Number(bookingDetail.amount_due || 0)).toLocaleString("id-ID")}
+                  </Button>
+                )}
                 <Button data-testid="bd-reschedule-paid" variant="outline" onClick={() => setRescheduleMode(true)}>Reschedule</Button>
                 <Button data-testid="bd-cancel-refund" variant="outline" onClick={cancelBookingDetail} className="text-red-600 border-red-300 hover:bg-red-50">
                   Batalkan + Refund (Fee 10%)

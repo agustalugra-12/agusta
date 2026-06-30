@@ -1285,6 +1285,107 @@ class ManualMarkPaidBody(BaseModel):
     metode: Optional[str] = "transfer_manual"  # transfer_manual / cash / etc
     nominal: Optional[int] = None  # if not provided, use total
 
+class CollectBalanceBody(BaseModel):
+    nominal: int
+    metode: str = "cash"  # cash / qris
+
+@api.post("/bookings/{bid}/collect-balance")
+async def collect_balance(bid: str, body: CollectBalanceBody, user: dict = Depends(get_current_user)):
+    """Collect sisa pelunasan (untuk DP 50% yang belum lunas).
+    Tambah amount_due dengan nominal yang diterima, catat di payment_log.
+    """
+    if body.nominal <= 0:
+        raise HTTPException(400, "Nominal harus > 0")
+    if body.metode not in ("cash", "qris"):
+        raise HTTPException(400, "Metode harus cash atau qris")
+    b = await db.bookings.find_one({"id": bid})
+    if not b:
+        raise HTTPException(404, "Booking tidak ditemukan")
+    if b.get("status") not in ("booking_paid", "checked_in"):
+        raise HTTPException(400, f"Hanya booking_paid/checked_in yang bisa di-collect (status: {b.get('status')})")
+    total = int(b.get("total") or 0)
+    paid_now = int(b.get("amount_due") or 0)
+    sisa = max(0, total - paid_now)
+    if sisa <= 0:
+        raise HTTPException(400, "Booking sudah lunas, tidak ada sisa")
+    if body.nominal > sisa:
+        raise HTTPException(400, f"Nominal terlalu besar. Sisa: Rp{sisa:,}".replace(",", "."))
+    new_paid = paid_now + body.nominal
+    now = now_iso()
+    await db.bookings.update_one({"id": bid}, {"$set": {
+        "amount_due": new_paid, "updated_at": now,
+    }})
+    await db.payment_log.insert_one({
+        "id": str(uuid.uuid4()), "booking_id": b["id"], "booking_kode": b["kode"],
+        "order_id": f"COLLECT-{b['kode']}-{uuid.uuid4().hex[:4].upper()}",
+        "gross_amount": str(body.nominal), "payment_option": "collect_balance",
+        "transaction_status": "settlement", "status_code": "200",
+        "payment_type": body.metode, "fraud_status": None,
+        "created_at": now, "updated_at": now,
+        "collected_by": user["nama"],
+    })
+    await log_activity(user, "collect_balance",
+                       f"Collect sisa pelunasan booking {b['kode']}: Rp{body.nominal:,} via {body.metode} (total terbayar Rp{new_paid:,}/Rp{total:,})".replace(",", "."),
+                       entity=b.get("room_nomor", ""))
+    return {"ok": True, "amount_collected": body.nominal, "total_paid": new_paid, "remaining": max(0, total - new_paid), "booking_kode": b["kode"]}
+
+@api.post("/bookings/{bid}/checkin")
+async def checkin_from_booking(bid: str, user: dict = Depends(get_current_user)):
+    """Check-in tamu dari booking (booking_paid → checked_in).
+    Membuat record di db.checkins (status=aktif), update room → day_use, ubah booking status → checked_in.
+    """
+    b = await db.bookings.find_one({"id": bid})
+    if not b:
+        raise HTTPException(404, "Booking tidak ditemukan")
+    if b.get("status") != "booking_paid":
+        raise HTTPException(400, f"Hanya booking lunas yang bisa di-check-in (status: {b.get('status')})")
+    r = await db.rooms.find_one({"id": b["room_id"]})
+    if not r:
+        raise HTTPException(404, "Kamar tidak ditemukan")
+    if r["status"] != "kosong":
+        raise HTTPException(400, f"Kamar {r['nomor']} sedang dipakai (status: {r['status']})")
+    # Buat checkin doc
+    trx_no = f"CI-{datetime.now().strftime('%Y%m%d%H%M%S')}-{uuid.uuid4().hex[:4].upper()}"
+    total = int(b.get("total") or 0)
+    paid = int(b.get("amount_due") or 0)
+    sisa = max(0, total - paid)
+    now = now_iso()
+    ci_doc = {
+        "id": str(uuid.uuid4()),
+        "trx_no": trx_no,
+        "guest_id": None,
+        "nama_tamu": b.get("nama_tamu", ""),
+        "no_hp": b.get("no_hp", ""),
+        "no_identitas": b.get("no_identitas", ""),
+        "kendaraan": b.get("kendaraan", ""),
+        "jumlah_tamu": b.get("jumlah_tamu", 1),
+        "room_id": b["room_id"], "room_nomor": r["nomor"], "room_tipe": r["tipe"],
+        "tarif_dasar": int(r["tarif"]),
+        "jam_checkin": now, "jam_checkout": None,
+        "durasi_jam": 0, "overtime_jam": 0, "biaya_tambahan": 0, "total": 0,
+        "status": "aktif",
+        "catatan": f"Dari booking {b['kode']}. Sudah dibayar Rp{paid:,}/Rp{total:,}. Sisa Rp{sisa:,}".replace(",", "."),
+        "foto_identitas_url": "",
+        "pembayaran": [],
+        "from_booking_id": b["id"], "from_booking_kode": b["kode"],
+        "booking_paid": paid, "booking_remaining": sisa,
+        "petugas_checkin": user["nama"], "petugas_checkin_id": user["id"],
+        "created_at": now,
+    }
+    await db.checkins.insert_one(ci_doc)
+    await db.rooms.update_one({"id": b["room_id"]}, {"$set": {
+        "status": "day_use", "info": {"checkin_id": ci_doc["id"], "nama_tamu": b.get("nama_tamu", "")},
+    }})
+    await db.bookings.update_one({"id": bid}, {"$set": {
+        "status": "checked_in", "checked_in_at": now, "checked_in_by": user["nama"],
+        "checkin_id": ci_doc["id"],
+    }})
+    await log_activity(user, "checkin_from_booking",
+                       f"Check-in tamu {b.get('nama_tamu','')} dari booking {b['kode']} ke kamar {r['nomor']} (sisa Rp{sisa:,})".replace(",", "."),
+                       entity=r["nomor"])
+    return {"ok": True, "checkin_id": ci_doc["id"], "trx_no": trx_no, "booking_kode": b["kode"], "remaining": sisa}
+
+
 @api.post("/bookings/{bid}/mark-paid-manual")
 async def mark_paid_manual(bid: str, body: ManualMarkPaidBody, user: dict = Depends(get_current_user)):
     """Staff verifikasi pembayaran manual (transfer rekening). Ubah booking_pending → booking_paid.

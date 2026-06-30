@@ -1,0 +1,28 @@
+{
+  "summary": "Iter22 — Verified collect-balance + checkin-from-booking end-to-end. Backend pytest 13/13 PASS (TestCollectBalance 7/7: happy full Rp61.800→remaining=0+payment_log COLLECT-*+payment_type=cash+audit collect_balance, partial qris Rp30.000, nominal>sisa→400 'terlalu besar', metode='transfer'→400, lunas (paid==total)→400 'sudah lunas', booking_pending→400 'booking_paid/checked_in', no_auth→401/403; TestCheckinFromBooking 3/3: happy creates checkin doc status=aktif+from_booking_id+booking_paid=61800+booking_remaining=61800+room→day_use+booking status=checked_in+checkin_id+audit checkin_from_booking, status!=booking_paid→400 'lunas', room!=kosong→400; TestSmokeRegression 3/3: mark-paid-manual flips booking_paid+payment_type=transfer_manual, /reports/cancellation-revenue arithmetic OK, /public/bank-accounts non-empty). Regression iter17+iter19 26/26 PASS, iter20 9/10 PASS (1 pre-existing failure: default-banks BCA test fails because env now defaults to BRI only per iter21, not introduced by this iteration). Frontend live E2E with owner/owner123: created booking_paid total=Rp123.600 amount_due=Rp61.800 → BookingDetail dialog shows amber 'SISA harus dibayar Rp 61.800' box, [data-testid=bd-checkin] emerald + [data-testid=bd-collect] blue 'Collect Sisa Rp 61.800' both rendered. Click bd-collect → window.prompt metode (cash) → window.prompt nominal (61800) → POST collect-balance → toast 'Diterima Rp 61.800 (CASH). Booking LUNAS'. Reopen dialog: SISA hidden, bd-collect hidden, bd-checkin still visible. Click bd-checkin → window.confirm → POST /checkin → toast 'Check-in OK. TRX CI-20260630182648-063A'; room card flips to Day Use (red) with tamu name visible.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_iter22_collect_checkin.py",
+    "/app/test_reports/pytest/iter22_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "server.py L1605 checkin_booking (legacy aktif→checked_in) is now DEAD CODE because L1332 checkin_from_booking registers the same route /bookings/{bid}/checkin first — FastAPI takes the first match. This silently overrides the legacy flow. Either rename one of them (e.g. /bookings/{bid}/checkin-from-booking and /bookings/{bid}/activate) or remove L1605-1656 if it's truly superseded. Currently both are mounted but only the new one is reachable.",
+    "server.py L1288-1330 collect_balance: clean validation (nominal>0, metode in cash/qris, status in booking_paid/checked_in, sisa>0, nominal<=sisa). payment_log shape COLLECT-{kode}-{4hex} order_id + payment_option=collect_balance + transaction_status=settlement keeps reports unified. Audit logs collected_by=user.nama. No issues.",
+    "server.py L1332-1386 checkin_from_booking: idempotency relies on b.status==booking_paid guard — retry safe (returns 400). Persists booking_paid+booking_remaining on checkin doc so future tagihan calculation can subtract DP at checkout. trx_no CI-yyyymmddHHMMSS-{4hex} matches existing /api/checkins format — no schema branching needed.",
+    "Dashboard.jsx L142-178 collectBalance + checkinFromBooking: window.prompt UX is minimal but functional. Confirm dialog for checkin shows sisa warning when amount_due<total — good UX guardrail. Consider future shadcn Dialog upgrade with select component for metode (cash/qris) instead of free-text prompt, but non-blocking.",
+    "Dashboard.jsx L534-539 SISA box: amber bg + border + bold label visually distinct from sudah-dibayar emerald row. L587-594 bd-checkin always shown for booking_paid, bd-collect conditional on remaining>0 — matches spec exactly."
+  ],
+  "updated_files": ["/app/backend/tests/test_iter22_collect_checkin.py"],
+  "success_rate": {
+    "backend": "100% (13/13 iter22) + regression 35/36 (1 pre-existing iter20 BCA default test failure unrelated to this iteration — env defaults to BRI-only per iter21)",
+    "frontend": "100% — live E2E DP50% collect-balance full flow (metode/nominal prompts → toast → SISA hidden → bd-collect hidden) + checkin → toast TRX CI-* → room day_use confirmed"
+  },
+  "test_credentials": "owner/owner123 (per /app/memory/test_credentials.md)",
+  "seed_data_creation": "Each test class creates TEST_ITER22_<uuid> bookings via /api/public/bookings then promotes to booking_paid via direct mongo $set (status=booking_paid, total=123600, amount_due=61800). Cleanup: deletes checkins, resets room to kosong, cancels booking. Frontend test booking TEST_ITER22_FE_DP50 was created and cleaned up after run.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Run with `pytest backend/tests/test_iter22_collect_checkin.py -n 0` (xdist plugin enabled in pytest.ini, use -n 0 for serial). /api/reports/cancellation-revenue requires from_date/to_date (not start/end). POST /api/public/bookings requires tanggal=YYYY-MM-DD + jam_checkin=HH:mm (not jam_mulai/jam_selesai). Audit collection is db.audit_log (single), field is `detail` not `deskripsi`. Booking creation returns `id` field (not `booking_id`). Each TEST_ITER22 test uses unique future dates (2030+counter) to avoid overlap on shared room.",
+  "rca of the issue": "N/A — features implemented correctly. Only code-review remark: duplicate POST /bookings/{bid}/checkin route declaration in server.py (L1332 new + L1605 legacy). Currently first match (new) wins; legacy is dead. Main agent should decide whether to remove legacy or rename one route — non-blocking for this iteration."
+}
