@@ -31,6 +31,9 @@ Aplikasi web + Android PWA "Pelangi Homestay Management System" untuk operasiona
 - **(Feb 2026)** Indikator booking di Dashboard: kartu kamar berwarna coklat (#92400E) dengan ribbon tanggal & badge "Booked" untuk kamar yang punya booking aktif walau status kosong; legend kamar diperbarui.
 - **(Feb 2026)** Edit Booking dari halaman /bookings: tombol Pencil pada card booking aktif → modal dengan prefill data → PUT /api/bookings/{id} (overlap-exclude-self, status guard, audit fields).
 - **(Feb 2026)** Dashboard filter tanggal booking: date picker di section "Daftar Kamar" — ribbon "Booked" + warna coklat hanya muncul untuk kamar yang punya booking aktif overlap dengan tanggal filter (default hari ini). Booking masa depan tidak mengganggu transaksi hari ini. Tombol "Hari ini" + banner kuning saat filter ≠ hari ini.
+- **(Feb 2026)** Override status realtime saat filter ≠ hari ini: kamar `day_use/menginap/perlu_dibersihkan/maintenance` ditampilkan "Kosong" untuk tanggal selain hari ini (status realtime hanya berlaku untuk hari ini).
+- **(Feb 2026)** Booking Detail Dialog di Dashboard: klik kartu kamar yang punya booking pada tanggal filter → modal detail tamu + tombol Reschedule (PUT /api/bookings/{id}) & Batalkan (DELETE).
+- **(Feb 2026)** Move Room: pindahkan tamu day_use/menginap ke kamar kosong lain via endpoint `POST /api/rooms/{room_id}/move` (kamar lama → `perlu_dibersihkan`; kamar baru ambil alih status + info; untuk day_use, checkin aktif diupdate ke room_id baru). UI di action dialog Dashboard.
 
 ## Backlog / Next Phase
 **P0**
