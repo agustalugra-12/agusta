@@ -321,11 +321,13 @@ export default function Dashboard() {
                 ? new Date(upcomingBk.jam_mulai).toLocaleString("id-ID", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })
                 : null;
               return (
-              <button
+              <div
                 key={r.id}
                 data-testid={`room-${r.nomor}`}
                 onClick={() => handleRoomClick(r, upcomingBk)}
-                className="room-card relative rounded-xl text-white p-4 aspect-square flex flex-col justify-between text-left overflow-hidden"
+                role="button" tabIndex={0}
+                onKeyDown={(e) => { if (e.key === "Enter") handleRoomClick(r, upcomingBk); }}
+                className="room-card relative rounded-xl text-white p-4 aspect-square flex flex-col justify-between text-left overflow-hidden cursor-pointer"
                 style={{ background: bg }}
               >
                 <div className="flex items-center justify-between">
@@ -341,7 +343,18 @@ export default function Dashboard() {
                     {bkLabel}
                   </div>
                 )}
-              </button>
+                {upcomingBk && (
+                  <button
+                    type="button"
+                    data-testid={`room-cancel-${r.nomor}`}
+                    onClick={(e) => { e.stopPropagation(); quickCancelBooking(upcomingBk); }}
+                    title="Batalkan booking ini"
+                    className="absolute top-1 left-1 w-6 h-6 rounded-full bg-white/95 text-red-600 hover:bg-red-600 hover:text-white grid place-items-center transition-colors z-10"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                )}
+              </div>
               );
             })}
           </div>

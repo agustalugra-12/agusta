@@ -1,0 +1,34 @@
+{
+  "summary": "Re-test Fix 2 (Dashboard quick-cancel X button on room cards) — ALL ASSERTIONS PASS. Code now contains the room-cancel-N button at Dashboard.jsx L347-355 wired to quickCancelBooking. Verified end-to-end: created public booking for date+5 → date filter shows Booked card → X button visible top-left with lucide-x icon → clicking card body (not X) opens BookingDetail (stopPropagation OK) → clicking X triggers window.confirm → accepting fires DELETE /api/bookings/{id} → toast 'Booking BKO-... dibatalkan' → card returns green and X disappears. Cleanup DELETE attempted; backend correctly rejects re-cancel with 400.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "GET /api/bookings/{id}", "issue": "Returns 405 Method Not Allowed — there is no register handler for fetching a single booking by id. /api/bookings (list) and DELETE /api/bookings/{id} work. Not blocking Fix 2 but if any future flow needs single-booking fetch (e.g., for re-verification after cancel) this will fail."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [],
+  "action_items": [
+    "Optional (low priority): add GET /api/bookings/{id} endpoint in backend/server.py for symmetry with DELETE /api/bookings/{id}. Current cancellation flow does not depend on it (UI uses load() refetch), but it would improve API completeness and let tests verify post-cancel status directly via API."
+  ],
+  "critical_code_review_comments": [
+    "Dashboard.jsx L324-356: refactor from <button> wrapping the card to <div role='button' tabIndex={0} onKeyDown=...> is correct and resolves invalid-nested-button issue. Nested <button data-testid='room-cancel-N'> with e.stopPropagation() works as designed.",
+    "quickCancelBooking (L132) uses window.confirm — acceptable for owner-side quick action; consider replacing with shadcn AlertDialog for consistency with rest of app (most cancels in BookingDetail also use window.confirm/prompt; not a blocker).",
+    "Pre-existing TEST_ITER14_CI labels still visible on rooms 11 & 13 from prior orphaned checkin runs. Not blocking but should be cleaned up by a maintenance script."
+  ],
+  "updated_files": [],
+  "success_rate": {
+    "backend": "n/a (frontend-only request)",
+    "frontend": "100% (5/5 assertions: cancel_button_visible, lucide_x_icon, booking_detail_opens_on_card_click, toast_shown, card_clean_after_cancel)"
+  },
+  "test_credentials": "owner/owner123",
+  "seed_data_creation": "Created public booking BKO-20260630154824-11C5 (Standard room 12, date=2026-07-05, jam_checkin=14:00). Cancelled via the Fix 2 X button (status=cancelled). Subsequent DELETE cleanup returned 400 because already cancelled — record left in DB with status='cancelled' (does not appear on Dashboard since occupying filter excludes cancelled).",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Fix 2 fully verified. Public booking POST payload schema: {nama_tamu, no_hp, no_identitas, kendaraan, jumlah_tamu, room_id, tanggal (YYYY-MM-DD), jam_checkin (HH:mm 24h), catatan}. Token key in localStorage = 'ph_token'. GET /api/bookings/{id} returns 405 — use GET /api/bookings list + filter by id to verify backend state if needed.",
+  "rca_of_the_issue": "Previous iteration_14 reported Fix 2 missing because the room-cancel button UI was never rendered. E1 has now re-applied the refactor: room card became <div role='button' tabIndex={0}>; inside it, when upcomingBk is truthy, an absolutely-positioned <button data-testid={`room-cancel-${r.nomor}`} z-10> is rendered with onClick={e => { e.stopPropagation(); quickCancelBooking(upcomingBk); }}. Confirmed via DOM inspection (lucide-x SVG present) and behavioural test (toast + state change)."
+}
