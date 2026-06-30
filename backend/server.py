@@ -1160,6 +1160,16 @@ async def create_booking(body: BookingCreate, user: dict = Depends(get_current_u
     if overlap:
         raise HTTPException(400, f"Kamar sudah dibooking pada rentang ini ({overlap.get('kode')})")
     kode = f"BK-{datetime.now().strftime('%Y%m%d%H%M%S')}-{uuid.uuid4().hex[:4].upper()}"
+    # Hitung estimasi tagihan (tarif kamar + 3% service fee). Untuk menginap, durasi jam dipakai sebagai kelipatan 6 jam.
+    subtotal = int(r["tarif"])
+    if body.tipe == "menginap":
+        hours = max(6, int((end - start).total_seconds() / 3600))
+        # menginap: tarif per hari (24 jam) — pakai ceil(hours/24) hari × tarif harian (tarif kamar × 4 untuk menginap)
+        # Sederhanakan: tarif × ceil(hours/24)
+        days = max(1, -(-hours // 24))
+        subtotal = int(r["tarif"]) * days
+    service_fee = round(subtotal * SERVICE_FEE_PCT)
+    total = subtotal + service_fee
     doc = {
         "id": str(uuid.uuid4()), "kode": kode,
         "room_id": body.room_id, "room_nomor": r["nomor"], "room_tipe": r["tipe"],
@@ -1167,6 +1177,8 @@ async def create_booking(body: BookingCreate, user: dict = Depends(get_current_u
         "no_identitas": body.no_identitas, "kendaraan": body.kendaraan, "jumlah_tamu": body.jumlah_tamu,
         "jam_mulai": start.isoformat(), "jam_selesai": end.isoformat(),
         "catatan": body.catatan, "status": "aktif",
+        "subtotal": subtotal, "service_fee": service_fee, "total": total,
+        "source": "walk_in",
         "created_at": now_iso(), "created_by": user["nama"],
     }
     await db.bookings.insert_one(doc)
