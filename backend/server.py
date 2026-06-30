@@ -174,6 +174,10 @@ class HousekeepingDone(BaseModel):
     petugas: Optional[str] = ""
     catatan: Optional[str] = ""
 
+class MoveRoomBody(BaseModel):
+    new_room_id: str
+    alasan: Optional[str] = ""
+
 class BookingCreate(BaseModel):
     room_id: str
     tipe: str  # "day_use" | "menginap"
@@ -385,6 +389,57 @@ async def housekeeping_done(room_id: str, body: HousekeepingDone, user: dict = D
         )
     await log_activity(user, "housekeeping_done", f"Kamar {r['nomor']} selesai dibersihkan", entity=r["nomor"])
     return {"ok": True}
+
+@api.post("/rooms/{room_id}/move")
+async def move_room(room_id: str, body: MoveRoomBody, user: dict = Depends(get_current_user)):
+    """Pindahkan tamu/info dari kamar lama ke kamar baru.
+    - day_use: update checkin aktif room_id + room_nomor + room_tipe (tarif_dasar tetap), pindah info.
+    - menginap: pindah info dict ke kamar baru.
+    - Kamar lama → perlu_dibersihkan (karena tamu pernah masuk). Kamar baru → status sama dengan kamar lama.
+    """
+    if body.new_room_id == room_id:
+        raise HTTPException(400, "Kamar tujuan sama dengan kamar asal")
+    old = await db.rooms.find_one({"id": room_id})
+    if not old:
+        raise HTTPException(404, "Kamar asal tidak ditemukan")
+    if old["status"] not in ("day_use", "menginap"):
+        raise HTTPException(400, "Hanya kamar Day Use atau Menginap yang bisa dipindahkan")
+    new = await db.rooms.find_one({"id": body.new_room_id})
+    if not new:
+        raise HTTPException(404, "Kamar tujuan tidak ditemukan")
+    if new["status"] != "kosong":
+        raise HTTPException(400, f"Kamar tujuan tidak kosong (status: {new['status']})")
+    new_status = old["status"]
+    new_info = dict(old.get("info") or {})
+    # update kamar baru
+    await db.rooms.update_one({"id": new["id"]}, {"$set": {"status": new_status, "info": new_info}})
+    # update kamar lama
+    await db.rooms.update_one({"id": old["id"]}, {"$set": {"status": "perlu_dibersihkan", "info": {}}})
+    # update active checkin jika day_use
+    if old["status"] == "day_use":
+        ci = await db.checkins.find_one({"room_id": old["id"], "status": "aktif"})
+        if ci:
+            await db.checkins.update_one(
+                {"id": ci["id"]},
+                {"$set": {
+                    "room_id": new["id"], "room_nomor": new["nomor"], "room_tipe": new["tipe"],
+                    "moved_from_room_id": old["id"], "moved_from_room_nomor": old["nomor"],
+                    "moved_at": now_iso(), "moved_by": user["nama"],
+                    "move_reason": body.alasan or "",
+                }}
+            )
+    # housekeeping log untuk kamar lama
+    await db.housekeeping_log.insert_one({
+        "id": str(uuid.uuid4()), "room_id": old["id"], "room_nomor": old["nomor"],
+        "tanggal": now_iso(), "jam_mulai": None, "jam_selesai": None,
+        "petugas": "", "catatan": f"Pindah tamu ke kamar {new['nomor']}", "status": "pending",
+    })
+    await log_activity(
+        user, "move_room",
+        f"Pindah tamu kamar {old['nomor']} → kamar {new['nomor']} ({body.alasan or 'tanpa alasan'})",
+        entity=f"{old['nomor']}->{new['nomor']}"
+    )
+    return {"ok": True, "from": old["nomor"], "to": new["nomor"], "status": new_status}
 
 # ---- Check-in / Check-out ----
 def calc_tagihan(tarif_dasar: int, jam_checkin: datetime, jam_checkout: datetime, overtime_manual: Optional[int] = None):

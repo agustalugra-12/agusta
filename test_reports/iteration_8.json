@@ -1,0 +1,46 @@
+{
+  "summary": "Tested 3 new features end-to-end: (A) date-picker override to 'kosong' for non-today views, (B) BookingDetail dialog with Reschedule (PUT /api/bookings/{id}) and Cancel (DELETE /api/bookings/{id}), (C) Move Room flow (POST /api/rooms/{room_id}/move) for both day_use and menginap. All 6 backend pytest tests PASS. All UI scenarios PASS. Backend validations (same-room=400, source-kosong=400, target-not-kosong=400, success on day_use/menginap) verified.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "BookingDetail Dialog", "issues": ["Radix DialogContent missing `aria-describedby` / Description — minor a11y warning (console), not user-visible."]},
+      {"screen": "MoveRoom Dialog <select>", "issues": ["Hydration warning: <span> rendered as child of <option> via static-imported wrapper. Likely from a UI build/instrumentation tool; not a functional issue but produces a console.error. Consider verifying the native <select><option> markup is plain text."]}
+    ]
+  },
+  "test_results": {
+    "BACKEND_pytest_test_move_room_py": "6/6 PASS (run sequentially without xdist; parallel run had test-isolation race on shared rooms)",
+    "UI_A_date_override_status_to_kosong_on_future_date": "PASS (day_use room 6 rendered green on +5d; banner+HariIni btn visible; HariIni resets correctly)",
+    "UI_B_click_booked_room_opens_BookingDetail": "PASS (booking-detail-title visible, booking-detail-nama='TEST_UI_Tamu_D7', Reschedule + Cancel btns present)",
+    "UI_C_reschedule_D7_to_D8": "PASS (after save: D8=brown, D7=green; toast success; modal closes)",
+    "UI_D_cancel_booking_on_D6": "PASS (after confirm: room green, legend count decremented)",
+    "UI_E_move_menginap_via_action_dialog": "PASS (toast 'Tamu pindah: Kamar 1 → Kamar 2'; src=perlu_dibersihkan; tgt=menginap+correct info)",
+    "BACKEND_move_room_validations": "PASS — same_room_400, source_kosong_400, target_not_kosong_400 all return HTTP 400 as expected",
+    "BACKEND_move_room_day_use_updates_checkin": "PASS — checkin row's room_id/room_nomor updated, moved_from_room_id set"
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_move_room.py",
+    "/app/test_reports/pytest/move_room_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "Dashboard.jsx (~lines 86-115): handleRoomClick(room, upcomingBk) cleanly bifurcates click target: booking-detail when filterDate has a booking on that room, otherwise the existing action/check-in flow. Good separation.",
+    "Dashboard.jsx (line 278): effStatus = isToday ? r.status : 'kosong' correctly suppresses realtime status (day_use/menginap/perlu_dibersihkan/maintenance) on non-today views. Verified visually.",
+    "server.py move_room (lines 393-442): Validations correct. Atomic semantics: 3 DB writes (room new, room old, checkin) are NOT in a transaction; if checkin update fails the rooms are already swapped → orphan. Consider wrapping in MongoDB session/transaction (replica set required) or add compensating action on error. Low priority — failure rate would be near-zero in single-node setup.",
+    "server.py move_room: tarif_dasar intentionally NOT updated on checkin row when moving day_use (per design note). For tipe-mismatch moves (e.g., Standard→Suite) this might surprise users; consider exposing tarif in UI alert when target tipe differs.",
+    "Dashboard.jsx MoveRoom dropdown: uses native <select> instead of shadcn Select — produces React hydration warning due to static-import wrapper inserting <span> in <option>. Not a runtime bug, but consider switching to shadcn Select for consistency.",
+    "BookingDetail Dialog (line 388): missing <DialogDescription> → Radix a11y warning. Add a hidden description for screen-reader compliance.",
+    "Cancel flow uses window.confirm() — works but not consistent with shadcn AlertDialog used elsewhere. Cosmetic."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_move_room.py (NEW — 6 regression tests for move + reschedule + cancel)"
+  ],
+  "success_rate": {"backend": "100% (6/6)", "frontend": "100% (5/5 scenarios)"},
+  "test_credentials": "owner / owner123 (from /app/memory/test_credentials.md)",
+  "seed_data_creation": "Two temporary bookings (+6d and +7d) and one temporary menginap room state created during UI test; all cleaned up via DELETE /api/bookings/{id} and PUT /api/rooms/{id}/status. Verified no residual TEST_ data: only pre-existing 4 active bookings & 2 day_use rooms remain.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "All 3 new behaviors are working: (1) date filter overrides non-booking status to kosong on non-today; (2) clicking a booked room on filtered date opens BookingDetail dialog with Reschedule/Cancel actions and persists; (3) Move Room dialog correctly swaps rooms and updates active checkin (for day_use). Backend endpoint POST /api/rooms/{room_id}/move has solid validations. New regression suite: /app/backend/tests/test_move_room.py — run with `pytest -o addopts='' backend/tests/test_move_room.py` to avoid xdist isolation issues on shared room fixtures. data-testids confirmed: pindah-kamar, lanjut-checkout, booking-detail-title, booking-detail-nama, bd-reschedule, bd-cancel, bd-resched-save, resched-mulai, resched-selesai, move-target-room, move-alasan, move-submit.",
+  "rca_of_the_issue": "N/A — features working as designed."
+}

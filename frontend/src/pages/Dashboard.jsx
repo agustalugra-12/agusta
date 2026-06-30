@@ -74,13 +74,36 @@ export default function Dashboard() {
   }, [bookings, filterDate]);
 
   const isToday = filterDate === todayLocal();
+  // BookingDetail dialog state (saat klik room yang punya booking di tanggal filter)
+  const [bookingDetail, setBookingDetail] = useState(null);
+  const [rescheduleMode, setRescheduleMode] = useState(false);
+  const [rescheduleForm, setRescheduleForm] = useState({ jam_mulai: "", jam_selesai: "" });
+  // MoveRoom dialog state
+  const [moveDialog, setMoveDialog] = useState(null); // { fromRoom }
+  const [moveTargetId, setMoveTargetId] = useState("");
+  const [moveAlasan, setMoveAlasan] = useState("");
 
-  const handleRoomClick = (room) => {
+  const handleRoomClick = (room, upcomingBk) => {
+    // Jika tanggal yang dilihat punya booking di room ini → buka detail booking
+    if (upcomingBk) {
+      setBookingDetail(upcomingBk);
+      setRescheduleMode(false);
+      const toLocal = (iso) => { const d = new Date(iso); d.setMinutes(d.getMinutes() - d.getTimezoneOffset()); return d.toISOString().slice(0, 16); };
+      setRescheduleForm({ jam_mulai: toLocal(upcomingBk.jam_mulai), jam_selesai: toLocal(upcomingBk.jam_selesai) });
+      return;
+    }
+    // Hanya hari ini yang boleh trigger flow check-in/checkout/action
+    if (!isToday) {
+      toast.info("Tanggal ini tidak ada booking. Untuk transaksi gunakan tanggal hari ini.");
+      return;
+    }
     if (room.status === "day_use") {
-      // navigate to checkout
       const ci = active.find((x) => x.room_id === room.id);
-      if (ci) nav(`/checkout/${ci.id}`);
-      else toast.error("Data check-in tidak ditemukan");
+      if (ci) {
+        // buka action dialog untuk pilih: checkout atau move room
+        setActionRoom({ ...room, _checkin: ci });
+        setStatusForm({ status: room.status, nama_tamu: ci.nama_tamu, catatan: ci.catatan || "" });
+      } else { toast.error("Data check-in tidak ditemukan"); }
       return;
     }
     if (room.status === "kosong") {
@@ -89,6 +112,44 @@ export default function Dashboard() {
     }
     setActionRoom(room);
     setStatusForm({ status: room.status, nama_tamu: room.info?.nama_tamu || "", catatan: room.info?.catatan || "" });
+  };
+
+  const cancelBookingDetail = async () => {
+    if (!bookingDetail) return;
+    if (!window.confirm(`Batalkan booking ${bookingDetail.kode}?`)) return;
+    try {
+      await api.delete(`/bookings/${bookingDetail.id}`);
+      toast.success("Booking dibatalkan");
+      setBookingDetail(null); load();
+    } catch (e) { toast.error(e?.response?.data?.detail || "Gagal"); }
+  };
+
+  const submitReschedule = async () => {
+    if (!bookingDetail) return;
+    try {
+      const payload = {
+        tipe: bookingDetail.tipe, room_id: bookingDetail.room_id,
+        nama_tamu: bookingDetail.nama_tamu, no_hp: bookingDetail.no_hp || "",
+        no_identitas: bookingDetail.no_identitas || "", kendaraan: bookingDetail.kendaraan || "",
+        jumlah_tamu: bookingDetail.jumlah_tamu || 1,
+        jam_mulai: new Date(rescheduleForm.jam_mulai).toISOString(),
+        jam_selesai: new Date(rescheduleForm.jam_selesai).toISOString(),
+        catatan: bookingDetail.catatan || "",
+      };
+      await api.put(`/bookings/${bookingDetail.id}`, payload);
+      toast.success("Booking diperbarui");
+      setBookingDetail(null); setRescheduleMode(false); load();
+    } catch (e) { toast.error(e?.response?.data?.detail || "Gagal"); }
+  };
+
+  const submitMoveRoom = async () => {
+    if (!moveDialog || !moveTargetId) { toast.error("Pilih kamar tujuan"); return; }
+    try {
+      const res = await api.post(`/rooms/${moveDialog.fromRoom.id}/move`, { new_room_id: moveTargetId, alasan: moveAlasan });
+      toast.success(`Tamu pindah: Kamar ${res.data.from} → Kamar ${res.data.to}`);
+      setMoveDialog(null); setMoveTargetId(""); setMoveAlasan("");
+      setActionRoom(null); load();
+    } catch (e) { toast.error(e?.response?.data?.detail || "Gagal"); }
   };
 
   const changeStatus = async (newStatus) => {
@@ -196,7 +257,7 @@ export default function Dashboard() {
           </div>
           {!isToday && (
             <div data-testid="filter-date-banner" className="mb-3 rounded-lg bg-amber-50 border border-amber-200 px-3 py-2 text-xs text-amber-800">
-              Menampilkan booking untuk <b>{new Date(`${filterDate}T00:00:00`).toLocaleDateString("id-ID", { weekday: "long", day: "2-digit", month: "long", year: "numeric" })}</b>. Status kamar (Kosong/Day Use/Menginap) tetap real-time.
+              Menampilkan booking untuk <b>{new Date(`${filterDate}T00:00:00`).toLocaleDateString("id-ID", { weekday: "long", day: "2-digit", month: "long", year: "numeric" })}</b>. Hanya kamar yang punya booking di tanggal ini yang ditandai; status real-time (Day Use/Menginap/dll) hanya berlaku untuk hari ini.
             </div>
           )}
           <div className="flex flex-wrap gap-3 text-xs mb-3">
@@ -213,10 +274,12 @@ export default function Dashboard() {
           </div>
           <div data-testid="room-grid" className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 gap-3">
             {rooms.map((r) => {
-              const upcomingBk = r.status === "kosong" ? bookingsOnDate
+              // Saat tanggal yang dilihat BUKAN hari ini, status realtime kamar (day_use/menginap/dll) tidak relevan → anggap kosong.
+              const effStatus = isToday ? r.status : "kosong";
+              const upcomingBk = effStatus === "kosong" ? bookingsOnDate
                 .filter(b => b.room_id === r.id)
                 .sort((a, c) => a.jam_mulai.localeCompare(c.jam_mulai))[0] : null;
-              const bg = upcomingBk ? "#92400E" : statusColor(r.status);
+              const bg = upcomingBk ? "#92400E" : statusColor(effStatus);
               const bkLabel = upcomingBk
                 ? new Date(upcomingBk.jam_mulai).toLocaleString("id-ID", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })
                 : null;
@@ -224,17 +287,17 @@ export default function Dashboard() {
               <button
                 key={r.id}
                 data-testid={`room-${r.nomor}`}
-                onClick={() => handleRoomClick(r)}
+                onClick={() => handleRoomClick(r, upcomingBk)}
                 className="room-card relative rounded-xl text-white p-4 aspect-square flex flex-col justify-between text-left overflow-hidden"
                 style={{ background: bg }}
               >
                 <div className="flex items-center justify-between">
                   <span className="text-[10px] uppercase font-semibold tracking-wider opacity-90">{r.tipe}</span>
-                  <span className="text-[10px] bg-white/25 rounded px-1.5 py-0.5">{upcomingBk ? "Booked" : statusLabel(r.status)}</span>
+                  <span className="text-[10px] bg-white/25 rounded px-1.5 py-0.5">{upcomingBk ? "Booked" : statusLabel(effStatus)}</span>
                 </div>
                 <div className="text-3xl sm:text-4xl font-extrabold">{r.nomor}</div>
                 <div className="text-[11px] opacity-90 truncate">
-                  {upcomingBk ? `${upcomingBk.nama_tamu}` : (r.status === "kosong" ? fmtRp(r.tarif) : (r.info?.nama_tamu || "—"))}
+                  {upcomingBk ? `${upcomingBk.nama_tamu}` : (effStatus === "kosong" ? fmtRp(r.tarif) : (r.info?.nama_tamu || "—"))}
                 </div>
                 {bkLabel && (
                   <div className="absolute top-0 right-0 bg-amber-900/80 text-[9px] font-bold px-1.5 py-0.5 rounded-bl-md">
@@ -259,6 +322,14 @@ export default function Dashboard() {
               <span className="w-3 h-3 rounded-sm" style={{ background: statusColor(actionRoom?.status) }} />
               <span className="font-medium">{statusLabel(actionRoom?.status)}</span>
             </div>
+            {actionRoom?.status === "day_use" && actionRoom?._checkin && (
+              <>
+                <div><span className="text-slate-500">Tamu:</span> <b>{actionRoom._checkin.nama_tamu}</b></div>
+                <div><span className="text-slate-500">HP:</span> {actionRoom._checkin.no_hp || "-"}</div>
+                <div><span className="text-slate-500">Check-in:</span> {new Date(actionRoom._checkin.jam_checkin).toLocaleString("id-ID")}</div>
+                <div><span className="text-slate-500">Trx:</span> {actionRoom._checkin.trx_no}</div>
+              </>
+            )}
             {actionRoom?.status === "menginap" && (
               <>
                 <div><span className="text-slate-500">Tamu:</span> {actionRoom?.info?.nama_tamu || "-"}</div>
@@ -282,6 +353,14 @@ export default function Dashboard() {
             )}
           </div>
           <DialogFooter className="flex-col gap-2 sm:flex-row">
+            {actionRoom?.status === "day_use" && actionRoom?._checkin && (
+              <Button data-testid="lanjut-checkout" onClick={() => { const ci = actionRoom._checkin; setActionRoom(null); nav(`/checkout/${ci.id}`); }} className="bg-red-600 hover:bg-red-700">Lanjut Check-out</Button>
+            )}
+            {(actionRoom?.status === "day_use" || actionRoom?.status === "menginap") && (
+              <Button data-testid="pindah-kamar" variant="outline" onClick={() => { setMoveDialog({ fromRoom: actionRoom }); setMoveTargetId(""); setMoveAlasan(""); }}>
+                Pindah Kamar
+              </Button>
+            )}
             {actionRoom?.status === "perlu_dibersihkan" && (
               <Button data-testid="hk-done" onClick={housekeepingDone} className="bg-emerald-600 hover:bg-emerald-700">Selesai Dibersihkan</Button>
             )}
@@ -298,6 +377,93 @@ export default function Dashboard() {
               </>
             )}
             <Button variant="ghost" onClick={() => setActionRoom(null)}>Tutup</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Booking Detail Dialog (saat klik room yang ada booking di tanggal filter) */}
+      <Dialog open={!!bookingDetail} onOpenChange={(o) => { if (!o) { setBookingDetail(null); setRescheduleMode(false); } }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle data-testid="booking-detail-title">Booking {bookingDetail?.kode}</DialogTitle>
+          </DialogHeader>
+          {bookingDetail && !rescheduleMode && (
+            <div className="space-y-2 text-sm">
+              <div className="flex items-center gap-2">
+                <span className={`text-[10px] uppercase font-bold px-2 py-1 rounded ${bookingDetail.tipe === "menginap" ? "bg-blue-700 text-white" : "bg-orange-100 text-orange-800"}`}>
+                  {bookingDetail.tipe === "menginap" ? "Menginap" : "Day Use"}
+                </span>
+                <span className="text-xs text-slate-500">Status: {bookingDetail.status}</span>
+              </div>
+              <div><span className="text-slate-500">Tamu:</span> <b data-testid="booking-detail-nama">{bookingDetail.nama_tamu}</b></div>
+              <div><span className="text-slate-500">Kamar:</span> {bookingDetail.room_nomor} ({bookingDetail.room_tipe})</div>
+              {bookingDetail.no_hp && <div><span className="text-slate-500">HP:</span> {bookingDetail.no_hp}</div>}
+              {bookingDetail.jumlah_tamu && <div><span className="text-slate-500">Jumlah Tamu:</span> {bookingDetail.jumlah_tamu}</div>}
+              <div><span className="text-slate-500">Jam Mulai:</span> {new Date(bookingDetail.jam_mulai).toLocaleString("id-ID")}</div>
+              <div><span className="text-slate-500">Jam Selesai:</span> {new Date(bookingDetail.jam_selesai).toLocaleString("id-ID")}</div>
+              {bookingDetail.catatan && <div className="italic text-slate-600">&ldquo;{bookingDetail.catatan}&rdquo;</div>}
+              <div className="text-[10px] text-slate-400">Dibuat oleh {bookingDetail.created_by}</div>
+            </div>
+          )}
+          {bookingDetail && rescheduleMode && (
+            <div className="space-y-3 text-sm">
+              <p className="text-slate-600 text-xs">Geser jam mulai dan jam selesai untuk reschedule booking.</p>
+              <div>
+                <Label>Jam Mulai</Label>
+                <Input data-testid="resched-mulai" type="datetime-local" value={rescheduleForm.jam_mulai} onChange={(e) => setRescheduleForm(f => ({ ...f, jam_mulai: e.target.value }))} />
+              </div>
+              <div>
+                <Label>Jam Selesai</Label>
+                <Input data-testid="resched-selesai" type="datetime-local" value={rescheduleForm.jam_selesai} onChange={(e) => setRescheduleForm(f => ({ ...f, jam_selesai: e.target.value }))} />
+              </div>
+            </div>
+          )}
+          <DialogFooter className="flex-col gap-2 sm:flex-row">
+            {!rescheduleMode && bookingDetail?.status === "aktif" && (
+              <>
+                <Button data-testid="bd-reschedule" variant="outline" onClick={() => setRescheduleMode(true)}>Reschedule</Button>
+                <Button data-testid="bd-cancel" variant="outline" onClick={cancelBookingDetail} className="text-red-600 border-red-300 hover:bg-red-50">Batalkan Booking</Button>
+              </>
+            )}
+            {rescheduleMode && (
+              <>
+                <Button data-testid="bd-resched-save" onClick={submitReschedule} className="bg-blue-700 hover:bg-blue-800">Simpan Jadwal Baru</Button>
+                <Button variant="ghost" onClick={() => setRescheduleMode(false)}>Batal</Button>
+              </>
+            )}
+            <Button variant="ghost" onClick={() => { setBookingDetail(null); setRescheduleMode(false); }}>Tutup</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Move Room Dialog */}
+      <Dialog open={!!moveDialog} onOpenChange={(o) => { if (!o) setMoveDialog(null); }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Pindah Tamu — Kamar {moveDialog?.fromRoom?.nomor}</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3 text-sm">
+            <p className="text-slate-600 text-xs">
+              Tamu di Kamar <b>{moveDialog?.fromRoom?.nomor}</b> ({statusLabel(moveDialog?.fromRoom?.status)}) akan dipindahkan ke kamar lain.
+              Kamar lama akan otomatis berstatus <i>Perlu Dibersihkan</i>.
+            </p>
+            <div>
+              <Label>Kamar Tujuan</Label>
+              <select data-testid="move-target-room" value={moveTargetId} onChange={(e) => setMoveTargetId(e.target.value)} className="w-full h-10 rounded-md border border-slate-300 px-3 bg-white mt-1.5">
+                <option value="">— Pilih kamar kosong —</option>
+                {rooms.filter(rr => rr.id !== moveDialog?.fromRoom?.id && rr.status === "kosong").map(rr => (
+                  <option key={rr.id} value={rr.id}>Kamar {rr.nomor} ({rr.tipe}) — {fmtRp(rr.tarif)}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <Label>Alasan (opsional)</Label>
+              <Input data-testid="move-alasan" value={moveAlasan} onChange={(e) => setMoveAlasan(e.target.value)} placeholder="Mis: AC rusak, request tamu, dll" />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setMoveDialog(null)}>Batal</Button>
+            <Button data-testid="move-submit" onClick={submitMoveRoom} className="bg-blue-700 hover:bg-blue-800">Pindahkan</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
