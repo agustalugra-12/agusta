@@ -522,6 +522,7 @@ export default function Dashboard() {
             )}
             {!rescheduleMode && bookingDetail?.status === "booking_paid" && (
               <>
+                <Button data-testid="bd-reschedule-paid" variant="outline" onClick={() => setRescheduleMode(true)}>Reschedule</Button>
                 <Button data-testid="bd-cancel-refund" variant="outline" onClick={cancelBookingDetail} className="text-red-600 border-red-300 hover:bg-red-50">
                   Batalkan + Refund (Fee 10%)
                 </Button>

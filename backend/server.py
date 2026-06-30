@@ -1351,8 +1351,8 @@ async def update_booking(bid: str, body: BookingCreate, user: dict = Depends(get
     b = await db.bookings.find_one({"id": bid})
     if not b:
         raise HTTPException(404, "Booking tidak ditemukan")
-    if b["status"] != "aktif":
-        raise HTTPException(400, "Hanya booking aktif yang dapat diubah")
+    if b["status"] not in ("aktif", "booking_pending", "booking_paid"):
+        raise HTTPException(400, "Hanya booking aktif/pending/paid yang dapat di-reschedule")
     if body.tipe not in ("day_use", "menginap"):
         raise HTTPException(400, "Tipe booking tidak valid")
     r = await db.rooms.find_one({"id": body.room_id})

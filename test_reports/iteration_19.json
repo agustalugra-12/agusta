@@ -1,0 +1,34 @@
+{
+  "summary": "Iter19 — Verified (1) Audit Log page search + 8 quick filters + color-coded badges; (2) PUT /api/bookings/{id} now accepts reschedule for status in {aktif, booking_pending, booking_paid} and rejects {cancelled, no_show}; (3) Dashboard BookingDetail dialog for status='booking_paid' renders 3 buttons (bd-reschedule-paid, bd-cancel-refund, bd-no-show) and reschedule modal saves successfully with overlap protection; (4) Smoke regression (cancel_with_fee 3 statuses + no_show + create_booking total/source) still PASS. Backend pytest 13/13 PASS. Frontend E2E verified end-to-end live.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "BookingDetail dialog (Dashboard.jsx L516)", "issues": ["Carryover from iter17/18: WhatsApp confirmation message still says 'Refund/cancel dapat dilakukan H-1' even though backend now allows cancel anytime with 10% fee (only matters for booking_pending path). Non-blocking copy mismatch."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter19_reschedule.py",
+    "/app/test_reports/pytest/iter19_results.xml"
+  ],
+  "action_items": [
+    "(Optional / minor) Align Dashboard.jsx L516 WhatsApp message — drop 'H-1' wording to match new policy.",
+    "Run iter19 pytest serially (use `-n 0`) — autouse module-scope cleanup fixture for TEST_ITER19 rows is not xdist-safe."
+  ],
+  "critical_code_review_comments": [
+    "server.py L1349-1388: update_booking status guard correctly expanded to {aktif, booking_pending, booking_paid}; overlap query also includes the same 3 statuses (L1372) — symmetric, no leak. Error message at L1355 now matches the broader rule.",
+    "Audit.jsx (104 lines): clean component, useMemo-based client-side filter is OK given total dataset (≤200 entries). data-testid scheme consistent (audit-search, audit-filter-{key}, audit-item-{action}). Color rules correctly route 'cancel*' → red, 'no_show' → amber, 'payment*' → emerald; verified live.",
+    "Dashboard.jsx L523-533: booking_paid branch now exposes all 3 actions (Reschedule, Cancel+Refund, No-Show); reschedule reuses existing rescheduleMode flow + submitReschedule handler (DRY). Verified PUT returns 200 with status preserved as booking_paid."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter19_reschedule.py"
+  ],
+  "success_rate": {"backend": "100% (13/13 iter19 pytest)", "frontend": "100% — live E2E verified: 3 buttons render, reschedule modal opens, PUT 200, dialog closes, toast 'Booking diperbarui' shown, brown card released after move to new date."},
+  "test_credentials": "owner/owner123 (per /app/memory/test_credentials.md). Confirmed working.",
+  "seed_data_creation": "Test fixture creates TEST_ITER19_* walk-in bookings 30-54 days in future via POST /api/bookings; status flipped to booking_pending/booking_paid/cancelled/no_show via direct mongo $set. Pre+post cleanup deletes all TEST_ITER19 rows (verified 1 leftover UI booking also cleaned).",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Run with `pytest -n 0` (xdist parallel breaks module-scope cleanup). To reproduce booking_paid UI flow: (1) POST /api/bookings on free room+date, (2) mongo $set status='booking_paid' amount_due=total, (3) login owner, (4) set Dashboard filter date to booking date, (5) click room card (data-testid='room-{nomor}') — BookingDetail dialog opens automatically because handleRoomClick routes booked rooms to bookingDetail not actionRoom.",
+  "rca of the issue": "(Original bug) Backend update_booking refused to reschedule unless status='aktif', blocking the common case of online-paid bookings needing date changes. Main agent expanded the status whitelist to include booking_pending + booking_paid AND propagated the same set to the overlap detection query (L1372) so a paid booking can't be moved into another active/paid booking's slot. Frontend gained a booking_paid branch in the BookingDetail DialogFooter exposing Reschedule + Cancel+Refund + No-Show. All paths verified by 13 pytest cases + live Playwright."
+}
