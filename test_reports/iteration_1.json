@@ -1,0 +1,54 @@
+{
+  "summary": "Backend smoke + endpoint testing for Pelangi Homestay. Auth, /rooms, /products, /reports/summary, /reports/daily, /audit-log, role-based 403, overbooking 400, room status PUT all work. CRITICAL: POST /checkins, POST /kasir, POST /expenses all return 500 Internal Server Error due to ObjectId serialization bug (the inserted doc returned after Motor's insert_one() contains _id ObjectId which FastAPI cannot encode). This breaks the entire checkin -> checkout -> housekeeping flow and the cashier/expenses creation. Downstream tests (preview/checkout/housekeeping-done/insufficient-payment) could not be executed because /checkins fails.",
+  "tested_scope": ["backend", "auth", "integration"],
+  "passed": [
+    "POST /auth/login owner & resepsionis (200 + role)",
+    "POST /auth/login wrong password -> 401",
+    "GET /auth/me with Bearer token",
+    "GET /api/rooms returns 18 rooms (12 Standard@120000 + 6 Cottage@140000)",
+    "POST /checkins overbooking on non-kosong room -> 400 'Kamar belum tersedia...'",
+    "PUT /rooms/{id}/status menginap OK, day_use rejected 400, kosong OK",
+    "Resepsionis blocked from POST /users, GET /users, POST /rooms (403)",
+    "GET /products returns 11 seeded products",
+    "POST /kasir insufficient stock -> 400",
+    "GET /reports/summary returns expected structure (rooms breakdown, pendapatan, etc.)",
+    "GET /reports/daily with from/to_date returns rows",
+    "GET /audit-log returns logged actions"
+  ],
+  "failed": [
+    {
+      "area": "POST /api/checkins",
+      "issue": "Returns 500 Internal Server Error after successfully inserting checkin. Backend logs show: ValueError: [TypeError(\"'ObjectId' object is not iterable\"), TypeError('vars() argument must have __dict__ attribute')] from fastapi/encoders.py serialize_response. Root cause: server.py:443 `await db.checkins.insert_one(doc)` mutates `doc` by adding `_id` ObjectId, then line 446 `return doc` triggers JSON encoding of ObjectId which fails. Room status DOES change to day_use (side-effect succeeds), but client gets 500.",
+      "evidence": "POST /api/checkins HTTP/1.1 500 Internal Server Error; traceback 'ObjectId is not iterable' in /var/log/supervisor/backend.err.log",
+      "priority": "HIGH"
+    },
+    {
+      "area": "POST /api/kasir",
+      "issue": "Same ObjectId serialization bug. server.py:639 inserts then line 645 `return doc` fails. Transaction is created in DB but client receives 500. Blocks UI receipt display.",
+      "evidence": "POST /api/kasir HTTP/1.1 500 Internal Server Error (reproduced with both laundry and non-laundry products, valid payment)",
+      "priority": "HIGH"
+    },
+    {
+      "area": "POST /api/expenses",
+      "issue": "Same ObjectId serialization bug at server.py:672-674. Insert succeeds (visible via GET /expenses) but POST response is 500.",
+      "evidence": "POST /api/expenses (with correct {kategori, deskripsi, nominal}) -> 500 Internal Server Error",
+      "priority": "HIGH"
+    },
+    {
+      "area": "Downstream checkin flow (blocked)",
+      "issue": "Could not test GET /checkins/{id} preview, POST /checkins/{id}/checkout (success + insufficient payment), POST /rooms/{id}/housekeeping-done because /checkins POST returns 500 to the client (cannot capture checkin_id reliably). housekeeping-done also could not be exercised since no room reached perlu_dibersihkan status.",
+      "evidence": "Dependency on POST /checkins response which returns 500",
+      "priority": "HIGH"
+    }
+  ],
+  "action_items": [
+    "Fix POST /checkins, /kasir, /expenses (and audit any other endpoints that `return doc` after `insert_one`). Standard fix: either pop '_id' from doc before return (`doc.pop('_id', None)`), or build a clean response dict, or use a Pydantic response_model that excludes _id. Same pattern likely affects any other POST that returns the inserted doc.",
+    "After fix, re-test full flow: checkin -> GET preview -> insufficient-payment 400 -> checkout success -> room=perlu_dibersihkan -> housekeeping-done -> room=kosong.",
+    "Verify kasir stock decrement for makanan/minuman and not for laundry after fix.",
+    "Verify expense appears in GET /expenses after fix (already confirmed insert side-effect works)."
+  ],
+  "success_rate": {"backend": "63%", "frontend": "n/a (not tested per request)"},
+  "retest_needed": true,
+  "full_testing_deferred": true,
+  "test_credentials": "Loaded from /app/memory/test_credentials.md (owner/owner123, resepsionis/resep123) - both work."
+}

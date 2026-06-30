@@ -1,56 +1,80 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
+import { BrowserRouter, Routes, Route, Navigate, useLocation } from "react-router-dom";
+import { Toaster } from "sonner";
+import { AuthProvider, useAuth } from "@/context/AuthContext";
+import Login from "@/pages/Login";
+import Layout from "@/components/Layout";
+import Dashboard from "@/pages/Dashboard";
+import Rooms from "@/pages/Rooms";
+import CheckIn from "@/pages/CheckIn";
+import CheckOut from "@/pages/CheckOut";
+import Kasir from "@/pages/Kasir";
+import Tamu from "@/pages/Tamu";
+import Inventory from "@/pages/Inventory";
+import Pengeluaran from "@/pages/Pengeluaran";
+import Housekeeping from "@/pages/Housekeeping";
+import Laporan from "@/pages/Laporan";
+import Pengguna from "@/pages/Pengguna";
+import Audit from "@/pages/Audit";
 import "@/App.css";
-import { BrowserRouter, Routes, Route } from "react-router-dom";
-import axios from "axios";
-import { HOME } from "@/constants/testIds";
 
-const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
-const API = `${BACKEND_URL}/api`;
+function Protected({ children, ownerOnly = false }) {
+  const { user, loading } = useAuth();
+  const location = useLocation();
+  if (loading) return <div className="min-h-screen grid place-items-center text-slate-500">Memuat…</div>;
+  if (!user) return <Navigate to="/login" state={{ from: location }} replace />;
+  if (ownerOnly && user.role !== "owner") return <Navigate to="/" replace />;
+  return children;
+}
 
-const Home = () => {
-  const helloWorldApi = async () => {
-    try {
-      const response = await axios.get(`${API}/`);
-      console.log(response.data.message);
-    } catch (e) {
-      console.error(e, `errored out requesting / api`);
-    }
-  };
-
-  useEffect(() => {
-    helloWorldApi();
-  }, []);
-
+function AppRoutes() {
   return (
-    <div>
-      <header className="App-header">
-        <a
-          data-testid={HOME.emergentLink}
-          className="App-link"
-          href="https://emergent.sh"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <img src="https://avatars.githubusercontent.com/in/1201222?s=120&u=2686cf91179bbafbc7a71bfbc43004cf9ae1acea&v=4" />
-        </a>
-        <p className="mt-5">Building something incredible ~!</p>
-      </header>
-    </div>
+    <Routes>
+      <Route path="/login" element={<Login />} />
+      <Route element={<Protected><Layout /></Protected>}>
+        <Route path="/" element={<Dashboard />} />
+        <Route path="/rooms" element={<Rooms />} />
+        <Route path="/checkin/:roomId" element={<CheckIn />} />
+        <Route path="/checkout/:checkinId" element={<CheckOut />} />
+        <Route path="/kasir" element={<Kasir />} />
+        <Route path="/tamu" element={<Tamu />} />
+        <Route path="/inventory" element={<Inventory />} />
+        <Route path="/pengeluaran" element={<Pengeluaran />} />
+        <Route path="/housekeeping" element={<Housekeeping />} />
+        <Route path="/laporan" element={<Laporan />} />
+        <Route path="/pengguna" element={<Protected ownerOnly><Pengguna /></Protected>} />
+        <Route path="/audit" element={<Audit />} />
+      </Route>
+      <Route path="*" element={<Navigate to="/" replace />} />
+    </Routes>
   );
-};
+}
 
-function App() {
+function NetworkBanner() {
+  const [online, setOnline] = useState(navigator.onLine);
+  useEffect(() => {
+    const on = () => setOnline(true);
+    const off = () => setOnline(false);
+    window.addEventListener("online", on);
+    window.addEventListener("offline", off);
+    return () => { window.removeEventListener("online", on); window.removeEventListener("offline", off); };
+  }, []);
+  if (online) return null;
   return (
-    <div className="App">
-      <BrowserRouter>
-        <Routes>
-          <Route path="/" element={<Home />}>
-            <Route index element={<Home />} />
-          </Route>
-        </Routes>
-      </BrowserRouter>
+    <div data-testid="offline-banner" className="fixed top-0 inset-x-0 z-[60] bg-amber-500 text-white text-center text-sm py-2 font-medium">
+      Mode Offline — perubahan akan disinkron ketika koneksi kembali.
     </div>
   );
 }
 
-export default App;
+export default function App() {
+  return (
+    <AuthProvider>
+      <BrowserRouter>
+        <NetworkBanner />
+        <AppRoutes />
+        <Toaster position="top-right" richColors />
+      </BrowserRouter>
+    </AuthProvider>
+  );
+}

@@ -1,0 +1,184 @@
+import { useEffect, useState } from "react";
+import { toast } from "sonner";
+import api, { fmtRp } from "@/lib/apiClient";
+import { Card, CardContent } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { ShoppingCart, Plus, Minus, Trash2, Printer } from "lucide-react";
+
+const CATS = [
+  { key: "", label: "Semua" },
+  { key: "makanan", label: "Makanan" },
+  { key: "minuman", label: "Minuman" },
+  { key: "laundry", label: "Laundry" },
+];
+
+export default function Kasir() {
+  const [products, setProducts] = useState([]);
+  const [cat, setCat] = useState("");
+  const [search, setSearch] = useState("");
+  const [cart, setCart] = useState([]); // {product, qty}
+  const [diskon, setDiskon] = useState(0);
+  const [catatan, setCatatan] = useState("");
+  const [pays, setPays] = useState([{ metode: "tunai", jumlah: 0 }]);
+  const [last, setLast] = useState(null);
+  const [showCart, setShowCart] = useState(false);
+
+  const load = async () => {
+    const { data } = await api.get("/products");
+    setProducts(data.filter(p => p.aktif));
+  };
+  useEffect(() => { load(); }, []);
+
+  const filtered = products
+    .filter(p => !cat || p.kategori === cat)
+    .filter(p => !search || p.nama.toLowerCase().includes(search.toLowerCase()) || p.kode.toLowerCase().includes(search.toLowerCase()));
+
+  const addToCart = (p) => {
+    setCart(c => {
+      const idx = c.findIndex(x => x.product.id === p.id);
+      if (idx >= 0) return c.map((x, i) => i === idx ? { ...x, qty: x.qty + 1 } : x);
+      return [...c, { product: p, qty: 1 }];
+    });
+  };
+  const changeQty = (id, d) => setCart(c => c.map(x => x.product.id === id ? { ...x, qty: Math.max(1, x.qty + d) } : x));
+  const removeItem = (id) => setCart(c => c.filter(x => x.product.id !== id));
+
+  const subtotal = cart.reduce((a, x) => a + x.product.harga * x.qty, 0);
+  const total = Math.max(0, subtotal - (Number(diskon) || 0));
+  const totalPay = pays.reduce((a, p) => a + (Number(p.jumlah) || 0), 0);
+  const kurang = total - totalPay;
+
+  const submit = async () => {
+    if (cart.length === 0) { toast.error("Keranjang kosong"); return; }
+    if (kurang > 0) { toast.error(`Pembayaran kurang ${fmtRp(kurang)}`); return; }
+    try {
+      const { data } = await api.post("/kasir", {
+        items: cart.map(x => ({ product_id: x.product.id, qty: x.qty })),
+        diskon: Number(diskon) || 0,
+        catatan,
+        pembayaran: pays.filter(p => Number(p.jumlah) > 0).map(p => ({ metode: p.metode, jumlah: Number(p.jumlah) })),
+      });
+      setLast(data);
+      toast.success(`Transaksi ${data.trx_no} berhasil`);
+      setCart([]); setDiskon(0); setCatatan(""); setPays([{ metode: "tunai", jumlah: 0 }]);
+      setShowCart(false);
+      load();
+    } catch (e) { toast.error(e?.response?.data?.detail || "Gagal"); }
+  };
+
+  return (
+    <div className="space-y-6">
+      <div className="flex items-center justify-between">
+        <div>
+          <p className="text-xs uppercase tracking-[0.25em] text-slate-500">Kasir</p>
+          <h1 className="text-3xl sm:text-4xl font-extrabold">Point of Sale</h1>
+        </div>
+        <Button data-testid="open-cart" onClick={() => setShowCart(true)} className="lg:hidden bg-blue-700 hover:bg-blue-800 relative">
+          <ShoppingCart className="w-4 h-4 mr-2" /> Keranjang
+          {cart.length > 0 && <span className="absolute -top-1 -right-1 bg-red-600 text-white text-xs rounded-full w-5 h-5 grid place-items-center">{cart.length}</span>}
+        </Button>
+      </div>
+
+      <div className="grid lg:grid-cols-[1fr_400px] gap-6">
+        {/* Products */}
+        <div className="space-y-4">
+          <div className="flex flex-col sm:flex-row gap-3">
+            <Input data-testid="kasir-search" placeholder="Cari produk..." value={search} onChange={(e) => setSearch(e.target.value)} className="h-12 flex-1" />
+          </div>
+          <Tabs value={cat} onValueChange={setCat}>
+            <TabsList className="grid grid-cols-4 w-full sm:max-w-md">
+              {CATS.map(c => <TabsTrigger key={c.key} value={c.key} data-testid={`tab-${c.label}`}>{c.label}</TabsTrigger>)}
+            </TabsList>
+          </Tabs>
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+            {filtered.map(p => (
+              <button key={p.id} data-testid={`prod-${p.kode}`} onClick={() => addToCart(p)} className="text-left bg-white border border-slate-200 rounded-xl p-4 hover:border-blue-500 hover:shadow-md transition-all">
+                <div className="text-xs text-slate-500 uppercase tracking-wider">{p.kategori}</div>
+                <div className="font-bold mt-1 line-clamp-2">{p.nama}</div>
+                <div className="text-blue-700 font-extrabold mt-2">{fmtRp(p.harga)}</div>
+                {p.kategori !== "laundry" && <div className="text-xs text-slate-500 mt-1">Stok: {p.stok}</div>}
+              </button>
+            ))}
+            {filtered.length === 0 && <div className="col-span-full text-slate-500 text-center py-10">Tidak ada produk</div>}
+          </div>
+        </div>
+
+        {/* Cart */}
+        <div className={`${showCart ? "fixed inset-0 z-40 bg-slate-900/40" : "hidden lg:block"} lg:relative`}>
+          <div className={`${showCart ? "fixed bottom-0 inset-x-0 max-h-[90vh] overflow-y-auto" : ""} lg:sticky lg:top-6 bg-white border border-slate-200 rounded-2xl p-5 space-y-4`}>
+            <div className="flex items-center justify-between">
+              <h2 className="text-xl font-bold">Keranjang</h2>
+              <button className="lg:hidden text-slate-500" onClick={() => setShowCart(false)}>Tutup</button>
+            </div>
+            {cart.length === 0 && <p className="text-slate-500 text-sm">Keranjang masih kosong</p>}
+            <div className="space-y-2 max-h-72 overflow-y-auto">
+              {cart.map(x => (
+                <div key={x.product.id} className="flex items-center gap-2 border-b border-slate-100 pb-2">
+                  <div className="flex-1 min-w-0">
+                    <div className="text-sm font-semibold truncate">{x.product.nama}</div>
+                    <div className="text-xs text-slate-500">{fmtRp(x.product.harga)} × {x.qty} = {fmtRp(x.product.harga * x.qty)}</div>
+                  </div>
+                  <Button data-testid={`qty-minus-${x.product.kode}`} size="icon" variant="outline" onClick={() => changeQty(x.product.id, -1)}><Minus className="w-3 h-3" /></Button>
+                  <span className="w-6 text-center font-bold">{x.qty}</span>
+                  <Button data-testid={`qty-plus-${x.product.kode}`} size="icon" variant="outline" onClick={() => changeQty(x.product.id, 1)}><Plus className="w-3 h-3" /></Button>
+                  <Button size="icon" variant="ghost" onClick={() => removeItem(x.product.id)}><Trash2 className="w-3 h-3 text-red-500" /></Button>
+                </div>
+              ))}
+            </div>
+            <div className="text-sm space-y-1 border-t pt-3">
+              <div className="flex justify-between"><span>Subtotal</span><span>{fmtRp(subtotal)}</span></div>
+              <div className="flex justify-between items-center">
+                <Label className="flex-1">Diskon</Label>
+                <Input data-testid="kasir-diskon" type="number" min="0" value={diskon} onChange={(e) => setDiskon(e.target.value)} className="h-9 w-32" />
+              </div>
+              <div className="flex justify-between font-extrabold text-lg pt-1 border-t">
+                <span>TOTAL</span><span className="text-blue-700">{fmtRp(total)}</span>
+              </div>
+            </div>
+            <div>
+              <Label>Pembayaran (split didukung)</Label>
+              <div className="space-y-2 mt-1.5">
+                {pays.map((p, idx) => (
+                  <div key={idx} className="grid grid-cols-[1fr_1fr_auto] gap-2">
+                    <select value={p.metode} onChange={(e) => setPays(ps => ps.map((x, i) => i === idx ? { ...x, metode: e.target.value } : x))} className="h-10 rounded-md border border-slate-300 px-2 bg-white text-sm">
+                      <option value="tunai">Tunai</option>
+                      <option value="transfer">Transfer</option>
+                      <option value="qris">QRIS</option>
+                    </select>
+                    <Input type="number" min="0" value={p.jumlah} onChange={(e) => setPays(ps => ps.map((x, i) => i === idx ? { ...x, jumlah: e.target.value } : x))} className="h-10" />
+                    {pays.length > 1 && <Button size="icon" variant="ghost" onClick={() => setPays(ps => ps.filter((_, i) => i !== idx))}><Trash2 className="w-3 h-3" /></Button>}
+                  </div>
+                ))}
+                <Button variant="outline" size="sm" onClick={() => setPays(ps => [...ps, { metode: "transfer", jumlah: 0 }])}>+ Tambah</Button>
+              </div>
+              <div className="text-xs mt-2">
+                Bayar: <span className="font-bold">{fmtRp(totalPay)}</span>{" • "}
+                {kurang > 0 ? <span className="text-red-600">Kurang {fmtRp(kurang)}</span> : <span className="text-emerald-700">Lunas {kurang < 0 ? `(Kembalian ${fmtRp(-kurang)})` : ""}</span>}
+              </div>
+            </div>
+            <Textarea data-testid="kasir-catatan" placeholder="Catatan (opsional)" value={catatan} onChange={(e) => setCatatan(e.target.value)} rows={2} />
+            <Button data-testid="kasir-submit" onClick={submit} className="w-full h-12 bg-blue-700 hover:bg-blue-800 text-base">Bayar Sekarang</Button>
+          </div>
+        </div>
+      </div>
+
+      {last && (
+        <Card className="border-emerald-200 bg-emerald-50 no-print">
+          <CardContent className="p-4 flex items-center justify-between gap-3 flex-wrap">
+            <div>
+              <div className="font-bold">Transaksi {last.trx_no} berhasil</div>
+              <div className="text-sm text-slate-600">{last.items.length} item • {fmtRp(last.total)}</div>
+            </div>
+            <Button variant="outline" onClick={() => { window.print(); }}>
+              <Printer className="w-4 h-4 mr-2" /> Cetak Struk
+            </Button>
+          </CardContent>
+        </Card>
+      )}
+    </div>
+  );
+}
