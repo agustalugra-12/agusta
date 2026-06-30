@@ -37,10 +37,10 @@ const FACILITY_ICONS = {
   "Cottage Style": BedDouble, "Area Outdoor": Trees,
 };
 
-// Placeholder images (akan diganti foto asli nanti)
+// Foto kamar profesional (16:10 aspect ratio, kualitas hotel/homestay Indonesia)
 const ROOM_IMAGES = {
-  Standard: "https://images.unsplash.com/photo-1590490360182-c33d57733427?w=1200&q=70",
-  Cottage: "https://images.unsplash.com/photo-1602002418082-a4443e081dd1?w=1200&q=70",
+  Standard: "https://images.unsplash.com/photo-1631049307264-da0ec9d70304?w=1600&h=1000&fit=crop&q=80",
+  Cottage: "https://images.unsplash.com/photo-1520250497591-112f2f40a3f4?w=1600&h=1000&fit=crop&q=80",
 };
 
 export default function PublicBook({ successView = false }) {
@@ -185,9 +185,12 @@ function BookingForm() {
               {catalog.map((c) => {
                 const availOfTipe = availability.rooms.filter(r => r.tipe === c.tipe);
                 return (
-                  <Card key={c.tipe} data-testid={`pb-catalog-${c.tipe}`} className="border-slate-200 overflow-hidden shadow-sm">
-                    <div className="aspect-[16/10] bg-slate-100 overflow-hidden">
-                      <img src={ROOM_IMAGES[c.tipe]} alt={c.tipe} className="w-full h-full object-cover" />
+                  <Card key={c.tipe} data-testid={`pb-catalog-${c.tipe}`} className="border-slate-200 overflow-hidden shadow-md hover:shadow-lg transition-shadow">
+                    <div className="aspect-[16/10] bg-slate-100 overflow-hidden relative">
+                      <img src={ROOM_IMAGES[c.tipe]} alt={c.tipe} loading="lazy" className="w-full h-full object-cover hover:scale-105 transition-transform duration-500" />
+                      <div className="absolute top-3 left-3 px-2.5 py-1 rounded-full bg-white/90 backdrop-blur text-[10px] uppercase tracking-wider font-bold text-blue-900">
+                        {c.tipe}
+                      </div>
                     </div>
                     <CardContent className="p-5 space-y-4">
                       <div className="flex items-start justify-between gap-3">

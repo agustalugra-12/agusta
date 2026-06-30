@@ -1321,10 +1321,8 @@ async def mark_paid_manual(bid: str, body: ManualMarkPaidBody, user: dict = Depe
 async def public_bank_accounts():
     """Daftar rekening bank untuk transfer manual (tampil di halaman publik /book)."""
     accounts = [
-        {"bank": "BCA", "nomor": os.environ.get("BANK_BCA_NUMBER", "1234567890"),
-         "atas_nama": os.environ.get("BANK_BCA_NAME", "Pelangi Homestay")},
-        {"bank": "Mandiri", "nomor": os.environ.get("BANK_MANDIRI_NUMBER", "0987654321"),
-         "atas_nama": os.environ.get("BANK_MANDIRI_NAME", "Pelangi Homestay")},
+        {"bank": "BRI", "nomor": os.environ.get("BANK_BRI_NUMBER", "464001008162533"),
+         "atas_nama": os.environ.get("BANK_BRI_NAME", "Pelangi Homestay")},
     ]
     return {"accounts": accounts, "instruksi": "Transfer sesuai nominal yang tertera, kemudian klik tombol 'Saya Sudah Transfer' untuk verifikasi oleh resepsionis."}
 
