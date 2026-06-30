@@ -8,7 +8,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
-import { Plus, Trash2, LogIn, BedDouble, Clock } from "lucide-react";
+import { Plus, Trash2, LogIn, BedDouble, Clock, Pencil } from "lucide-react";
 
 const nowLocal = () => { const d = new Date(); d.setMinutes(d.getMinutes() - d.getTimezoneOffset()); return d.toISOString().slice(0, 16); };
 const plusHours = (s, h) => { const d = new Date(s); d.setHours(d.getHours() + h); d.setMinutes(d.getMinutes() - d.getTimezoneOffset()); return d.toISOString().slice(0, 16); };
@@ -18,6 +18,7 @@ export default function Bookings() {
   const [rooms, setRooms] = useState([]);
   const [filter, setFilter] = useState("aktif");
   const [open, setOpen] = useState(false);
+  const [editId, setEditId] = useState(null);
   const [form, setForm] = useState({
     tipe: "day_use", room_id: "", nama_tamu: "", no_hp: "", no_identitas: "", kendaraan: "", jumlah_tamu: 1,
     jam_mulai: nowLocal(), jam_selesai: plusHours(nowLocal(), 6), catatan: "",
@@ -43,15 +44,37 @@ export default function Bookings() {
   const submit = async () => {
     if (!form.room_id || !form.nama_tamu.trim()) { toast.error("Pilih kamar dan isi nama tamu"); return; }
     try {
-      await api.post("/bookings", {
+      const payload = {
         ...form,
         jumlah_tamu: Number(form.jumlah_tamu) || 1,
         jam_mulai: new Date(form.jam_mulai).toISOString(),
         jam_selesai: new Date(form.jam_selesai).toISOString(),
-      });
-      toast.success("Booking dibuat");
-      setOpen(false); load();
+      };
+      if (editId) await api.put(`/bookings/${editId}`, payload);
+      else await api.post("/bookings", payload);
+      toast.success(editId ? "Booking diperbarui" : "Booking dibuat");
+      setOpen(false); setEditId(null); load();
     } catch (e) { toast.error(e?.response?.data?.detail || "Gagal"); }
+  };
+
+  const openEdit = (b) => {
+    const toLocal = (iso) => { const d = new Date(iso); d.setMinutes(d.getMinutes() - d.getTimezoneOffset()); return d.toISOString().slice(0, 16); };
+    setForm({
+      tipe: b.tipe, room_id: b.room_id, nama_tamu: b.nama_tamu, no_hp: b.no_hp || "",
+      no_identitas: b.no_identitas || "", kendaraan: b.kendaraan || "", jumlah_tamu: b.jumlah_tamu || 1,
+      jam_mulai: toLocal(b.jam_mulai), jam_selesai: toLocal(b.jam_selesai), catatan: b.catatan || "",
+    });
+    setEditId(b.id);
+    setOpen(true);
+  };
+
+  const openNew = () => {
+    setEditId(null);
+    setForm({
+      tipe: "day_use", room_id: "", nama_tamu: "", no_hp: "", no_identitas: "", kendaraan: "", jumlah_tamu: 1,
+      jam_mulai: nowLocal(), jam_selesai: plusHours(nowLocal(), 6), catatan: "",
+    });
+    setOpen(true);
   };
 
   const cancel = async (b) => {
@@ -75,7 +98,7 @@ export default function Bookings() {
           <p className="text-xs uppercase tracking-[0.25em] text-slate-500">Booking</p>
           <h1 className="text-3xl sm:text-4xl font-extrabold">Daftar Booking</h1>
         </div>
-        <Button data-testid="add-booking" onClick={() => setOpen(true)} className="bg-blue-700 hover:bg-blue-800"><Plus className="w-4 h-4 mr-2" /> Booking Baru</Button>
+        <Button data-testid="add-booking" onClick={openNew} className="bg-blue-700 hover:bg-blue-800"><Plus className="w-4 h-4 mr-2" /> Booking Baru</Button>
       </div>
 
       <Tabs value={filter} onValueChange={setFilter}>
@@ -115,6 +138,9 @@ export default function Bookings() {
                 <div className="flex gap-2 pt-2 border-t border-slate-100">
                   <Button data-testid={`activate-${b.kode}`} size="sm" onClick={() => doCheckin(b)} className="bg-emerald-600 hover:bg-emerald-700 flex-1">
                     <LogIn className="w-3.5 h-3.5 mr-1" /> Aktivasi
+                  </Button>
+                  <Button data-testid={`edit-${b.kode}`} size="sm" variant="outline" onClick={() => openEdit(b)}>
+                    <Pencil className="w-3.5 h-3.5" />
                   </Button>
                   <Button data-testid={`cancel-${b.kode}`} size="sm" variant="outline" onClick={() => cancel(b)}>
                     <Trash2 className="w-3.5 h-3.5 text-red-500" />

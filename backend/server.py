@@ -182,9 +182,21 @@ class BookingCreate(BaseModel):
     no_identitas: str = ""
     kendaraan: str = ""
     jumlah_tamu: int = 1
-    jam_mulai: str  # ISO datetime (for day_use: checkin time; for menginap: checkin date)
-    jam_selesai: Optional[str] = None  # ISO datetime (estimated checkout); required for menginap
+    jam_mulai: str
+    jam_selesai: Optional[str] = None
     catatan: str = ""
+
+class BookingUpdate(BaseModel):
+    nama_tamu: Optional[str] = None
+    no_hp: Optional[str] = None
+    no_identitas: Optional[str] = None
+    kendaraan: Optional[str] = None
+    jumlah_tamu: Optional[int] = None
+    jam_mulai: Optional[str] = None
+    jam_selesai: Optional[str] = None
+    catatan: Optional[str] = None
+    room_id: Optional[str] = None
+    tipe: Optional[str] = None
 
 # ---- Auth Endpoints ----
 @api.post("/auth/login")

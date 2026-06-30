@@ -30,17 +30,19 @@ export default function Dashboard() {
   const [summary, setSummary] = useState(null);
   const [rooms, setRooms] = useState([]);
   const [active, setActive] = useState([]);
+  const [bookings, setBookings] = useState([]);
   const [actionRoom, setActionRoom] = useState(null);
   const [statusForm, setStatusForm] = useState({ status: "", nama_tamu: "", catatan: "" });
 
   const load = async () => {
     try {
-      const [s, r, c] = await Promise.all([
+      const [s, r, c, b] = await Promise.all([
         api.get("/reports/summary"),
         api.get("/rooms"),
         api.get("/checkins", { params: { status: "aktif" } }),
+        api.get("/bookings", { params: { status: "aktif" } }),
       ]);
-      setSummary(s.data); setRooms(r.data); setActive(c.data);
+      setSummary(s.data); setRooms(r.data); setActive(c.data); setBookings(b.data);
     } catch (e) { console.error(e); }
   };
 
@@ -162,27 +164,45 @@ export default function Dashboard() {
                   <span className="text-slate-600">{s.label}</span>
                 </div>
               ))}
+              <div className="flex items-center gap-1.5">
+                <span className="w-3 h-3 rounded-sm" style={{ background: "#92400E" }} />
+                <span className="text-slate-600">Booked</span>
+              </div>
             </div>
           </div>
           <div data-testid="room-grid" className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 gap-3">
-            {rooms.map((r) => (
+            {rooms.map((r) => {
+              const upcomingBk = r.status === "kosong" ? bookings
+                .filter(b => b.room_id === r.id)
+                .sort((a, c) => a.jam_mulai.localeCompare(c.jam_mulai))[0] : null;
+              const bg = upcomingBk ? "#92400E" : statusColor(r.status);
+              const bkLabel = upcomingBk
+                ? new Date(upcomingBk.jam_mulai).toLocaleString("id-ID", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })
+                : null;
+              return (
               <button
                 key={r.id}
                 data-testid={`room-${r.nomor}`}
                 onClick={() => handleRoomClick(r)}
-                className="room-card relative rounded-xl text-white p-4 aspect-square flex flex-col justify-between text-left"
-                style={{ background: statusColor(r.status) }}
+                className="room-card relative rounded-xl text-white p-4 aspect-square flex flex-col justify-between text-left overflow-hidden"
+                style={{ background: bg }}
               >
                 <div className="flex items-center justify-between">
                   <span className="text-[10px] uppercase font-semibold tracking-wider opacity-90">{r.tipe}</span>
-                  <span className="text-[10px] bg-white/25 rounded px-1.5 py-0.5">{statusLabel(r.status)}</span>
+                  <span className="text-[10px] bg-white/25 rounded px-1.5 py-0.5">{upcomingBk ? "Booked" : statusLabel(r.status)}</span>
                 </div>
                 <div className="text-3xl sm:text-4xl font-extrabold">{r.nomor}</div>
                 <div className="text-[11px] opacity-90 truncate">
-                  {r.status === "kosong" ? fmtRp(r.tarif) : (r.info?.nama_tamu || "—")}
+                  {upcomingBk ? `${upcomingBk.nama_tamu}` : (r.status === "kosong" ? fmtRp(r.tarif) : (r.info?.nama_tamu || "—"))}
                 </div>
+                {bkLabel && (
+                  <div className="absolute top-0 right-0 bg-amber-900/80 text-[9px] font-bold px-1.5 py-0.5 rounded-bl-md">
+                    {bkLabel}
+                  </div>
+                )}
               </button>
-            ))}
+              );
+            })}
           </div>
         </CardContent>
       </Card>
