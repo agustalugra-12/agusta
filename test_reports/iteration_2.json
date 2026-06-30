@@ -1,0 +1,44 @@
+{
+  "summary": "Retest after ObjectId serialization fix. ObjectId/_id bug is FIXED: POST /checkins, /kasir, /expenses now return 200 with clean JSON. However, a NEW (separate) bug found in POST /checkins/{id}/checkout — endpoint references body.pembayaran while the Pydantic model CheckoutIn defines the field as metode_pembayaran -> AttributeError -> 500. This blocks checkout, housekeeping-done, and insufficient-payment 400 tests.",
+  "tested_scope": ["backend", "auth", "integration"],
+  "passed": [
+    "POST /auth/login owner & resepsionis (200)",
+    "GET /auth/me 200",
+    "GET /api/rooms returns 18 rooms",
+    "POST /api/checkins -> 200 (ObjectId bug fixed; clean JSON, no _id leaked)",
+    "GET /api/checkins/{id} -> 200",
+    "POST /api/kasir with valid items + split payment (tunai+qris) -> 200 (ObjectId bug fixed)",
+    "POST /api/expenses -> 200 (ObjectId bug fixed)",
+    "Resepsionis POST /users -> 403 (role-based)",
+    "GET /api/reports/daily -> 200",
+    "GET /api/audit-log -> 200 (15 entries)"
+  ],
+  "failed": [
+    {
+      "area": "POST /api/checkins/{id}/checkout",
+      "issue": "Endpoint crashes with 500. Backend log: AttributeError: 'CheckoutIn' object has no attribute 'pembayaran' at server.py:490 `total_bayar = sum(int(p.get('jumlah', 0)) for p in body.pembayaran)`. The Pydantic model CheckoutIn (server.py:128-131) defines the field as `metode_pembayaran: List[Dict[str, Any]]`, but the handler reads `body.pembayaran`. Field name mismatch.",
+      "evidence": "POST /api/checkins/{id}/checkout with body {\"metode_pembayaran\":[{\"metode\":\"tunai\",\"jumlah\":100000}]} -> HTTP 500; traceback in /var/log/supervisor/backend.err.log",
+      "priority": "HIGH"
+    },
+    {
+      "area": "POST /api/rooms/{id}/housekeeping-done (blocked)",
+      "issue": "Could not be validated because checkout never completes (room stays in day_use, never enters perlu_dibersihkan). Endpoint itself returned the expected 400 'Kamar tidak dalam status Perlu Dibersihkan' when called against a day_use room, so guard works; happy path untested.",
+      "evidence": "Dependent on checkout fix",
+      "priority": "MEDIUM"
+    },
+    {
+      "area": "POST /api/checkins/{id}/checkout insufficient payment 400",
+      "issue": "Cannot be tested because checkout always 500s due to the field-name bug above.",
+      "evidence": "Same as checkout bug",
+      "priority": "MEDIUM"
+    }
+  ],
+  "action_items": [
+    "In /app/backend/server.py checkout handler (around line 490), rename `body.pembayaran` references to `body.metode_pembayaran` (the field declared on CheckoutIn). Audit the whole checkout function for any other `body.pembayaran` references and the persisted field name used in the checkin doc/audit log.",
+    "After fix, re-run full flow: checkin -> checkout insufficient (400) -> checkout success (200, room=perlu_dibersihkan) -> housekeeping-done (200, room=kosong)."
+  ],
+  "success_rate": {"backend": "~80% (ObjectId regressions fixed; one new blocker on checkout)", "frontend": "n/a (not tested per request)"},
+  "retest_needed": true,
+  "full_testing_deferred": true,
+  "test_credentials": "Loaded from /app/memory/test_credentials.md (owner/owner123, resepsionis/resep123) - both work."
+}

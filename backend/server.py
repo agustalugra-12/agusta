@@ -219,7 +219,7 @@ async def create_user(body: UserCreate, user: dict = Depends(require_owner)):
     }
     await db.users.insert_one(doc)
     await log_activity(user, "create_user", f"Buat pengguna {body.username}")
-    return {k: v for k, v in doc.items() if k != "password_hash"}
+    return {k: v for k, v in doc.items() if k not in ("password_hash", "_id")}
 
 @api.put("/users/{user_id}")
 async def update_user(user_id: str, body: UserUpdate, user: dict = Depends(require_owner)):
@@ -269,6 +269,7 @@ async def create_room(body: RoomCreate, user: dict = Depends(require_owner)):
     }
     await db.rooms.insert_one(doc)
     await log_activity(user, "create_room", f"Buat kamar {body.nomor}")
+    doc.pop("_id", None)
     return doc
 
 @api.put("/rooms/{room_id}")
@@ -443,6 +444,7 @@ async def create_checkin(body: CheckinCreate, user: dict = Depends(get_current_u
     await db.checkins.insert_one(doc)
     await db.rooms.update_one({"id": body.room_id}, {"$set": {"status": "day_use", "info": {"checkin_id": doc["id"], "nama_tamu": body.nama_tamu}}})
     await log_activity(user, "checkin", f"Check-in {body.nama_tamu} ke kamar {r['nomor']}", entity=r["nomor"])
+    doc.pop("_id", None)
     return doc
 
 @api.get("/checkins")
@@ -555,6 +557,7 @@ async def create_product(body: ProductCreate, user: dict = Depends(require_owner
     doc = {"id": str(uuid.uuid4()), **body.model_dump(), "created_at": now_iso()}
     await db.products.insert_one(doc)
     await log_activity(user, "create_product", f"Tambah produk {body.nama}")
+    doc.pop("_id", None)
     return doc
 
 @api.put("/products/{pid}")
@@ -642,6 +645,7 @@ async def create_kasir(body: KasirCreate, user: dict = Depends(get_current_user)
         if r["kategori"] != "laundry":
             await db.products.update_one({"id": r["product_id"]}, {"$inc": {"stok": -r["qty"]}})
     await log_activity(user, "kasir", f"Transaksi kasir {trx_no} total Rp{total:,}".replace(",", "."))
+    doc.pop("_id", None)
     return doc
 
 @api.get("/kasir")
@@ -671,6 +675,7 @@ async def create_expense(body: ExpenseCreate, user: dict = Depends(get_current_u
     }
     await db.expenses.insert_one(doc)
     await log_activity(user, "expense", f"Pengeluaran {body.kategori} Rp{body.nominal:,}".replace(",", "."))
+    doc.pop("_id", None)
     return doc
 
 @api.get("/expenses")
