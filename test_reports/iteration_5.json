@@ -1,0 +1,62 @@
+{
+  "summary": "Tested Pelangi Homestay dashboard 'Booked' ribbon indicator and Bookings Edit flow. Dashboard ribbon UI works perfectly (room 7 brown with date ribbon '30 Jun, 11.20' + guest name + Booked badge, legend includes Booked). Bookings page Edit button + modal prefill works, but PUT /api/bookings/{id} backend endpoint is MISSING → save fails with 405 'Method Not Allowed'. Cancel and Create flows work.",
+  "backend_issues": {
+    "critical": [
+      {
+        "endpoint": "PUT /api/bookings/{booking_id}",
+        "issue": "Endpoint does not exist (405 Method Not Allowed). Frontend Bookings.jsx submit() calls api.put('/bookings/${editId}', payload) but backend server.py has only POST/GET/DELETE/POST-checkin for /bookings. Frontend Edit button opens modal correctly with prefilled data but Simpan Booking fails with toast 'Method Not Allowed' and modal stays open.",
+        "priority": "CRITICAL"
+      }
+    ],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {
+        "component": "Bookings.jsx DialogTitle (line 158)",
+        "issue": "Modal title always shows 'Booking Baru' even in Edit mode. Should toggle based on editId (e.g., 'Edit Booking' / 'Booking Baru').",
+        "selector": "Dialog → DialogTitle",
+        "priority": "LOW"
+      }
+    ],
+    "integration_issues": [
+      {
+        "flow": "Edit Booking (Bookings → click edit-<KODE> → change name → Simpan)",
+        "issue": "Modal opens with prefilled data (nama_tamu='Andi', room_id, hp, jam_mulai etc all correct). On submit, axios PUT to /api/bookings/{id} returns 405. UI shows toast 'Method Not Allowed'. Modal does NOT close. Data NOT updated. Root cause: missing backend endpoint, NOT a frontend bug.",
+        "affected_selectors": ["save-booking", "bk-nama", "bk-room"]
+      }
+    ],
+    "design_issues": [
+      {
+        "screen": "Bookings edit dialog",
+        "issues": [
+          "DialogContent missing aria-describedby (a11y warning in console)",
+          "Hydration warning: <span> rendered as child of <option> inside <select data-testid=bk-room>. Build instrumentation injects x-component span around r.nomor; React complains. Functional, but noisy. Not introduced by this feature."
+        ]
+      }
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_bookings_edit.py",
+    "/app/test_reports/pytest/bookings_edit_results.xml"
+  ],
+  "action_items": [
+    "PRIMARY: Implement PUT /api/bookings/{booking_id} in /app/backend/server.py. Should: (1) require auth, (2) fetch existing booking by id, (3) only allow updates while status=='aktif', (4) re-validate room exists + start<end + overlap (excluding same id), (5) update nama_tamu/no_hp/no_identitas/kendaraan/jumlah_tamu/jam_mulai/jam_selesai/catatan/tipe/room_id (and refresh room_nomor/room_tipe if room_id changed), (6) log_activity 'update_booking', (7) return updated doc without _id. Reuse BookingCreate Pydantic body or create BookingUpdate.",
+    "MINOR: Change DialogTitle in Bookings.jsx line 158 to be conditional: {editId ? 'Edit Booking' : 'Booking Baru'}.",
+    "MINOR (cleanup, not blocking): Optionally add DialogDescription or aria-describedby on DialogContent to silence a11y warning."
+  ],
+  "critical_code_review_comments": [
+    "Backend server.py: missing PUT endpoint for bookings update — clear gap given frontend already wired",
+    "Frontend Bookings.jsx submit() catches and surfaces backend errors correctly via toast.error(e?.response?.data?.detail) — good",
+    "Dashboard.jsx logic (line 175-202) for upcomingBk + ribbon is well-structured; condition 'r.status === kosong' correctly avoids brown override when room is in active use",
+    "Backend POST /bookings checks for overlap; PUT must do the same with $ne id filter to avoid self-overlap on edit"
+  ],
+  "updated_files": ["/app/backend/tests/test_bookings_edit.py"],
+  "success_rate": {"backend": "60% (3/5 tests; 2 fail because PUT missing)", "frontend": "75% (dashboard ribbon + create + cancel + edit-modal prefill PASS; edit-save FAIL due to backend)"},
+  "test_credentials": "owner/owner123 (from /app/memory/test_credentials.md). Resepsionis/resep123 also available.",
+  "seed_data_creation": "Test created and cleaned up bookings via fixture (TEST_-prefixed). 3 pre-existing active bookings on rooms 6 and 7 were used for UI verification.",
+  "retest_needed": true,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Backend server.py only defines POST /bookings (line 758), GET /bookings (796), DELETE /bookings/{bid} (805), POST /bookings/{bid}/checkin (814). After main agent adds PUT /bookings/{bid}, re-run /app/backend/tests/test_bookings_edit.py — it has full assertions including PUT → GET persistence check. Also verify modal title flips to 'Edit Booking' in edit mode. Dashboard ribbon already validated screenshot-wise (room 7, brown #92400E, ribbon '30 Jun, 11.20', Booked badge, nanta guest, legend has Booked entry).",
+  "rca_of_the_issue": "Frontend implementation is complete (Bookings.jsx openEdit on line 60, editId state on line 21, conditional PUT call on line 53), but the corresponding backend route was never added in server.py — there are only POST/GET/DELETE/POST-checkin handlers in the /bookings section (lines 758-860). FastAPI returns 405 Method Not Allowed because the path matches but the method is unhandled. Mitigation: implement async def update_booking(bid: str, body: BookingCreate, user) at server.py around line 813, mirroring create_booking's validation (overlap check must add 'id': {'$ne': bid}), then $set the document and return it with _id popped."
+}
