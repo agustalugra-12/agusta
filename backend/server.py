@@ -973,7 +973,7 @@ async def create_booking(body: BookingCreate, user: dict = Depends(get_current_u
     if end <= start:
         raise HTTPException(400, "Jam selesai harus setelah jam mulai")
     overlap = await db.bookings.find_one({
-        "room_id": body.room_id, "status": "aktif",
+        "room_id": body.room_id, "status": {"$in": ["aktif", "booking_pending", "booking_paid"]},
         "jam_mulai": {"$lt": end.isoformat()},
         "jam_selesai": {"$gt": start.isoformat()},
     })
@@ -1070,7 +1070,7 @@ async def update_booking(bid: str, body: BookingCreate, user: dict = Depends(get
         raise HTTPException(400, "Jam selesai harus setelah jam mulai")
     overlap = await db.bookings.find_one({
         "id": {"$ne": bid},
-        "room_id": body.room_id, "status": "aktif",
+        "room_id": body.room_id, "status": {"$in": ["aktif", "booking_pending", "booking_paid"]},
         "jam_mulai": {"$lt": end.isoformat()},
         "jam_selesai": {"$gt": start.isoformat()},
     })

@@ -1,0 +1,48 @@
+{
+  "summary": "Iteration 10 retest PASSED for all 4 scenarios. Backend overlap fix verified: both POST /api/bookings and PUT /api/bookings/{id} now block against booking_pending/booking_paid (in addition to aktif). Frontend Dashboard.jsx confirmed to fetch all bookings then client-filter to ['aktif','booking_pending','booking_paid'] — room card turns brown + legend 'Booked (n)' increments on date filter when a public booking_pending exists.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_results": {
+    "BACKEND_pytest_test_iteration10_overlap_py": "6/6 PASS",
+    "test_internal_create_overlap_blocked_by_pending": "PASS — POST /api/bookings overlapping booking_pending returns 400 'Kamar sudah dibooking'",
+    "test_internal_create_succeeds_after_public_deleted": "PASS — after DELETE /api/bookings/{pub_id}, internal POST same window succeeds (200)",
+    "test_update_booking_overlap_blocked_by_pending": "PASS — PUT /api/bookings/{aktif_id} to overlap booking_pending returns 400",
+    "test_public_booking_service_fee_smoke": "PASS — service_fee=3% subtotal, total=subtotal+fee, dp_min=50% total",
+    "test_availability_smoke": "PASS — /bookings/availability returns N slots with available+date+reason",
+    "test_availability_marks_public_booking": "PASS — availability marks booking_pending date as available=false with kode in reason",
+    "UI_dashboard_date_filter_with_booking_pending": "PASS — created TEST_DASH_UI_PEND via /api/public/bookings on room 1 for 2026-07-03; opened dashboard, set Booking pada=07/03/2026; room 1 turned BROWN with badge '03 Jul, 07:00 Booked' and guest name visible; legend 'Booked (1)' included the pending booking; reset to today restored realtime status. Screenshot saved at /root/.emergent/.../dash_filter_pending.png"
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration10_overlap.py",
+    "/app/test_reports/pytest/iter10_results.xml"
+  ],
+  "action_items": [
+    "Iteration 9 bugs are FIXED. Phase C (Xendit) and Phase D (WA/widgets) still pending — proceed with implementation when ready."
+  ],
+  "critical_code_review_comments": [
+    "server.py create_booking & update_booking now correctly include 3 statuses in overlap query (lines 976, 1073). Consistent with public_create_booking (line 291) and booking_availability (line 1027). Good.",
+    "Dashboard.jsx (line 49-52): fetches /bookings without status filter then client-filters via .filter(x => ['aktif','booking_pending','booking_paid'].includes(x.status)). Works correctly. Minor: could be optimized to query backend with $in via repeated calls or new param to avoid pulling all rows (low volume so OK for now).",
+    "Backend list_bookings (/api/bookings GET) only supports single status param via $in not implemented. If booking volume grows beyond ~1000 rows, Dashboard pull-all approach should be replaced with server-side multi-status filter (e.g., status=aktif,booking_pending,booking_paid CSV). Document this for future scale.",
+    "Stale TEST_ bookings linger in DB with status 'selesai'/'dibatalkan'/'kadaluarsa' (cannot be deleted via DELETE /api/bookings — by design since status != 'aktif'). Recommend adding a admin-only bulk-cleanup endpoint or DB script for test environments. Minor."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration10_overlap.py (NEW: 6 regression tests for iter10 overlap fixes)"
+  ],
+  "success_rate": {
+    "backend": "100% (6/6 pytest)",
+    "frontend": "100% (Dashboard date-filter with booking_pending verified visually + legend count)"
+  },
+  "test_credentials": "owner / owner123 — public endpoints require no auth",
+  "seed_data_creation": "Created during testing and cleaned up: TEST_ITER10_PUB1/PUB2/PUB3/AKT/INT/INT2/UPD_INT/UPD_PUB/FEE/AVAIL plus UI TEST_DASH_UI_PEND. All aktif/booking_pending bookings deleted via DELETE /api/bookings/{id}. Final inventory of TEST_ITER10_* and TEST_DASH_UI_* = 0.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Iteration 9 bugs are fully fixed. Backend (POST + PUT /bookings now block against booking_pending/booking_paid) and Frontend (Dashboard.jsx fetches all bookings then filters to 3 occupy-statuses) both verified. Next phases: Phase C (Xendit payment integration on /api/public/bookings — currently booking stays in booking_pending forever since no payment trigger; SuccessView still shows 'Pembayaran via Xendit akan dikirim ke WhatsApp' placeholder) and Phase D (WhatsApp + widgets) NOT yet implemented. Token in localStorage key 'ph_token'. Login redirects to '/' not '/dashboard'. Public booking always 6h day_use (hardcoded line 287). Test file /app/backend/tests/test_iteration10_overlap.py is reusable as regression for the overlap fix.",
+  "rca_of_the_issue": "Bug (FIXED in iter 9 and verified in iter 10): Dashboard.jsx previously called GET /bookings?status=aktif → public/online bookings (booking_pending) and paid bookings (booking_paid) never appeared in the bookings state → bookingsOnDate filter could not mark them brown. Backend POST/PUT /bookings overlap query also only checked status=aktif → an internal booking could be created/edited on top of a public pending booking. Fix: (a) Dashboard fetches without filter and includes 3 statuses client-side; (b) Backend overlap $in includes ['aktif','booking_pending','booking_paid']. Both fixes verified end-to-end."
+}

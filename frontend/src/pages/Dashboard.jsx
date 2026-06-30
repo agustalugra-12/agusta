@@ -46,9 +46,11 @@ export default function Dashboard() {
         api.get("/reports/summary"),
         api.get("/rooms"),
         api.get("/checkins", { params: { status: "aktif" } }),
-        api.get("/bookings", { params: { status: "aktif" } }),
+        api.get("/bookings"),
       ]);
-      setSummary(s.data); setRooms(r.data); setActive(c.data); setBookings(b.data);
+      // tampilkan semua booking yang menempati kamar: aktif, booking_pending, booking_paid
+      const occupying = b.data.filter(x => ["aktif", "booking_pending", "booking_paid"].includes(x.status));
+      setSummary(s.data); setRooms(r.data); setActive(c.data); setBookings(occupying);
     } catch (e) { console.error(e); }
   };
 
