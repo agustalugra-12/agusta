@@ -126,7 +126,7 @@ class CheckinCreate(BaseModel):
     foto_identitas_url: Optional[str] = ""
 
 class CheckoutIn(BaseModel):
-    metode_pembayaran: List[Dict[str, Any]] = []  # [{"metode":"tunai","jumlah":100000}]
+    pembayaran: List[Dict[str, Any]] = []  # [{"metode":"tunai","jumlah":100000}]
     overtime_manual: Optional[int] = None  # jika ingin override jam overtime
     catatan: str = ""
 

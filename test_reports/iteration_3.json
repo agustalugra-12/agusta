@@ -1,0 +1,20 @@
+{
+  "summary": "Retest #2 after CheckoutIn field rename (metode_pembayaran -> pembayaran). All three target scenarios now PASS. Checkout flow end-to-end works: insufficient payment 400, successful checkout 200 with status=selesai, room transitions to perlu_dibersihkan, housekeeping_log entry auto-created, housekeeping-done returns room to kosong with log status=selesai.",
+  "tested_scope": ["backend", "integration"],
+  "passed": [
+    "POST /api/auth/login owner -> 200 (token in 'token' field, not 'access_token')",
+    "POST /api/checkins -> 200 (room_id=9af54e3c..., total preview=120000)",
+    "POST /api/checkins/{id}/checkout with insufficient pembayaran (jumlah=100) -> 400 'Total pembayaran kurang. Diperlukan Rp120.000'",
+    "POST /api/checkins/{id}/checkout with body {pembayaran:[{metode:'tunai',jumlah:120000}], catatan:'test checkout'} -> 200; response has status='selesai', pembayaran array persisted, catatan_checkout='test checkout', petugas_checkout populated",
+    "Room 104 status after checkout = 'perlu_dibersihkan'",
+    "GET /api/housekeeping returns log entry with status='selesai' (auto-set after housekeeping-done)",
+    "POST /api/rooms/{room_id}/housekeeping-done -> 200 {ok:true}",
+    "Room 104 status after housekeeping-done = 'kosong'"
+  ],
+  "failed": [],
+  "action_items": [],
+  "success_rate": {"backend": "100% on requested scope (3/3 scenarios)", "frontend": "n/a (skipped per request)"},
+  "retest_needed": false,
+  "full_testing_deferred": true,
+  "test_credentials": "owner/owner123 verified working. Note: login response key is 'token' (not 'access_token')."
+}
