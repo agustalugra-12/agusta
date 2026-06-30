@@ -251,7 +251,10 @@ async def delete_user(user_id: str, user: dict = Depends(require_owner)):
 # ---- Rooms ----
 @api.get("/rooms")
 async def list_rooms(user: dict = Depends(get_current_user)):
-    rooms = await db.rooms.find({}, {"_id": 0}).sort("nomor", 1).to_list(500)
+    rooms = await db.rooms.find({}, {"_id": 0}).to_list(500)
+    # tipe order (Standard first, then Cottage), then numeric room number
+    tipe_order = {"Standard": 0, "Cottage": 1}
+    rooms.sort(key=lambda r: (tipe_order.get(r.get("tipe", ""), 99), int("".join(c for c in r.get("nomor", "0") if c.isdigit()) or 0)))
     return rooms
 
 @api.post("/rooms")
@@ -788,6 +791,93 @@ async def report_daily(from_date: str = Query(...), to_date: str = Query(...),
             "laba": pendapatan - row["pengeluaran"],
         })
     return result
+
+@api.get("/reports/rooms")
+async def report_rooms(from_date: str = Query(...), to_date: str = Query(...),
+                       user: dict = Depends(get_current_user)):
+    start = from_date
+    end = to_date + "T23:59:59"
+    items = await db.checkins.find(
+        {"jam_checkout": {"$gte": start, "$lte": end}, "status": "selesai"},
+        {"_id": 0}
+    ).sort("jam_checkout", -1).to_list(5000)
+    summary = {
+        "tanggal_dari": from_date, "tanggal_sampai": to_date,
+        "total_transaksi": len(items),
+        "total_tamu": sum(int(c.get("jumlah_tamu", 1)) for c in items),
+        "kamar_terpakai": len({c["room_nomor"] for c in items}),
+        "pendapatan_standard": sum(c.get("total", 0) for c in items if c.get("room_tipe") == "Standard"),
+        "pendapatan_cottage": sum(c.get("total", 0) for c in items if c.get("room_tipe") == "Cottage"),
+        "total_overtime": sum(c.get("biaya_tambahan", 0) for c in items),
+        "total_pendapatan": sum(c.get("total", 0) for c in items),
+    }
+    return {"summary": summary, "items": items}
+
+@api.get("/reports/kasir-detail")
+async def report_kasir_detail(from_date: str = Query(...), to_date: str = Query(...),
+                              user: dict = Depends(get_current_user)):
+    start = from_date
+    end = to_date + "T23:59:59"
+    trxs = await db.kasir.find(
+        {"timestamp": {"$gte": start, "$lte": end}},
+        {"_id": 0}
+    ).sort("timestamp", -1).to_list(5000)
+    per_kat = {"makanan": 0, "minuman": 0, "laundry": 0}
+    for t in trxs:
+        for it in t.get("items", []):
+            per_kat[it["kategori"]] = per_kat.get(it["kategori"], 0) + it.get("subtotal", 0)
+    summary = {
+        "tanggal_dari": from_date, "tanggal_sampai": to_date,
+        "total_transaksi": len(trxs),
+        "total_makanan": per_kat["makanan"],
+        "total_minuman": per_kat["minuman"],
+        "total_laundry": per_kat["laundry"],
+        "total_pendapatan": sum(t.get("total", 0) for t in trxs),
+    }
+    return {"summary": summary, "items": trxs}
+
+@api.get("/reports/items-sold")
+async def report_items_sold(from_date: str = Query(...), to_date: str = Query(...),
+                            user: dict = Depends(get_current_user)):
+    start = from_date
+    end = to_date + "T23:59:59"
+    trxs = await db.kasir.find({"timestamp": {"$gte": start, "$lte": end}}, {"_id": 0}).to_list(5000)
+    agg: Dict[str, Dict[str, Any]] = {}
+    for t in trxs:
+        for it in t.get("items", []):
+            key = it["product_id"]
+            if key not in agg:
+                agg[key] = {
+                    "product_id": key, "kode": it["kode"], "nama": it["nama"],
+                    "kategori": it["kategori"], "harga": it["harga"], "qty": 0, "pendapatan": 0,
+                }
+            agg[key]["qty"] += it["qty"]
+            agg[key]["pendapatan"] += it["subtotal"]
+    rows = sorted(agg.values(), key=lambda x: x["qty"], reverse=True)
+    return rows
+
+@api.get("/reports/top-products")
+async def report_top_products(period: str = Query("month"), limit: int = Query(10),
+                              user: dict = Depends(get_current_user)):
+    """period: today | month | year"""
+    now = datetime.now(timezone.utc)
+    if period == "today":
+        start = now.date().isoformat()
+    elif period == "year":
+        start = now.replace(month=1, day=1, hour=0, minute=0, second=0, microsecond=0).isoformat()
+    else:
+        start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0).isoformat()
+    trxs = await db.kasir.find({"timestamp": {"$gte": start}}, {"_id": 0}).to_list(10000)
+    agg: Dict[str, Dict[str, Any]] = {}
+    for t in trxs:
+        for it in t.get("items", []):
+            key = it["product_id"]
+            if key not in agg:
+                agg[key] = {"kode": it["kode"], "nama": it["nama"], "kategori": it["kategori"], "qty": 0, "pendapatan": 0}
+            agg[key]["qty"] += it["qty"]
+            agg[key]["pendapatan"] += it["subtotal"]
+    rows = sorted(agg.values(), key=lambda x: x["qty"], reverse=True)[:limit]
+    return {"period": period, "rows": rows}
 
 # ---- Setup / seed ----
 @app.on_event("startup")
