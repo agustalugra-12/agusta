@@ -74,6 +74,7 @@ export default function Laporan() {
           <TabsTrigger value="kasir" data-testid="tab-kasir">Laporan Kasir</TabsTrigger>
           <TabsTrigger value="items" data-testid="tab-items">Item Terjual</TabsTrigger>
           <TabsTrigger value="top" data-testid="tab-top">Produk Terlaris</TabsTrigger>
+          <TabsTrigger value="expenses" data-testid="tab-expenses">Pengeluaran</TabsTrigger>
           <TabsTrigger value="cancel" data-testid="tab-cancel">Cancel & No-Show</TabsTrigger>
         </TabsList>
 
@@ -84,6 +85,7 @@ export default function Laporan() {
           <TabsContent value="kamar"><LaporanKamar from={from} to={to} /></TabsContent>
           <TabsContent value="kasir"><LaporanKasir from={from} to={to} /></TabsContent>
           <TabsContent value="items"><LaporanItems from={from} to={to} /></TabsContent>
+          <TabsContent value="expenses"><LaporanExpenses from={from} to={to} /></TabsContent>
           <TabsContent value="cancel"><LaporanCancel from={from} to={to} /></TabsContent>
           <TabsContent value="top"><TopProducts /></TabsContent>
         </div>
@@ -311,6 +313,86 @@ function TopProducts() {
           </tbody>
         </table>
       </CardContent></Card>
+    </div>
+  );
+}
+
+function LaporanExpenses({ from, to }) {
+  const [rows, setRows] = useState([]);
+  const [loading, setLoading] = useState(false);
+  useEffect(() => {
+    setLoading(true);
+    api.get("/expenses", { params: { from_date: from, to_date: to } })
+      .then(r => setRows(r.data || []))
+      .catch(() => setRows([]))
+      .finally(() => setLoading(false));
+  }, [from, to]);
+
+  const stats = useMemo(() => {
+    const total = rows.reduce((s, r) => s + (r.nominal || 0), 0);
+    const byCat = {};
+    rows.forEach(r => { byCat[r.kategori] = (byCat[r.kategori] || 0) + (r.nominal || 0); });
+    return { total, count: rows.length, byCat };
+  }, [rows]);
+
+  const exp = () => downloadCsv(`Laporan_Pengeluaran_${from}_${to}.csv`,
+    ["Tanggal", "Kategori", "Deskripsi", "Nominal", "Petugas"],
+    rows.map(r => [fmtDateTime(r.tanggal), r.kategori, r.deskripsi || "-", r.nominal, r.user || "-"]));
+
+  return (
+    <div className="space-y-4">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+        <Stat label="Total Pengeluaran" value={fmtRp(stats.total)} color="#EF4444" />
+        <Stat label="Jumlah Transaksi" value={stats.count} color="#64748B" />
+        {Object.entries(stats.byCat).slice(0, 6).map(([k, v]) => (
+          <Stat key={k} label={k} value={fmtRp(v)} color="#F97316" />
+        ))}
+      </div>
+      <div className="flex justify-end">
+        <Button variant="outline" onClick={exp} data-testid="export-expenses">Export CSV</Button>
+      </div>
+      <Card className="border-slate-200">
+        <CardContent className="p-0 overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead className="bg-slate-50 text-slate-600 text-xs uppercase">
+              <tr>
+                <th className="text-left p-3">Tanggal</th>
+                <th className="text-left p-3">Kategori</th>
+                <th className="text-left p-3">Deskripsi</th>
+                <th className="text-right p-3">Nominal</th>
+                <th className="text-left p-3">Petugas</th>
+              </tr>
+            </thead>
+            <tbody data-testid="expenses-tbody">
+              {rows.map((r) => (
+                <tr key={r.id} className="border-t border-slate-100" data-testid={`expense-row-${r.id}`}>
+                  <td className="p-3 text-xs">{fmtDateTime(r.tanggal)}</td>
+                  <td className="p-3 capitalize font-semibold">{r.kategori}</td>
+                  <td className="p-3 text-slate-700">{r.deskripsi || <span className="text-slate-400 italic">-</span>}</td>
+                  <td className="p-3 text-right font-bold text-red-600">{fmtRp(r.nominal)}</td>
+                  <td className="p-3 text-xs text-slate-500">{r.user || "-"}</td>
+                </tr>
+              ))}
+              {rows.length === 0 && (
+                <tr>
+                  <td colSpan={5} className="p-6 text-center text-slate-500">
+                    {loading ? "Memuat..." : "Tidak ada pengeluaran dalam rentang ini"}
+                  </td>
+                </tr>
+              )}
+            </tbody>
+            {rows.length > 0 && (
+              <tfoot>
+                <tr className="border-t-2 border-slate-300 bg-slate-50 font-bold">
+                  <td className="p-3" colSpan={3}>TOTAL</td>
+                  <td className="p-3 text-right text-red-700" data-testid="expenses-total">{fmtRp(stats.total)}</td>
+                  <td className="p-3"></td>
+                </tr>
+              </tfoot>
+            )}
+          </table>
+        </CardContent>
+      </Card>
     </div>
   );
 }
