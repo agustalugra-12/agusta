@@ -268,6 +268,7 @@ class BookingUpdate(BaseModel):
 class PublicBookingCreate(BaseModel):
     nama_tamu: str
     no_hp: str
+    email: str  # Wajib — untuk kirim bukti pembayaran
     no_identitas: str = ""
     jumlah_tamu: int = 1
     kendaraan: str = ""

@@ -10,7 +10,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { bookingConfirmationWaLink } from "@/lib/apiClient";
 import {
   BedDouble, Wifi, Snowflake, Tv, Droplets, Bath, Trees, CheckCircle2,
-  Calendar, Clock, User, Phone, IdCard, Car, Users as UsersIcon, Building2, ArrowRight,
+  Calendar, Clock, User, Phone, IdCard, Car, Users as UsersIcon, Building2, ArrowRight, Mail,
 } from "lucide-react";
 
 // API client tanpa auth (untuk endpoint /api/public/*)
@@ -52,7 +52,7 @@ function BookingForm() {
   const [step, setStep] = useState(1);            // 1 = pilih kamar, 2 = form
   const [selectedRoom, setSelectedRoom] = useState(null); // {id, nomor, tipe, tarif}
   const [form, setForm] = useState({
-    nama_tamu: "", no_hp: "", no_identitas: "", jumlah_tamu: 1, kendaraan: "",
+    nama_tamu: "", no_hp: "", email: "", no_identitas: "", jumlah_tamu: 1, kendaraan: "",
     jam_checkin: "13:00", catatan: "",
   });
   const [submitting, setSubmitting] = useState(false);
@@ -89,6 +89,12 @@ function BookingForm() {
       toast.error("Lengkapi nama, no HP, dan no identitas");
       return;
     }
+    const emailTrimmed = form.email.trim();
+    const emailValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailTrimmed);
+    if (!emailTrimmed || !emailValid) {
+      toast.error("Email wajib diisi dengan format yang valid — untuk menerima bukti pembayaran");
+      return;
+    }
     if (!selectedRoom) { toast.error("Pilih kamar dulu"); return; }
     setSubmitting(true);
     try {
@@ -96,6 +102,7 @@ function BookingForm() {
       const { data: bk } = await PUBLIC_API.post("/public/bookings", {
         nama_tamu: form.nama_tamu.trim(),
         no_hp: form.no_hp.trim(),
+        email: emailTrimmed,
         no_identitas: form.no_identitas.trim(),
         jumlah_tamu: Number(form.jumlah_tamu) || 1,
         kendaraan: form.kendaraan.trim(),
@@ -242,6 +249,24 @@ function BookingForm() {
                 <h2 className="text-2xl font-extrabold">Data Tamu</h2>
                 <FieldIcon icon={User} label="Nama Lengkap"><Input data-testid="pb-nama" value={form.nama_tamu} onChange={(e) => setForm(f => ({ ...f, nama_tamu: e.target.value }))} className="h-12" /></FieldIcon>
                 <FieldIcon icon={Phone} label="Nomor WhatsApp"><Input data-testid="pb-hp" placeholder="08xxxxxxxxxx" value={form.no_hp} onChange={(e) => setForm(f => ({ ...f, no_hp: e.target.value }))} className="h-12" /></FieldIcon>
+                <div>
+                  <FieldIcon icon={Mail} label="Email">
+                    <Input
+                      data-testid="pb-email"
+                      type="email"
+                      inputMode="email"
+                      autoComplete="email"
+                      placeholder="nama@email.com"
+                      value={form.email}
+                      onChange={(e) => setForm(f => ({ ...f, email: e.target.value }))}
+                      className="h-12"
+                      required
+                    />
+                  </FieldIcon>
+                  <p className="mt-1.5 text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded-md px-2.5 py-1.5">
+                    <span className="font-bold">Wajib diisi</span> — bukti pembayaran & konfirmasi booking akan dikirim ke email ini.
+                  </p>
+                </div>
                 <FieldIcon icon={IdCard} label="Nomor Identitas (KTP/Paspor)"><Input data-testid="pb-ktp" value={form.no_identitas} onChange={(e) => setForm(f => ({ ...f, no_identitas: e.target.value }))} className="h-12" /></FieldIcon>
                 <div className="grid grid-cols-2 gap-3">
                   <FieldIcon icon={UsersIcon} label="Jumlah Tamu"><Input data-testid="pb-jumlah" type="number" min="1" value={form.jumlah_tamu} onChange={(e) => setForm(f => ({ ...f, jumlah_tamu: e.target.value }))} className="h-12" /></FieldIcon>

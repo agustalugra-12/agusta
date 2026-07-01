@@ -73,6 +73,10 @@ async def public_create_booking(body: PublicBookingCreate):
         raise HTTPException(404, "Kamar tidak ditemukan")
     if r["status"] != "kosong":
         raise HTTPException(400, "Kamar tidak tersedia")
+    # Validasi email wajib (untuk kirim bukti pembayaran)
+    email = (body.email or "").strip().lower()
+    if not email or "@" not in email or "." not in email.split("@")[-1]:
+        raise HTTPException(400, "Email wajib diisi dengan format yang valid (untuk menerima bukti pembayaran)")
     # Parse tanggal + jam check-in (WIB +07:00)
     try:
         local_in = datetime.fromisoformat(f"{body.tanggal}T{body.jam_checkin}:00+07:00")
@@ -99,6 +103,7 @@ async def public_create_booking(body: PublicBookingCreate):
         "room_id": body.room_id, "room_nomor": r["nomor"], "room_tipe": r["tipe"],
         "tipe": "day_use",
         "nama_tamu": body.nama_tamu, "no_hp": body.no_hp,
+        "email": email,
         "no_identitas": body.no_identitas, "kendaraan": body.kendaraan,
         "jumlah_tamu": body.jumlah_tamu,
         "jam_mulai": start.isoformat(), "jam_selesai": end.isoformat(),
@@ -127,7 +132,7 @@ async def public_get_booking(bid: str):
         raise HTTPException(404, "Booking tidak ditemukan")
     # batasi field yang dikembalikan ke publik
     safe = {k: b.get(k) for k in [
-        "id", "kode", "room_nomor", "room_tipe", "tipe", "nama_tamu", "no_hp",
+        "id", "kode", "room_nomor", "room_tipe", "tipe", "nama_tamu", "no_hp", "email",
         "jumlah_tamu", "jam_mulai", "jam_selesai", "status", "payment_status",
         "subtotal", "service_fee", "total", "dp_min", "invoice_id",
     ]}

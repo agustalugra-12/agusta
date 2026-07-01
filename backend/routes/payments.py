@@ -38,6 +38,7 @@ async def create_snap_token(body: CreateSnapTokenBody):
         "customer_details": {
             "first_name": b.get("nama_tamu", ""),
             "phone": b.get("no_hp", ""),
+            "email": b.get("email", ""),
         },
         "item_details": [{
             "id": b["room_id"], "name": f"Kamar {b['room_nomor']} ({b['room_tipe']})",
