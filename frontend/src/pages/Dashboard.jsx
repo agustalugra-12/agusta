@@ -1,7 +1,7 @@
 import { useEffect, useState, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
-import api, { fmtRp, statusLabel, statusColor, waLink } from "@/lib/apiClient";
+import api, { fmtRp, statusLabel, statusColor, bookingConfirmationWaLink } from "@/lib/apiClient";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import {
@@ -575,11 +575,11 @@ export default function Dashboard() {
             {!rescheduleMode && bookingDetail?.no_hp && (
               <a
                 data-testid="bd-wa-confirm"
-                href={waLink(bookingDetail.no_hp, `Terima kasih telah melakukan reservasi di Pelangi Homestay.\n\nBooking Anda telah dikonfirmasi.\n\nNomor Booking: ${bookingDetail.kode}\nTipe Kamar: ${bookingDetail.room_tipe}\nNomor Kamar: ${bookingDetail.room_nomor}\nTanggal: ${new Date(bookingDetail.jam_mulai).toLocaleString("id-ID")}\n\nRefund/cancel dapat dilakukan H-1 dengan biaya pembatalan 10% dari total pembayaran.\n\nMohon tunjukkan nomor booking saat kedatangan.`)}
+                href={bookingConfirmationWaLink(bookingDetail)}
                 target="_blank" rel="noreferrer"
                 className="inline-flex items-center gap-2 px-3 h-9 rounded-md bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-semibold"
               >
-                <MessageCircle className="w-4 h-4" /> WhatsApp
+                <MessageCircle className="w-4 h-4" /> Kirim WhatsApp
               </a>
             )}
             {!rescheduleMode && bookingDetail?.status === "booking_paid" && (

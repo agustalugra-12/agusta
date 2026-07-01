@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
-import api, { fmtRp, fmtDateTime } from "@/lib/apiClient";
+import api, { fmtRp, fmtDateTime, bookingConfirmationWaLink } from "@/lib/apiClient";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -8,7 +8,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
-import { Plus, Trash2, LogIn, BedDouble, Clock, Pencil } from "lucide-react";
+import { Plus, Trash2, LogIn, BedDouble, Clock, Pencil, MessageCircle } from "lucide-react";
 
 const nowLocal = () => { const d = new Date(); d.setMinutes(d.getMinutes() - d.getTimezoneOffset()); return d.toISOString().slice(0, 16); };
 const plusHours = (s, h) => { const d = new Date(s); d.setHours(d.getHours() + h); d.setMinutes(d.getMinutes() - d.getTimezoneOffset()); return d.toISOString().slice(0, 16); };
@@ -163,6 +163,16 @@ export default function Bookings() {
               {b.no_hp && <div className="text-xs text-slate-500">HP: {b.no_hp}</div>}
               {b.catatan && <div className="text-xs text-slate-500 italic">&ldquo;{b.catatan}&rdquo;</div>}
               <div className="text-[10px] text-slate-400">Status: {b.status} • dibuat oleh {b.created_by}</div>
+              {b.no_hp && (
+                <a
+                  data-testid={`wa-${b.kode}`}
+                  href={bookingConfirmationWaLink(b)}
+                  target="_blank" rel="noreferrer"
+                  className="inline-flex items-center justify-center gap-2 w-full px-3 h-9 rounded-md bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold"
+                >
+                  <MessageCircle className="w-3.5 h-3.5" /> Kirim WhatsApp Konfirmasi
+                </a>
+              )}
               {b.status === "aktif" && (
                 <div className="flex gap-2 pt-2 border-t border-slate-100">
                   <Button data-testid={`activate-${b.kode}`} size="sm" onClick={() => doCheckin(b)} className="bg-emerald-600 hover:bg-emerald-700 flex-1">

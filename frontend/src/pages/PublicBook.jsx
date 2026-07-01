@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { bookingConfirmationWaLink } from "@/lib/apiClient";
 import {
   BedDouble, Wifi, Snowflake, Tv, Droplets, Bath, Trees, CheckCircle2,
   Calendar, Clock, User, Phone, IdCard, Car, Users as UsersIcon, Building2, ArrowRight,
@@ -427,7 +428,7 @@ function SuccessView({ bookingId }) {
           {bk.no_hp && (
             <a
               data-testid="pb-success-wa"
-              href={`https://wa.me/${bk.no_hp.replace(/^0/, "62").replace(/\D/g, "")}?text=${encodeURIComponent(`Halo Pelangi Homestay,\n\nSaya sudah booking dengan kode:\n*${bk.kode}*\nKamar ${bk.room_nomor} (${bk.room_tipe})\nCheck-in: ${new Date(bk.jam_mulai).toLocaleString("id-ID")}\nStatus: ${bk.payment_status?.toUpperCase()}\n\nTerima kasih.`)}`}
+              href={bookingConfirmationWaLink(bk)}
               target="_blank" rel="noreferrer"
               className="inline-flex items-center justify-center gap-2 w-full px-4 h-11 rounded-md bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-bold"
             >
