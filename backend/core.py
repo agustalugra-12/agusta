@@ -1,0 +1,296 @@
+"""Core module — shared dependencies for the Pelangi Homestay API.
+
+Contains: env config, Mongo client, shared APIRouter instance, JWT helpers,
+Pydantic models, and cross-cutting utilities (audit log, calc_tagihan, etc).
+
+All route modules should do:  from core import *
+"""
+from dotenv import load_dotenv
+from pathlib import Path
+
+ROOT_DIR = Path(__file__).parent
+load_dotenv(ROOT_DIR / '.env')
+
+import os
+import uuid
+import hashlib
+import logging
+from datetime import datetime, timezone, timedelta
+from typing import List, Optional, Dict, Any
+
+import jwt
+import bcrypt
+import midtransclient
+from fastapi import APIRouter, HTTPException, Depends, Request, Response, Query
+from motor.motor_asyncio import AsyncIOMotorClient
+from pydantic import BaseModel, Field
+
+# ---- Mongo Setup ----
+mongo_url = os.environ['MONGO_URL']
+client = AsyncIOMotorClient(mongo_url)
+db = client[os.environ['DB_NAME']]
+
+JWT_ALGO = "HS256"
+JWT_SECRET = os.environ.get("JWT_SECRET", "change-me")
+
+# ---- Shared APIRouter — every route module registers on this instance ----
+api = APIRouter(prefix="/api")
+
+# ---- Midtrans setup ----
+MIDTRANS_SERVER_KEY = os.environ.get("MIDTRANS_SERVER_KEY", "")
+MIDTRANS_CLIENT_KEY = os.environ.get("MIDTRANS_CLIENT_KEY", "")
+MIDTRANS_IS_PRODUCTION = os.environ.get("MIDTRANS_IS_PRODUCTION", "false").lower() == "true"
+
+snap_client = midtransclient.Snap(
+    is_production=MIDTRANS_IS_PRODUCTION,
+    server_key=MIDTRANS_SERVER_KEY,
+    client_key=MIDTRANS_CLIENT_KEY,
+)
+
+# ---- Constants ----
+SERVICE_FEE_PCT = 0.03  # 3% service fee diaplikasikan ke checkin & booking
+
+# ---- Utilities ----
+def now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+def hash_password(p: str) -> str:
+    return bcrypt.hashpw(p.encode(), bcrypt.gensalt()).decode()
+
+def verify_password(p: str, h: str) -> bool:
+    try:
+        return bcrypt.checkpw(p.encode(), h.encode())
+    except Exception:
+        return False
+
+def create_token(user_id: str, username: str, role: str) -> str:
+    payload = {
+        "sub": user_id, "username": username, "role": role,
+        "exp": datetime.now(timezone.utc) + timedelta(days=7),
+    }
+    return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGO)
+
+async def get_current_user(request: Request) -> dict:
+    auth = request.headers.get("Authorization", "")
+    token = None
+    if auth.startswith("Bearer "):
+        token = auth[7:]
+    if not token:
+        token = request.cookies.get("access_token")
+    if not token:
+        raise HTTPException(401, "Tidak terautentikasi")
+    try:
+        payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGO])
+    except jwt.ExpiredSignatureError:
+        raise HTTPException(401, "Sesi habis, silakan login lagi")
+    except jwt.InvalidTokenError:
+        raise HTTPException(401, "Token tidak valid")
+    user = await db.users.find_one({"id": payload["sub"]}, {"_id": 0, "password_hash": 0})
+    if not user:
+        raise HTTPException(401, "User tidak ditemukan")
+    return user
+
+async def require_owner(user: dict = Depends(get_current_user)) -> dict:
+    if user.get("role") != "owner":
+        raise HTTPException(403, "Hanya Owner yang dapat melakukan aksi ini")
+    return user
+
+async def log_activity(user: dict, action: str, detail: str = "", entity: str = ""):
+    await db.audit_log.insert_one({
+        "id": str(uuid.uuid4()),
+        "user_id": user.get("id"),
+        "username": user.get("username"),
+        "action": action,
+        "entity": entity,
+        "detail": detail,
+        "timestamp": now_iso(),
+    })
+
+def calc_tagihan(tarif_dasar: int, jam_checkin: datetime, jam_checkout: datetime, overtime_manual: Optional[int] = None):
+    """Hitung tagihan check-out: 6 jam pertama = tarif dasar, sisanya Rp 20.000/jam (ceiling)."""
+    delta = jam_checkout - jam_checkin
+    hours = delta.total_seconds() / 3600
+    durasi = max(0.0, hours)
+    over = 0
+    if durasi > 6:
+        over = int(-(-(durasi - 6) // 1))  # ceil
+    if overtime_manual is not None:
+        over = max(0, int(overtime_manual))
+    biaya_over = over * 20000
+    subtotal = int(tarif_dasar) + biaya_over
+    service_fee = round(subtotal * SERVICE_FEE_PCT)
+    total = subtotal + service_fee
+    return {
+        "durasi_jam": round(durasi, 2), "overtime_jam": over,
+        "biaya_tambahan": biaya_over, "subtotal": subtotal,
+        "service_fee": service_fee, "service_fee_pct": SERVICE_FEE_PCT,
+        "total": total,
+    }
+
+def parse_iso(s: str, field: str) -> datetime:
+    try:
+        d = datetime.fromisoformat(s.replace("Z", "+00:00"))
+        if d.tzinfo is None:
+            d = d.replace(tzinfo=timezone.utc)
+        return d.astimezone(timezone.utc)
+    except Exception:
+        raise HTTPException(400, f"Format {field} tidak valid (harus ISO 8601)")
+
+# ---- Models ----
+class LoginIn(BaseModel):
+    username: str
+    password: str
+
+class UserCreate(BaseModel):
+    nama: str
+    username: str
+    password: str
+    role: str  # owner | resepsionis
+
+class UserUpdate(BaseModel):
+    nama: Optional[str] = None
+    password: Optional[str] = None
+    role: Optional[str] = None
+    status: Optional[str] = None  # aktif | nonaktif
+
+class RoomCreate(BaseModel):
+    nomor: str
+    tipe: str  # Standard | Cottage
+    tarif: int
+
+class RoomUpdate(BaseModel):
+    nomor: Optional[str] = None
+    tipe: Optional[str] = None
+    tarif: Optional[int] = None
+
+class RoomStatusUpdate(BaseModel):
+    status: str  # kosong, day_use, menginap, perlu_dibersihkan, maintenance
+    catatan: Optional[str] = ""
+    nama_tamu: Optional[str] = ""
+
+class CheckinCreate(BaseModel):
+    nama_tamu: str
+    no_hp: str = ""
+    no_identitas: str = ""
+    kendaraan: str = ""
+    jumlah_tamu: int = 1
+    room_id: str
+    catatan: str = ""
+    foto_identitas_url: Optional[str] = ""
+    jam_checkin: Optional[str] = None  # ISO datetime; default = now
+
+class CheckoutIn(BaseModel):
+    pembayaran: List[Dict[str, Any]] = []  # [{"metode":"tunai","jumlah":100000}]
+    overtime_manual: Optional[int] = None
+    jam_checkout: Optional[str] = None
+    catatan: str = ""
+
+class ProductCreate(BaseModel):
+    kode: str
+    nama: str
+    kategori: str  # makanan | minuman | laundry
+    harga: int
+    stok: int = 0
+    stok_minimal: int = 0
+    aktif: bool = True
+
+class ProductUpdate(BaseModel):
+    kode: Optional[str] = None
+    nama: Optional[str] = None
+    kategori: Optional[str] = None
+    harga: Optional[int] = None
+    stok: Optional[int] = None
+    stok_minimal: Optional[int] = None
+    aktif: Optional[bool] = None
+
+class StockAdjust(BaseModel):
+    delta: int
+    catatan: str = ""
+
+class CartItem(BaseModel):
+    product_id: str
+    qty: int
+
+class KasirCreate(BaseModel):
+    items: List[CartItem]
+    diskon: int = 0
+    catatan: str = ""
+    pembayaran: List[Dict[str, Any]]  # [{metode, jumlah}]
+
+class ExpenseCreate(BaseModel):
+    tanggal: Optional[str] = None  # ISO date
+    kategori: str
+    deskripsi: str
+    nominal: int
+
+class ServiceCreate(BaseModel):
+    tanggal: Optional[str] = None  # ISO datetime (auto now if None)
+    deskripsi: str
+    nominal: int
+    kategori: Optional[str] = "Layanan Tambahan"
+    tamu: Optional[str] = ""
+    no_hp: Optional[str] = ""
+    room_nomor: Optional[str] = ""
+    metode_pembayaran: Optional[str] = "tunai"  # tunai|qris|transfer
+
+class HousekeepingDone(BaseModel):
+    petugas: Optional[str] = ""
+    catatan: Optional[str] = ""
+
+class MoveRoomBody(BaseModel):
+    new_room_id: str
+    alasan: Optional[str] = ""
+
+class BookingCreate(BaseModel):
+    room_id: str
+    tipe: str  # "day_use" | "menginap"
+    nama_tamu: str
+    no_hp: str = ""
+    no_identitas: str = ""
+    kendaraan: str = ""
+    jumlah_tamu: int = 1
+    jam_mulai: str
+    jam_selesai: Optional[str] = None
+    catatan: str = ""
+
+class BookingUpdate(BaseModel):
+    nama_tamu: Optional[str] = None
+    no_hp: Optional[str] = None
+    no_identitas: Optional[str] = None
+    kendaraan: Optional[str] = None
+    jumlah_tamu: Optional[int] = None
+    jam_mulai: Optional[str] = None
+    jam_selesai: Optional[str] = None
+    catatan: Optional[str] = None
+    room_id: Optional[str] = None
+    tipe: Optional[str] = None
+
+class PublicBookingCreate(BaseModel):
+    nama_tamu: str
+    no_hp: str
+    no_identitas: str = ""
+    jumlah_tamu: int = 1
+    kendaraan: str = ""
+    room_id: str
+    tanggal: str  # YYYY-MM-DD
+    jam_checkin: str  # HH:mm (24h)
+    catatan: str = ""
+
+class CreateSnapTokenBody(BaseModel):
+    booking_id: str
+    payment_option: str  # "dp50" atau "full"
+
+class CancelWithFeeBody(BaseModel):
+    alasan: Optional[str] = ""
+
+class NoShowBody(BaseModel):
+    alasan: Optional[str] = ""
+
+class ManualMarkPaidBody(BaseModel):
+    alasan: Optional[str] = ""
+    metode: Optional[str] = "transfer_manual"
+    nominal: Optional[int] = None  # if not provided, use total
+
+class CollectBalanceBody(BaseModel):
+    nominal: int
+    metode: str = "cash"  # cash / qris
