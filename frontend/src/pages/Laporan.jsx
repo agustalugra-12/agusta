@@ -75,6 +75,7 @@ export default function Laporan() {
           <TabsTrigger value="items" data-testid="tab-items">Item Terjual</TabsTrigger>
           <TabsTrigger value="top" data-testid="tab-top">Produk Terlaris</TabsTrigger>
           <TabsTrigger value="expenses" data-testid="tab-expenses">Pengeluaran</TabsTrigger>
+          <TabsTrigger value="service" data-testid="tab-service">Service</TabsTrigger>
           <TabsTrigger value="cancel" data-testid="tab-cancel">Cancel & No-Show</TabsTrigger>
         </TabsList>
 
@@ -86,6 +87,7 @@ export default function Laporan() {
           <TabsContent value="kasir"><LaporanKasir from={from} to={to} /></TabsContent>
           <TabsContent value="items"><LaporanItems from={from} to={to} /></TabsContent>
           <TabsContent value="expenses"><LaporanExpenses from={from} to={to} /></TabsContent>
+          <TabsContent value="service"><LaporanService from={from} to={to} /></TabsContent>
           <TabsContent value="cancel"><LaporanCancel from={from} to={to} /></TabsContent>
           <TabsContent value="top"><TopProducts /></TabsContent>
         </div>
@@ -391,6 +393,193 @@ function LaporanExpenses({ from, to }) {
               </tfoot>
             )}
           </table>
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
+function LaporanService({ from, to }) {
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(false);
+  useEffect(() => {
+    setLoading(true);
+    api.get("/reports/service-revenue", { params: { from_date: from, to_date: to } })
+      .then(r => setData(r.data))
+      .catch(() => setData(null))
+      .finally(() => setLoading(false));
+  }, [from, to]);
+
+  if (loading || !data) return <Card className="border-slate-200"><CardContent className="p-6 text-center text-slate-500">{loading ? "Memuat..." : "Data tidak tersedia"}</CardContent></Card>;
+
+  const feePct = ((data.service_fee_pct || 0) * 100).toFixed(0);
+  const exportFee = () => {
+    const rows = [
+      ...(data.checkin_items || []).map(it => ["Fee 3% Walk-In", it.kode, it.tanggal, it.nama_tamu, it.room_nomor, it.subtotal, it.service_fee, it.total, it.source, it.petugas]),
+      ...(data.booking_items || []).map(it => ["Fee 3% Online", it.kode, it.tanggal, it.nama_tamu, it.room_nomor, it.subtotal, it.service_fee, it.total, it.source, it.petugas]),
+    ];
+    downloadCsv(`Laporan_Service_Fee_${from}_${to}.csv`,
+      ["Tipe", "Kode", "Tanggal", "Nama Tamu", "Kamar", "Subtotal", "Service Fee", "Total", "Source", "Petugas"], rows);
+  };
+  const exportManual = () => {
+    const rows = (data.manual_services || []).map(s => [s.kode, s.tanggal, s.kategori, s.deskripsi, s.tamu || "-", s.room_nomor || "-", s.metode_pembayaran, s.nominal, s.user]);
+    downloadCsv(`Laporan_Service_Manual_${from}_${to}.csv`,
+      ["Kode", "Tanggal", "Kategori", "Deskripsi", "Tamu", "Kamar", "Metode", "Nominal", "Petugas"], rows);
+  };
+
+  return (
+    <div className="space-y-4">
+      {/* Header stats */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+        <Stat label={`Service Fee ${feePct}% (Walk-In)`} value={fmtRp(data.checkin_service_fee_total)} color="#1E40AF" />
+        <Stat label={`Service Fee ${feePct}% (Online)`} value={fmtRp(data.booking_service_fee_total)} color="#3B82F6" />
+        <Stat label="Layanan Manual" value={fmtRp(data.manual_service_total)} color="#10B981" />
+        <Stat label="Grand Total Pendapatan Service" value={fmtRp(data.grand_total)} color="#059669" />
+      </div>
+
+      {/* Chart per hari */}
+      <Card className="border-slate-200">
+        <CardContent className="p-5">
+          <div className="flex items-center justify-between mb-3">
+            <div>
+              <h3 className="font-bold">Pendapatan Service per Hari</h3>
+              <p className="text-xs text-slate-500">
+                {data.checkin_count} walk-in fee • {data.booking_count} online fee • {data.manual_service_count} layanan manual
+              </p>
+            </div>
+          </div>
+          <div className="h-64">
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={data.by_day}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#E2E8F0" />
+                <XAxis dataKey="tanggal" tick={{ fontSize: 11 }} />
+                <YAxis tick={{ fontSize: 11 }} tickFormatter={(v) => `Rp${(v / 1000).toFixed(0)}k`} />
+                <Tooltip formatter={(v) => fmtRp(v)} />
+                <Legend />
+                <Bar dataKey="checkin_fee" name={`Fee ${feePct}% Walk-In`} fill="#1E40AF" stackId="a" />
+                <Bar dataKey="booking_fee" name={`Fee ${feePct}% Online`} fill="#3B82F6" stackId="a" />
+                <Bar dataKey="manual" name="Layanan Manual" fill="#10B981" stackId="a" />
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Detail Service Fee 3% */}
+      <Card className="border-slate-200">
+        <CardContent className="p-5 space-y-3">
+          <div className="flex items-center justify-between">
+            <div>
+              <h3 className="font-bold">Rincian Service Fee {feePct}%</h3>
+              <p className="text-xs text-slate-500">Dihitung otomatis dari check-in walk-in & booking online yang lunas</p>
+            </div>
+            <Button data-testid="export-service-fee" size="sm" variant="outline" onClick={exportFee}>Export CSV</Button>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead className="bg-slate-50 text-slate-600 text-xs uppercase">
+                <tr>
+                  <th className="text-left p-3">Tipe</th>
+                  <th className="text-left p-3">Kode</th>
+                  <th className="text-left p-3">Tanggal</th>
+                  <th className="text-left p-3">Tamu</th>
+                  <th className="text-left p-3">Kamar</th>
+                  <th className="text-right p-3">Subtotal</th>
+                  <th className="text-right p-3">Fee {feePct}%</th>
+                  <th className="text-right p-3">Total</th>
+                </tr>
+              </thead>
+              <tbody data-testid="service-fee-tbody">
+                {[
+                  ...(data.checkin_items || []).map(it => ({ ...it, _tipe: "walk_in" })),
+                  ...(data.booking_items || []).map(it => ({ ...it, _tipe: "online" })),
+                ].sort((a, b) => (b.tanggal || "").localeCompare(a.tanggal || "")).map((it, i) => (
+                  <tr key={`fee-${it.id}-${i}`} className="border-t border-slate-100" data-testid={`svc-fee-row-${i}`}>
+                    <td className="p-3">
+                      <span className={`text-[10px] uppercase font-bold px-2 py-0.5 rounded ${it._tipe === "online" ? "bg-blue-100 text-blue-700" : "bg-indigo-100 text-indigo-700"}`}>{it._tipe}</span>
+                    </td>
+                    <td className="p-3 font-mono text-xs">{it.kode}</td>
+                    <td className="p-3 text-xs">{fmtDateTime(it.tanggal)}</td>
+                    <td className="p-3">{it.nama_tamu}</td>
+                    <td className="p-3">{it.room_nomor}</td>
+                    <td className="p-3 text-right">{fmtRp(it.subtotal)}</td>
+                    <td className="p-3 text-right font-bold text-blue-700">{fmtRp(it.service_fee)}</td>
+                    <td className="p-3 text-right font-semibold">{fmtRp(it.total)}</td>
+                  </tr>
+                ))}
+                {(data.checkin_items.length + data.booking_items.length) === 0 && (
+                  <tr><td colSpan={8} className="p-6 text-center text-slate-500">Belum ada service fee {feePct}% pada rentang ini</td></tr>
+                )}
+              </tbody>
+              {(data.checkin_items.length + data.booking_items.length) > 0 && (
+                <tfoot>
+                  <tr className="border-t-2 border-slate-300 bg-slate-50 font-bold">
+                    <td className="p-3" colSpan={6}>TOTAL SERVICE FEE {feePct}%</td>
+                    <td className="p-3 text-right text-blue-700" data-testid="svc-fee-total">{fmtRp(data.service_fee_grand_total)}</td>
+                    <td className="p-3"></td>
+                  </tr>
+                </tfoot>
+              )}
+            </table>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Detail Layanan Manual */}
+      <Card className="border-slate-200">
+        <CardContent className="p-5 space-y-3">
+          <div className="flex items-center justify-between">
+            <div>
+              <h3 className="font-bold">Rincian Layanan Manual (Nominal Fleksibel)</h3>
+              <p className="text-xs text-slate-500">Layanan tambahan yang dicatat staff via menu Service</p>
+            </div>
+            <Button data-testid="export-service-manual" size="sm" variant="outline" onClick={exportManual}>Export CSV</Button>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead className="bg-slate-50 text-slate-600 text-xs uppercase">
+                <tr>
+                  <th className="text-left p-3">Kode</th>
+                  <th className="text-left p-3">Tanggal</th>
+                  <th className="text-left p-3">Kategori</th>
+                  <th className="text-left p-3">Deskripsi</th>
+                  <th className="text-left p-3">Tamu / Kamar</th>
+                  <th className="text-left p-3">Metode</th>
+                  <th className="text-right p-3">Nominal</th>
+                  <th className="text-left p-3">Petugas</th>
+                </tr>
+              </thead>
+              <tbody data-testid="service-manual-tbody">
+                {(data.manual_services || []).map((s, i) => (
+                  <tr key={s.id} className="border-t border-slate-100" data-testid={`svc-manual-row-${i}`}>
+                    <td className="p-3 font-mono text-xs">{s.kode}</td>
+                    <td className="p-3 text-xs">{fmtDateTime(s.tanggal)}</td>
+                    <td className="p-3"><span className="text-xs font-semibold px-2 py-0.5 rounded bg-emerald-100 text-emerald-700">{s.kategori}</span></td>
+                    <td className="p-3">{s.deskripsi}</td>
+                    <td className="p-3 text-xs">
+                      {s.tamu || <span className="text-slate-400">-</span>}
+                      {s.room_nomor && <div className="text-slate-500">Kamar {s.room_nomor}</div>}
+                    </td>
+                    <td className="p-3 text-xs capitalize">{s.metode_pembayaran}</td>
+                    <td className="p-3 text-right font-bold text-emerald-700">{fmtRp(s.nominal)}</td>
+                    <td className="p-3 text-xs">{s.user}</td>
+                  </tr>
+                ))}
+                {(data.manual_services || []).length === 0 && (
+                  <tr><td colSpan={8} className="p-6 text-center text-slate-500">Belum ada layanan manual pada rentang ini</td></tr>
+                )}
+              </tbody>
+              {(data.manual_services || []).length > 0 && (
+                <tfoot>
+                  <tr className="border-t-2 border-slate-300 bg-slate-50 font-bold">
+                    <td className="p-3" colSpan={6}>TOTAL LAYANAN MANUAL</td>
+                    <td className="p-3 text-right text-emerald-700" data-testid="svc-manual-total">{fmtRp(data.manual_service_total)}</td>
+                    <td className="p-3"></td>
+                  </tr>
+                </tfoot>
+              )}
+            </table>
+          </div>
         </CardContent>
       </Card>
     </div>

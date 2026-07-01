@@ -170,6 +170,16 @@ class ExpenseCreate(BaseModel):
     deskripsi: str
     nominal: int
 
+class ServiceCreate(BaseModel):
+    tanggal: Optional[str] = None  # ISO datetime (auto now if None)
+    deskripsi: str
+    nominal: int
+    kategori: Optional[str] = "Layanan Tambahan"
+    tamu: Optional[str] = ""
+    no_hp: Optional[str] = ""
+    room_nomor: Optional[str] = ""
+    metode_pembayaran: Optional[str] = "tunai"  # tunai|qris|transfer
+
 class HousekeepingDone(BaseModel):
     petugas: Optional[str] = ""
     catatan: Optional[str] = ""
@@ -1126,6 +1136,55 @@ async def delete_expense(eid: str, user: dict = Depends(require_owner)):
     await log_activity(user, "delete_expense", f"Hapus pengeluaran {eid}")
     return {"ok": True}
 
+# ---- Services (Manual Layanan Tambahan) ----
+@api.post("/services")
+async def create_service(body: ServiceCreate, user: dict = Depends(get_current_user)):
+    if body.nominal is None or body.nominal <= 0:
+        raise HTTPException(400, "Nominal harus lebih dari 0")
+    if not body.deskripsi or not body.deskripsi.strip():
+        raise HTTPException(400, "Deskripsi layanan wajib diisi")
+    kode = f"SVC-{datetime.now().strftime('%Y%m%d%H%M%S')}-{uuid.uuid4().hex[:4].upper()}"
+    doc = {
+        "id": str(uuid.uuid4()),
+        "kode": kode,
+        "tanggal": body.tanggal or now_iso(),
+        "kategori": body.kategori or "Layanan Tambahan",
+        "deskripsi": body.deskripsi.strip(),
+        "nominal": int(body.nominal),
+        "tamu": (body.tamu or "").strip(),
+        "no_hp": (body.no_hp or "").strip(),
+        "room_nomor": (body.room_nomor or "").strip(),
+        "metode_pembayaran": body.metode_pembayaran or "tunai",
+        "user": user["nama"],
+        "user_id": user["id"],
+        "created_at": now_iso(),
+    }
+    await db.services.insert_one(doc)
+    await log_activity(user, "service", f"Layanan {doc['kategori']} '{doc['deskripsi']}' Rp{doc['nominal']:,}".replace(",", "."), entity=kode)
+    doc.pop("_id", None)
+    return doc
+
+@api.get("/services")
+async def list_services(from_date: Optional[str] = None, to_date: Optional[str] = None,
+                        user: dict = Depends(get_current_user)):
+    q: Dict[str, Any] = {}
+    if from_date or to_date:
+        rng: Dict[str, Any] = {}
+        if from_date: rng["$gte"] = from_date
+        if to_date: rng["$lte"] = to_date + "T23:59:59"
+        q["tanggal"] = rng
+    items = await db.services.find(q, {"_id": 0}).sort("tanggal", -1).to_list(2000)
+    return items
+
+@api.delete("/services/{sid}")
+async def delete_service(sid: str, user: dict = Depends(require_owner)):
+    doc = await db.services.find_one({"id": sid})
+    if not doc:
+        raise HTTPException(404, "Layanan tidak ditemukan")
+    await db.services.delete_one({"id": sid})
+    await log_activity(user, "delete_service", f"Hapus layanan {doc.get('kode', sid)}", entity=doc.get("kode", sid))
+    return {"ok": True}
+
 # ---- Bookings ----
 def _parse_iso(s: str, field: str) -> datetime:
     try:
@@ -1667,6 +1726,115 @@ async def list_housekeeping(user: dict = Depends(get_current_user)):
     return items
 
 # ---- Reports ----
+# ---- Reports: Service Fee 3% + Manual Services ----
+@api.get("/reports/service-revenue")
+async def report_service_revenue(from_date: str = Query(...), to_date: str = Query(...),
+                                  user: dict = Depends(get_current_user)):
+    """Aggregate service fee income:
+    - checkin_service_fee: service_fee 3% dari checkins selesai (walk-in)
+    - booking_service_fee: service_fee 3% dari bookings publik (payment_status=paid, source=online)
+    - manual_services: layanan tambahan manual (nominal fleksibel dari staff)
+    """
+    start = from_date
+    end = to_date + "T23:59:59"
+
+    # 1) service_fee 3% dari checkins (walk-in)
+    ci = await db.checkins.find(
+        {"jam_checkout": {"$gte": start, "$lte": end}, "status": "selesai"},
+        {"_id": 0}
+    ).to_list(5000)
+    checkin_items = []
+    checkin_total = 0
+    for c in ci:
+        fee = int(c.get("service_fee") or 0)
+        if fee <= 0: continue
+        checkin_total += fee
+        checkin_items.append({
+            "id": c.get("id"),
+            "kode": c.get("trx_no"),
+            "tanggal": c.get("jam_checkout"),
+            "nama_tamu": c.get("nama_tamu"),
+            "room_nomor": c.get("room_nomor"),
+            "subtotal": c.get("subtotal", 0),
+            "service_fee": fee,
+            "total": c.get("total", 0),
+            "source": "walk_in",
+            "petugas": c.get("petugas_checkout") or c.get("petugas_checkin"),
+        })
+
+    # 2) service_fee 3% dari bookings publik yang sudah dibayar
+    bk = await db.bookings.find(
+        {
+            "jam_mulai": {"$gte": start, "$lte": end},
+            "source": "online",
+            "payment_status": "paid",
+        },
+        {"_id": 0}
+    ).to_list(5000)
+    booking_items = []
+    booking_total = 0
+    for b in bk:
+        fee = int(b.get("service_fee") or 0)
+        if fee <= 0: continue
+        booking_total += fee
+        booking_items.append({
+            "id": b.get("id"),
+            "kode": b.get("kode"),
+            "tanggal": b.get("jam_mulai"),
+            "nama_tamu": b.get("nama_tamu"),
+            "room_nomor": b.get("room_nomor"),
+            "subtotal": b.get("subtotal", 0),
+            "service_fee": fee,
+            "total": b.get("total", 0),
+            "source": "online",
+            "petugas": b.get("created_by") or "public",
+        })
+
+    # 3) manual services
+    svc = await db.services.find(
+        {"tanggal": {"$gte": start, "$lte": end}},
+        {"_id": 0}
+    ).sort("tanggal", -1).to_list(5000)
+    manual_total = sum(int(s.get("nominal") or 0) for s in svc)
+
+    # by_day breakdown
+    def bucket(iso): return (iso or "")[:10]
+    by_day: Dict[str, Dict[str, int]] = {}
+    for it in checkin_items:
+        d = bucket(it["tanggal"])
+        by_day.setdefault(d, {"checkin_fee": 0, "booking_fee": 0, "manual": 0})
+        by_day[d]["checkin_fee"] += it["service_fee"]
+    for it in booking_items:
+        d = bucket(it["tanggal"])
+        by_day.setdefault(d, {"checkin_fee": 0, "booking_fee": 0, "manual": 0})
+        by_day[d]["booking_fee"] += it["service_fee"]
+    for s in svc:
+        d = bucket(s.get("tanggal"))
+        by_day.setdefault(d, {"checkin_fee": 0, "booking_fee": 0, "manual": 0})
+        by_day[d]["manual"] += int(s.get("nominal") or 0)
+    by_day_list = [{"tanggal": d, **by_day[d]} for d in sorted(by_day.keys())]
+
+    grand_total_fee = checkin_total + booking_total
+    grand_total_all = grand_total_fee + manual_total
+
+    return {
+        "from_date": from_date,
+        "to_date": to_date,
+        "service_fee_pct": SERVICE_FEE_PCT,
+        "checkin_service_fee_total": checkin_total,
+        "checkin_count": len(checkin_items),
+        "booking_service_fee_total": booking_total,
+        "booking_count": len(booking_items),
+        "service_fee_grand_total": grand_total_fee,
+        "manual_service_total": manual_total,
+        "manual_service_count": len(svc),
+        "grand_total": grand_total_all,
+        "by_day": by_day_list,
+        "checkin_items": checkin_items,
+        "booking_items": booking_items,
+        "manual_services": svc,
+    }
+
 @api.get("/reports/summary")
 async def report_summary(user: dict = Depends(get_current_user)):
     today_iso = datetime.now(timezone.utc).date().isoformat()
@@ -1690,7 +1858,12 @@ async def report_summary(user: dict = Depends(get_current_user)):
     # month
     ci_month = await db.checkins.find({"jam_checkout": {"$gte": month_start}, "status": "selesai"}, {"_id": 0}).to_list(2000)
     kasir_month = await db.kasir.find({"timestamp": {"$gte": month_start}}, {"_id": 0}).to_list(2000)
-    rev_month = sum(c.get("total", 0) for c in ci_month) + sum(k.get("total", 0) for k in kasir_month)
+    # services (manual)
+    svc_today = await db.services.find({"tanggal": {"$gte": today_iso}}, {"_id": 0}).to_list(500)
+    svc_month = await db.services.find({"tanggal": {"$gte": month_start}}, {"_id": 0}).to_list(2000)
+    rev_svc_today = sum(s.get("nominal", 0) for s in svc_today)
+    rev_svc_month = sum(s.get("nominal", 0) for s in svc_month)
+    rev_month = sum(c.get("total", 0) for c in ci_month) + sum(k.get("total", 0) for k in kasir_month) + rev_svc_month
     # expenses
     exp_today = await db.expenses.find({"tanggal": {"$gte": today_iso}}, {"_id": 0}).to_list(500)
     exp_month = await db.expenses.find({"tanggal": {"$gte": month_start}}, {"_id": 0}).to_list(2000)
@@ -1701,9 +1874,11 @@ async def report_summary(user: dict = Depends(get_current_user)):
         "total_rooms": len(rooms),
         "tamu_hari_ini": len(ci_today),
         "checkout_hari_ini": len(co_today),
-        "pendapatan_hari_ini": rev_room_today + rev_kasir_today,
+        "pendapatan_hari_ini": rev_room_today + rev_kasir_today + rev_svc_today,
         "pendapatan_kamar_hari_ini": rev_room_today,
         "pendapatan_kasir_hari_ini": rev_kasir_today,
+        "pendapatan_service_hari_ini": rev_svc_today,
+        "pendapatan_service_bulan_ini": rev_svc_month,
         "pendapatan_per_kategori": rev_per_kat,
         "pendapatan_bulan_ini": rev_month,
         "pengeluaran_hari_ini": total_exp_today,
@@ -1720,26 +1895,33 @@ async def report_daily(from_date: str = Query(...), to_date: str = Query(...),
     ci = await db.checkins.find({"jam_checkout": {"$gte": start, "$lte": end}, "status": "selesai"}, {"_id": 0}).to_list(5000)
     ks = await db.kasir.find({"timestamp": {"$gte": start, "$lte": end}}, {"_id": 0}).to_list(5000)
     ex = await db.expenses.find({"tanggal": {"$gte": start, "$lte": end}}, {"_id": 0}).to_list(5000)
+    sv = await db.services.find({"tanggal": {"$gte": start, "$lte": end}}, {"_id": 0}).to_list(5000)
     by_day: Dict[str, Dict[str, int]] = {}
     def bucket(iso):
         return iso[:10]
+    def _init(): return {"kamar": 0, "makanan": 0, "minuman": 0, "laundry": 0, "service": 0, "pengeluaran": 0}
     for c in ci:
         d = bucket(c["jam_checkout"])
-        by_day.setdefault(d, {"kamar": 0, "makanan": 0, "minuman": 0, "laundry": 0, "pengeluaran": 0})
+        by_day.setdefault(d, _init())
         by_day[d]["kamar"] += c.get("total", 0)
     for k in ks:
         d = bucket(k["timestamp"])
-        by_day.setdefault(d, {"kamar": 0, "makanan": 0, "minuman": 0, "laundry": 0, "pengeluaran": 0})
+        by_day.setdefault(d, _init())
         for it in k.get("items", []):
             by_day[d][it["kategori"]] += it["subtotal"]
+    for s in sv:
+        d = bucket(s.get("tanggal", ""))
+        if not d: continue
+        by_day.setdefault(d, _init())
+        by_day[d]["service"] += int(s.get("nominal") or 0)
     for e in ex:
         d = bucket(e["tanggal"])
-        by_day.setdefault(d, {"kamar": 0, "makanan": 0, "minuman": 0, "laundry": 0, "pengeluaran": 0})
+        by_day.setdefault(d, _init())
         by_day[d]["pengeluaran"] += e.get("nominal", 0)
     result = []
     for d in sorted(by_day.keys()):
         row = by_day[d]
-        pendapatan = row["kamar"] + row["makanan"] + row["minuman"] + row["laundry"]
+        pendapatan = row["kamar"] + row["makanan"] + row["minuman"] + row["laundry"] + row["service"]
         result.append({
             "tanggal": d, **row,
             "pendapatan": pendapatan,
@@ -1844,6 +2026,7 @@ async def startup():
     await db.checkins.create_index("jam_checkin")
     await db.kasir.create_index("timestamp")
     await db.expenses.create_index("tanggal")
+    await db.services.create_index("tanggal")
     await db.audit_log.create_index("timestamp")
     await db.bookings.create_index("room_id")
     await db.bookings.create_index("jam_mulai")

@@ -14,6 +14,7 @@ import Inventory from "@/pages/Inventory";
 import Pengeluaran from "@/pages/Pengeluaran";
 import Housekeeping from "@/pages/Housekeeping";
 import Laporan from "@/pages/Laporan";
+import Service from "@/pages/Service";
 import Pengguna from "@/pages/Pengguna";
 import Audit from "@/pages/Audit";
 import Bookings from "@/pages/Bookings";
@@ -44,6 +45,7 @@ function AppRoutes() {
         <Route path="/tamu" element={<Tamu />} />
         <Route path="/inventory" element={<Inventory />} />
         <Route path="/pengeluaran" element={<Pengeluaran />} />
+        <Route path="/service" element={<Service />} />
         <Route path="/housekeeping" element={<Housekeeping />} />
         <Route path="/laporan" element={<Laporan />} />
         <Route path="/pengguna" element={<Protected ownerOnly><Pengguna /></Protected>} />
