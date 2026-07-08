@@ -97,52 +97,54 @@ export function buildBookingConfirmationMessage(b) {
     ? dt.toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit" }) + " WIB"
     : "-";
   const total = Number(b.total || 0);
-  const dp = Number(b.amount_due || 0);
-  const sisa = Math.max(0, total - dp);
-  const isLunas = total > 0 && dp >= total;
+  const dpMin = Number(b.dp_min || 0);
+  const sisa = Math.max(0, total - dpMin);
+  const isPaid = b.payment_status === "paid";
 
   const lines = [
     `Halo *${nama}*,`,
     "",
     "Terima kasih telah melakukan reservasi di *Pelangi Homestay*.",
     "",
-    "✅ *Booking Anda telah dikonfirmasi.*",
+    isPaid
+      ? "\u2705 *Booking Anda telah LUNAS & terkonfirmasi.*"
+      : "\u23F3 *Booking Anda menunggu pembayaran.*",
     "",
-    "📌 *Detail Reservasi*",
-    `• Nomor Booking: *${kode}*`,
-    `• Tipe Kamar: *${tipe}*`,
-    `• Nomor Kamar: *${nomor}*`,
-    `• Tanggal Check-in: *${tanggal}*`,
-    `• Jam Check-in: *${jam}*`,
-    `• Jumlah Tamu: *${jumlah}*`,
+    "\uD83D\uDCCC *Detail Reservasi*",
+    `\u2022 Nomor Booking: *${kode}*`,
+    `\u2022 Tipe Kamar: *${tipe}*`,
+    `\u2022 Nomor Kamar: *${nomor}*`,
+    `\u2022 Tanggal Check-in: *${tanggal}*`,
+    `\u2022 Jam Check-in: *${jam}*`,
+    `\u2022 Jumlah Tamu: *${jumlah}*`,
     "",
   ];
 
   if (total > 0) {
-    lines.push("💳 *Detail Pembayaran*");
-    lines.push(`• Total Tagihan: *${fmtRp(total)}*`);
-    if (isLunas) {
-      lines.push(`• ✅ Status Pembayaran: *LUNAS*`);
+    lines.push("\uD83D\uDCB3 *Detail Pembayaran*");
+    lines.push(`\u2022 Total Tagihan: *${fmtRp(total)}*`);
+    if (isPaid) {
+      lines.push(`\u2022 \u2705 Status Pembayaran: *LUNAS*`);
     } else {
-      lines.push(`• DP Dibayarkan: *${fmtRp(dp)}*`);
-      lines.push(`• Sisa Pelunasan: *${fmtRp(sisa)}*`);
+      lines.push(`\u2022 DP Minimum yang perlu dibayar: *${fmtRp(dpMin)}*`);
+      lines.push(`\u2022 Sisa saat check-in: *${fmtRp(sisa)}*`);
     }
     lines.push("");
-    if (!isLunas && sisa > 0) {
-      lines.push("📍 Sisa pelunasan dapat dilakukan saat check-in di lokasi Pelangi Homestay.");
+    if (!isPaid && sisa > 0) {
+      lines.push("\uD83D\uDCCD Sisa pelunasan dapat dilakukan saat check-in di lokasi Pelangi Homestay.");
       lines.push("");
     }
   }
 
   lines.push(
-    "ℹ️ *Kebijakan Pembatalan*",
+    "\u2139\uFE0F *Kebijakan Pembatalan*",
     "Pembatalan dapat dilakukan maksimal H-1 sebelum tanggal check-in dengan biaya pembatalan sebesar 10% dari total tagihan.",
     "",
     "Pembatalan pada hari check-in atau tamu tidak datang (No Show) tidak mendapatkan refund.",
     "",
     "Mohon tunjukkan *Nomor Booking* saat kedatangan.",
     "",
-    "Kami tunggu kedatangannya di *Pelangi Homestay*. 😊",
+    "Kami tunggu kedatangannya di *Pelangi Homestay*. \uD83D\uDE0A",
   );
 
   return lines.join("\n");
