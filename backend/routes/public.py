@@ -1,4 +1,5 @@
 from core import *
+from reservation_service import check_room_available
 
 @api.get("/public/rooms-catalog")
 async def public_rooms_catalog():
@@ -85,14 +86,7 @@ async def public_create_booking(body: PublicBookingCreate):
     start = local_in.astimezone(timezone.utc)
     end = start + timedelta(hours=6)  # day use 6 jam default
     # Validasi overlap (semua status booking yang block: aktif, booking_pending, booking_paid)
-    overlap = await db.bookings.find_one({
-        "room_id": body.room_id,
-        "status": {"$in": ["aktif", "booking_pending", "booking_paid"]},
-        "jam_mulai": {"$lt": end.isoformat()},
-        "jam_selesai": {"$gt": start.isoformat()},
-    })
-    if overlap:
-        raise HTTPException(400, f"Kamar sudah dibooking pada rentang ini ({overlap.get('kode')})")
+    await check_room_available(body.room_id, start, end)
     subtotal = r["tarif"]
     service_fee = round(subtotal * SERVICE_FEE_PCT)
     total = subtotal + service_fee

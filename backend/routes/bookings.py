@@ -1,4 +1,5 @@
 from core import *
+from reservation_service import check_room_available
 
 @api.post("/bookings")
 async def create_booking(body: BookingCreate, user: dict = Depends(get_current_user)):
@@ -16,13 +17,7 @@ async def create_booking(body: BookingCreate, user: dict = Depends(get_current_u
         end = start + timedelta(hours=6)
     if end <= start:
         raise HTTPException(400, "Jam selesai harus setelah jam mulai")
-    overlap = await db.bookings.find_one({
-        "room_id": body.room_id, "status": {"$in": ["aktif", "booking_pending", "booking_paid"]},
-        "jam_mulai": {"$lt": end.isoformat()},
-        "jam_selesai": {"$gt": start.isoformat()},
-    })
-    if overlap:
-        raise HTTPException(400, f"Kamar sudah dibooking pada rentang ini ({overlap.get('kode')})")
+    await check_room_available(body.room_id, start, end)
     kode = f"BK-{datetime.now().strftime('%Y%m%d%H%M%S')}-{uuid.uuid4().hex[:4].upper()}"
     # Hitung estimasi tagihan (tarif kamar + 3% service fee). Untuk menginap, durasi jam dipakai sebagai kelipatan 6 jam.
     subtotal = int(r["tarif"])
@@ -309,14 +304,7 @@ async def update_booking(bid: str, body: BookingCreate, user: dict = Depends(get
         end = start + timedelta(hours=6)
     if end <= start:
         raise HTTPException(400, "Jam selesai harus setelah jam mulai")
-    overlap = await db.bookings.find_one({
-        "id": {"$ne": bid},
-        "room_id": body.room_id, "status": {"$in": ["aktif", "booking_pending", "booking_paid"]},
-        "jam_mulai": {"$lt": end.isoformat()},
-        "jam_selesai": {"$gt": start.isoformat()},
-    })
-    if overlap:
-        raise HTTPException(400, f"Kamar sudah dibooking pada rentang ini ({overlap.get('kode')})")
+    await check_room_available(body.room_id, start, end, exclude_booking_id=bid)
     update_fields = {
         "room_id": body.room_id, "room_nomor": r["nomor"], "room_tipe": r["tipe"],
         "tipe": body.tipe, "nama_tamu": body.nama_tamu, "no_hp": body.no_hp,
