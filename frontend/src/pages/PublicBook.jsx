@@ -7,10 +7,11 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { bookingConfirmationWaLink } from "@/lib/apiClient";
 import {
   BedDouble, Wifi, Snowflake, Tv, Droplets, Bath, Trees, CheckCircle2, XCircle,
-  Calendar, Clock, User, Phone, IdCard, Car, Users as UsersIcon, Building2, ArrowRight, Mail,
+  Calendar, Clock, User, Phone, IdCard, Car, Users as UsersIcon, Building2, ArrowRight, Mail, Ban,
 } from "lucide-react";
 
 // API client tanpa auth (untuk endpoint /api/public/*)
@@ -364,9 +365,78 @@ function Row({ icon: Icon, label, value }) {
   );
 }
 
+// Kebijakan pembatalan yang sama dengan yang sudah dijanjikan di pesan konfirmasi WA
+// (lihat buildBookingConfirmationMessage di apiClient.js): gratis jika >=24 jam sebelum
+// check-in, biaya 10% dari total jika sudah H-1, dan tidak ada refund untuk No Show/hari-H.
+function calcCancelPolicy(bk) {
+  const jamCheckin = new Date(bk.jam_mulai);
+  const jamTersisa = (jamCheckin.getTime() - Date.now()) / 3600000;
+  const dasarBiaya = bk.payment_status === "paid" ? Number(bk.total || 0) : Number(bk.dp_min || 0);
+  if (jamTersisa < 0) return { label: "Hari check-in / lewat", biaya: dasarBiaya, gratis: false };
+  if (jamTersisa < 24) return { label: "Kurang dari H-1", biaya: Math.round(dasarBiaya * 0.1), gratis: false };
+  return { label: "Lebih dari H-1", biaya: 0, gratis: true };
+}
+
+function BatalkanPesananDialog({ bk, open, onOpenChange }) {
+  const [sent, setSent] = useState(false);
+  const policy = calcCancelPolicy(bk);
+
+  const ajukan = () => {
+    setSent(true);
+    toast.success("Permintaan pembatalan dicatat");
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={(o) => { onOpenChange(o); if (!o) setSent(false); }}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle data-testid="batalkan-dialog-title">Batalkan Pesanan {bk.kode}</DialogTitle>
+        </DialogHeader>
+        {!sent ? (
+          <div className="space-y-3 text-sm text-left">
+            <div className="bg-slate-50 border border-slate-200 rounded-lg p-3 text-xs space-y-1.5">
+              <p className="font-semibold text-slate-700">Kebijakan Pembatalan</p>
+              <p className="text-slate-600">Gratis jika dibatalkan lebih dari 24 jam (H-1) sebelum check-in. Kurang dari H-1 dikenakan biaya 10% dari total tagihan. Tidak ada refund untuk pembatalan di hari check-in atau tidak datang (No Show).</p>
+            </div>
+            <div className="flex justify-between items-center bg-white border border-slate-200 rounded-lg p-3">
+              <div>
+                <div className="text-xs text-slate-500">Status waktu ini</div>
+                <div className="font-semibold" data-testid="batalkan-status-waktu">{policy.label}</div>
+              </div>
+              <div className="text-right">
+                <div className="text-xs text-slate-500">Biaya Pembatalan</div>
+                <div className={`font-bold ${policy.gratis ? "text-emerald-600" : "text-red-600"}`} data-testid="batalkan-biaya">
+                  {policy.gratis ? "Gratis" : fmtRp(policy.biaya)}
+                </div>
+              </div>
+            </div>
+          </div>
+        ) : (
+          <div className="space-y-2 text-sm text-left" data-testid="batalkan-terkirim">
+            <p className="text-emerald-700 bg-emerald-50 border border-emerald-200 rounded p-3">
+              Permintaan pembatalan untuk booking <b>{bk.kode}</b> sudah dicatat. Tim kami akan menghubungi Anda melalui WhatsApp untuk konfirmasi &amp; proses lebih lanjut.
+            </p>
+          </div>
+        )}
+        <DialogFooter>
+          {!sent ? (
+            <>
+              <Button variant="ghost" onClick={() => onOpenChange(false)}>Tutup</Button>
+              <Button data-testid="batalkan-ajukan" onClick={ajukan} className="bg-red-600 hover:bg-red-700">Ajukan Pembatalan</Button>
+            </>
+          ) : (
+            <Button data-testid="batalkan-selesai" onClick={() => onOpenChange(false)} className="bg-blue-700 hover:bg-blue-800">Tutup</Button>
+          )}
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 function SuccessView({ bookingId }) {
   const [bk, setBk] = useState(null);
   const [banks, setBanks] = useState(null);
+  const [cancelOpen, setCancelOpen] = useState(false);
   useEffect(() => {
     let stop = false;
     const fetch = () => PUBLIC_API.get(`/public/bookings/${bookingId}`).then((r) => {
@@ -462,10 +532,7 @@ function SuccessView({ bookingId }) {
             </div>
           )}
           {isPaid && (
-            <p className="text-xs text-slate-500">
-              Refund/cancel dapat dilakukan H-1 dengan biaya pembatalan 10% dari total pembayaran.
-              Mohon tunjukkan nomor booking saat kedatangan.
-            </p>
+            <p className="text-xs text-slate-500">Mohon tunjukkan nomor booking saat kedatangan.</p>
           )}
           {bk.no_hp && (
             <a
@@ -477,9 +544,20 @@ function SuccessView({ bookingId }) {
               <CheckCircle2 className="w-4 h-4" /> Konfirmasi via WhatsApp
             </a>
           )}
+          {!isFailed && bk.status !== "cancelled" && (
+            <button
+              type="button"
+              data-testid="pb-batalkan-pesanan"
+              onClick={() => setCancelOpen(true)}
+              className="inline-flex items-center justify-center gap-2 w-full px-4 h-10 rounded-md border border-red-300 text-red-600 hover:bg-red-50 text-sm font-medium"
+            >
+              <Ban className="w-4 h-4" /> Batalkan Pesanan
+            </button>
+          )}
           <Link to="/book" className="block text-sm text-blue-700 hover:underline">Buat booking lain</Link>
         </CardContent>
       </Card>
+      <BatalkanPesananDialog bk={bk} open={cancelOpen} onOpenChange={setCancelOpen} />
     </div>
   );
 }
