@@ -3,7 +3,7 @@ import { useAuth } from "@/context/AuthContext";
 import { Button } from "@/components/ui/button";
 import {
   LayoutDashboard, BedDouble, ShoppingCart, Users, Boxes,
-  Wallet, Sparkles, BarChart3, UserCog, ShieldCheck, LogOut, Hotel, Menu, CalendarCheck, HandCoins, DoorOpen, ListChecks, Mail, RefreshCw, MessageCircle,
+  Wallet, Sparkles, BarChart3, UserCog, ShieldCheck, LogOut, Hotel, Menu, CalendarCheck, HandCoins, DoorOpen, ListChecks, Mail, RefreshCw, MessageCircle, CreditCard,
 } from "lucide-react";
 import { useState } from "react";
 
@@ -14,6 +14,7 @@ const navItems = [
   { to: "/otomasi-email", label: "Otomasi Email", icon: Mail },
   { to: "/sinkronisasi-ketersediaan", label: "Sinkronisasi", icon: RefreshCw },
   { to: "/konfigurasi-webhook", label: "Webhook WA", icon: MessageCircle },
+  { to: "/pembayaran", label: "Pembayaran", icon: CreditCard },
   { to: "/rooms", label: "Kamar", icon: BedDouble },
   { to: "/bookings", label: "Booking", icon: CalendarCheck },
   { to: "/kasir", label: "Kasir", icon: ShoppingCart },

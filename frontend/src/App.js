@@ -23,6 +23,7 @@ import DaftarReservasi from "@/pages/DaftarReservasi";
 import OtomasiEmail from "@/pages/OtomasiEmail";
 import SinkronisasiKetersediaan from "@/pages/SinkronisasiKetersediaan";
 import KonfigurasiWebhook from "@/pages/KonfigurasiWebhook";
+import Pembayaran from "@/pages/Pembayaran";
 import PublicBook from "@/pages/PublicBook";
 import "@/App.css";
 
@@ -61,6 +62,7 @@ function AppRoutes() {
         <Route path="/otomasi-email" element={<OtomasiEmail />} />
         <Route path="/sinkronisasi-ketersediaan" element={<SinkronisasiKetersediaan />} />
         <Route path="/konfigurasi-webhook" element={<KonfigurasiWebhook />} />
+        <Route path="/pembayaran" element={<Pembayaran />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
