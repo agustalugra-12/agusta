@@ -26,6 +26,7 @@ import KonfigurasiWebhook from "@/pages/KonfigurasiWebhook";
 import Pembayaran from "@/pages/Pembayaran";
 import PesanWhatsAppOtomatis from "@/pages/PesanWhatsAppOtomatis";
 import PemetaanTipeKamar from "@/pages/PemetaanTipeKamar";
+import SinkronisasiDataPMS from "@/pages/SinkronisasiDataPMS";
 import PublicBook from "@/pages/PublicBook";
 import "@/App.css";
 
@@ -67,6 +68,7 @@ function AppRoutes() {
         <Route path="/pembayaran" element={<Pembayaran />} />
         <Route path="/whatsapp-otomatis" element={<PesanWhatsAppOtomatis />} />
         <Route path="/pemetaan-tipe-kamar" element={<PemetaanTipeKamar />} />
+        <Route path="/sinkronisasi-data-pms" element={<SinkronisasiDataPMS />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

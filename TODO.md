@@ -49,5 +49,9 @@ daftar ini ringkasan untuk manusia, bisa sedikit basi — cek CLI kalau ragu.
 - [x] Halaman daftar pemetaan (mock)
 - [ ] Sisa task halaman ini (tambah/ubah pemetaan, impor tipe kamar PMS, dll — cek `task next`)
 
+### Sinkronisasi Data PMS -> WhatsApp Bot
+- [x] Halaman Dashboard Sinkronisasi (mock)
+- [ ] Sisa task halaman ini (cek `task next`)
+
 ## Fase 3
 - [ ] Belum dibaca detail PRD-nya — cek `plan get` saat fase 2 selesai.
