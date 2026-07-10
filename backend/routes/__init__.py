@@ -16,3 +16,4 @@ from . import public  # noqa: F401
 from . import reports  # noqa: F401
 from . import misc  # noqa: F401
 from . import ketersediaan  # noqa: F401
+from . import otomasi_email  # noqa: F401

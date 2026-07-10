@@ -3,7 +3,7 @@ import { useAuth } from "@/context/AuthContext";
 import { Button } from "@/components/ui/button";
 import {
   LayoutDashboard, BedDouble, ShoppingCart, Users, Boxes,
-  Wallet, Sparkles, BarChart3, UserCog, ShieldCheck, LogOut, Hotel, Menu, CalendarCheck, HandCoins, DoorOpen, ListChecks,
+  Wallet, Sparkles, BarChart3, UserCog, ShieldCheck, LogOut, Hotel, Menu, CalendarCheck, HandCoins, DoorOpen, ListChecks, Mail,
 } from "lucide-react";
 import { useState } from "react";
 
@@ -11,6 +11,7 @@ const navItems = [
   { to: "/", label: "Dashboard", icon: LayoutDashboard, exact: true },
   { to: "/ketersediaan", label: "Ketersediaan", icon: DoorOpen },
   { to: "/reservasi", label: "Reservasi", icon: ListChecks },
+  { to: "/otomasi-email", label: "Otomasi Email", icon: Mail },
   { to: "/rooms", label: "Kamar", icon: BedDouble },
   { to: "/bookings", label: "Booking", icon: CalendarCheck },
   { to: "/kasir", label: "Kasir", icon: ShoppingCart },

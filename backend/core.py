@@ -47,6 +47,11 @@ snap_client = midtransclient.Snap(
     client_key=MIDTRANS_CLIENT_KEY,
 )
 
+# ---- Google OAuth (Otomasi Email — koneksi Gmail) ----
+GOOGLE_CLIENT_ID = os.environ.get("GOOGLE_CLIENT_ID", "")
+GOOGLE_CLIENT_SECRET = os.environ.get("GOOGLE_CLIENT_SECRET", "")
+GOOGLE_OAUTH_REDIRECT_URI = os.environ.get("GOOGLE_OAUTH_REDIRECT_URI", "")
+
 # ---- Constants ----
 SERVICE_FEE_PCT = 0.03  # 3% service fee diaplikasikan ke checkin & booking
 
