@@ -22,6 +22,7 @@ Format longgar mengikuti [Keep a Changelog](https://keepachangelog.com/).
 - Frontend: halaman baru "Pesan WhatsApp Otomatis" — tab Ringkasan (statistik pesan/reservasi via WA hari ini + aktivitas terbaru), data tiruan — `frontend/src/pages/PesanWhatsAppOtomatis.jsx`, route `/whatsapp-otomatis`. Tab Log Percakapan & Pemantauan Status masih placeholder.
 - Frontend: fitur "Buat Tagihan Baru" di halaman Pembayaran — staf pilih booking belum lunas + metode bayar (DP50/Lunas), simulasi Snap menghasilkan link pembayaran tiruan (copy/buka link) — `frontend/src/pages/Pembayaran.jsx`. Melengkapi (bukan menggantikan) alur checkout tamu asli di `PublicBook.jsx`.
 - Frontend: tab "Pengaturan" di halaman Pesan WhatsApp Otomatis — toggle data yang disinkron ke bot (ketersediaan/harga/status booking/reservasi baru) + frekuensi, plus tautan ke halaman Konfigurasi Webhook (tidak menduplikasi form kredensialnya) — `frontend/src/pages/PesanWhatsAppOtomatis.jsx`.
+- Frontend: tab "Log Percakapan" di halaman Pesan WhatsApp Otomatis — riwayat pesan masuk & balasan AI per tamu, cari nama/nomor, status kirim, data tiruan — `frontend/src/pages/PesanWhatsAppOtomatis.jsx`.
 
 ### Notes
 - Integrasi Gmail OAuth backend belum bisa dipakai nyata sampai `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_OAUTH_REDIRECT_URI` dikonfigurasi di environment `pms-backend.service` (perlu dibuat dulu di Google Cloud Console) — lihat rincian di laporan task terkait.

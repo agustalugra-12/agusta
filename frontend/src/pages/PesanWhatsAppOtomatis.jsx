@@ -1,10 +1,12 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { toast } from "sonner";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
-import { MessageSquare, Send, CheckCircle2, Bot, Inbox, Activity, Settings2, ExternalLink, Save } from "lucide-react";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { MessageSquare, Send, CheckCircle2, Bot, Inbox, Activity, Settings2, ExternalLink, Save, Search, XCircle } from "lucide-react";
 import { fmtDateTime } from "@/lib/apiClient";
 
 const TABS = [
@@ -87,6 +89,16 @@ function Ringkasan() {
     </div>
   );
 }
+
+// Data tiruan (stub) — mengikuti entitas WHATSAPP_LOGS di PRD (guest_phone, message,
+// ai_response, sent_at), ditambah `status_kirim` untuk Pemantauan Status (task terpisah).
+const MOCK_CONVERSATIONS = [
+  { id: "1", nama: "Rina Kusuma", no_hp: "6281234567021", pesan_masuk: "Cottage tanggal 12-14 Juli masih ada?", balasan_ai: "Cottage tersedia 2 unit untuk 12-14 Juli, Rp140.000/malam. Mau saya bantu booking?", waktu: "2026-07-11T10:05:00", status_kirim: "Terkirim" },
+  { id: "2", nama: "Ahmad Fauzi", no_hp: "6281234567022", pesan_masuk: "Konfirmasi booking RSV-1043 dong", balasan_ai: "Reservasi RSV-1043 sudah confirmed, kamar Standard No.9, check-in 12 Juli 14:00. Sampai jumpa!", waktu: "2026-07-11T09:48:00", status_kirim: "Terkirim" },
+  { id: "3", nama: "081234567023", no_hp: "6281234567023", pesan_masuk: "Cara batalin booking gimana ya", balasan_ai: "Untuk pembatalan, mohon hubungi resepsionis di nomor ini dengan menyebutkan kode booking Anda.", waktu: "2026-07-11T09:20:00", status_kirim: "Terkirim" },
+  { id: "4", nama: "Sri Wahyuni", no_hp: "6281234567024", pesan_masuk: "Harga kamar standard weekend berapa?", balasan_ai: "Kamar Standard Rp120.000/malam (hari biasa maupun weekend, harga sama). Mau saya carikan tanggalnya?", waktu: "2026-07-11T08:55:00", status_kirim: "Terkirim" },
+  { id: "5", nama: "Dedi Kurniawan", no_hp: "6281234567025", pesan_masuk: "Halo, ada promo gak buat 3 malam?", balasan_ai: null, waktu: "2026-07-11T08:30:00", status_kirim: "Gagal" },
+];
 
 const FREKUENSI_WA_OPTIONS = [
   { value: "realtime", label: "Real-time (setiap ada perubahan)" },
@@ -182,6 +194,62 @@ function PengaturanWhatsApp() {
   );
 }
 
+function LogPercakapan() {
+  const [search, setSearch] = useState("");
+
+  const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return MOCK_CONVERSATIONS;
+    return MOCK_CONVERSATIONS.filter((c) => c.nama.toLowerCase().includes(q) || c.no_hp.includes(q));
+  }, [search]);
+
+  return (
+    <div className="space-y-3">
+      <div className="max-w-sm">
+        <Label htmlFor="wa-log-search">Cari nama / nomor HP</Label>
+        <div className="relative mt-1.5">
+          <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+          <Input id="wa-log-search" data-testid="wa-log-search" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Mis: Rina, 6281234…" className="pl-9" />
+        </div>
+      </div>
+
+      <Card className="border-slate-200">
+        <CardContent className="p-0 divide-y divide-slate-100" data-testid="wa-log-list">
+          {filtered.map((c) => (
+            <div key={c.id} className="p-4" data-testid={`wa-log-row-${c.id}`}>
+              <div className="flex items-center justify-between gap-3 mb-2">
+                <div className="text-sm font-semibold">{c.nama} <span className="text-xs font-normal text-slate-400">({c.no_hp})</span></div>
+                <div className="flex items-center gap-2 shrink-0">
+                  <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-xs font-medium ${c.status_kirim === "Terkirim" ? "bg-emerald-100 text-emerald-800" : "bg-red-100 text-red-800"}`}>
+                    {c.status_kirim === "Terkirim" ? <CheckCircle2 className="w-3 h-3" /> : <XCircle className="w-3 h-3" />} {c.status_kirim}
+                  </span>
+                  <span className="text-xs text-slate-400">{fmtDateTime(c.waktu)}</span>
+                </div>
+              </div>
+              <div className="flex items-start gap-2 mb-1.5">
+                <span className="text-xs font-bold text-slate-500 w-16 shrink-0">Tamu</span>
+                <p className="text-sm bg-slate-50 rounded-lg px-3 py-1.5 flex-1">{c.pesan_masuk}</p>
+              </div>
+              <div className="flex items-start gap-2">
+                <span className="text-xs font-bold text-blue-600 w-16 shrink-0">Bot AI</span>
+                {c.balasan_ai ? (
+                  <p className="text-sm bg-blue-50 rounded-lg px-3 py-1.5 flex-1">{c.balasan_ai}</p>
+                ) : (
+                  <p className="text-sm bg-red-50 text-red-700 rounded-lg px-3 py-1.5 flex-1 italic">Gagal membalas — lihat tab Pemantauan Status.</p>
+                )}
+              </div>
+            </div>
+          ))}
+          {filtered.length === 0 && (
+            <div className="p-8 text-center text-slate-500 text-sm">Tidak ada percakapan yang cocok</div>
+          )}
+        </CardContent>
+      </Card>
+      <p className="text-[11px] text-slate-400">Data tiruan — belum tersambung ke bot WhatsApp sungguhan.</p>
+    </div>
+  );
+}
+
 export default function PesanWhatsAppOtomatis() {
   return (
     <div className="space-y-6" data-testid="pesan-whatsapp-otomatis-page">
@@ -208,7 +276,10 @@ export default function PesanWhatsAppOtomatis() {
         <TabsContent value="pengaturan" className="mt-4">
           <PengaturanWhatsApp />
         </TabsContent>
-        {TABS.filter((t) => !["ringkasan", "pengaturan"].includes(t.value)).map((t) => (
+        <TabsContent value="log" className="mt-4">
+          <LogPercakapan />
+        </TabsContent>
+        {TABS.filter((t) => !["ringkasan", "pengaturan", "log"].includes(t.value)).map((t) => (
           <TabsContent key={t.value} value={t.value} className="mt-4">
             <TabPlaceholder label={t.label} />
           </TabsContent>
