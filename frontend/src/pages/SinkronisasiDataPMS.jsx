@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Card, CardContent } from "@/components/ui/card";
-import { BedDouble, Tag, ClipboardList, Bot, CheckCircle2, Clock } from "lucide-react";
+import { BedDouble, Tag, ClipboardList, Bot, CheckCircle2, Clock, AlertTriangle, CheckCircle } from "lucide-react";
 import { fmtDateTime } from "@/lib/apiClient";
 
 const CHECK_INTERVAL_MS = 10000;
@@ -44,6 +44,13 @@ const STATUS_META = {
   pending: { label: "Menunggu Perubahan", cls: "bg-slate-200 text-slate-600" },
   error: { label: "Gagal Sinkron", cls: "bg-red-100 text-red-800" },
 };
+
+// Data tiruan (stub) — riwayat gangguan sinkronisasi data ke bot WhatsApp.
+const MOCK_ALERT_LOGS = [
+  { id: "1", data_type: "Reservasi Baru (Email OTA)", pesan: "Timeout menghubungi Availability Engine setelah 3 percobaan", waktu: "2026-07-11T09:03:00", resolved: false },
+  { id: "2", data_type: "Ketersediaan Kamar", pesan: "Webhook WhatsApp Bot merespons 502 — sinkron ditunda otomatis", waktu: "2026-07-10T22:14:00", resolved: true },
+  { id: "3", data_type: "Status Booking", pesan: "Kredensial webhook kedaluwarsa saat sinkron terjadwal", waktu: "2026-07-10T14:00:00", resolved: true },
+];
 
 export default function SinkronisasiDataPMS() {
   const lastSyncAll = MOCK_DATA_FLOWS.reduce((max, f) => (f.last_sync > max ? f.last_sync : max), MOCK_DATA_FLOWS[0].last_sync);
@@ -97,6 +104,44 @@ export default function SinkronisasiDataPMS() {
           );
         })}
       </div>
+
+      <Card className="border-slate-200">
+        <CardContent className="p-0">
+          <div className="p-4 border-b border-slate-100">
+            <h3 className="text-sm font-semibold text-slate-700">Log Peringatan Gangguan</h3>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm" data-testid="alert-log-table">
+              <thead className="bg-slate-50 text-slate-600 text-xs uppercase tracking-wider">
+                <tr>
+                  <th className="text-left p-3">Waktu</th>
+                  <th className="text-left p-3">Data Terdampak</th>
+                  <th className="text-left p-3">Pesan</th>
+                  <th className="text-left p-3">Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                {MOCK_ALERT_LOGS.map((a) => (
+                  <tr key={a.id} data-testid={`alert-log-row-${a.id}`} className="border-t border-slate-100">
+                    <td className="p-3 text-slate-500">{fmtDateTime(a.waktu)}</td>
+                    <td className="p-3 font-medium">{a.data_type}</td>
+                    <td className="p-3 text-slate-600">{a.pesan}</td>
+                    <td className="p-3">
+                      <span className={`inline-flex items-center gap-1 px-2 py-1 rounded-md text-xs font-medium ${a.resolved ? "bg-emerald-100 text-emerald-800" : "bg-red-100 text-red-800"}`}>
+                        {a.resolved ? <CheckCircle className="w-3 h-3" /> : <AlertTriangle className="w-3 h-3" />}
+                        {a.resolved ? "Sudah Teratasi" : "Perlu Perhatian"}
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+                {MOCK_ALERT_LOGS.length === 0 && (
+                  <tr><td colSpan={4} className="p-6 text-center text-slate-500">Tidak ada gangguan tercatat</td></tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </CardContent>
+      </Card>
       <p className="text-[11px] text-slate-400">Data tiruan — belum tersambung ke Availability Engine/bot sungguhan.</p>
     </div>
   );

@@ -32,7 +32,11 @@ Format longgar mengikuti [Keep a Changelog](https://keepachangelog.com/).
 - Frontend: tombol "Batalkan Pesanan" (self-service) di halaman detail reservasi tamu (`PublicBook.jsx`, live/nyata) — dialog menampilkan kebijakan & biaya pembatalan yang dihitung sungguhan (H-1, 10%, kebijakan sama seperti pesan konfirmasi WA), aksinya mengajukan permintaan (bukan pembatalan instan palsu) karena backend belum punya endpoint pembatalan mandiri.
 - Frontend: filter cari/tipe kamar PMS/sumber OTA di halaman Pemetaan Tipe Kamar — `frontend/src/pages/PemetaanTipeKamar.jsx`.
 - Frontend: indikator "Live" di halaman Sinkronisasi Data PMS — `frontend/src/pages/SinkronisasiDataPMS.jsx`.
-- Frontend: timer mundur (real, benar-benar berjalan) sampai batas bebas biaya H-1 di dialog Batalkan Pesanan tamu — `frontend/src/pages/PublicBook.jsx`. Catatan: task menyebut "H-3" tapi dipakai H-1 supaya konsisten dengan kebijakan yang sudah nyata di pesan konfirmasi WA (buildBookingConfirmationMessage).
+- Frontend: timer mundur (real, benar-benar berjalan) sampai batas bebas biaya di dialog Batalkan Pesanan tamu — `frontend/src/pages/PublicBook.jsx`.
+- Frontend: tabel "Log Peringatan Gangguan" di halaman Sinkronisasi Data PMS — `frontend/src/pages/SinkronisasiDataPMS.jsx`.
+
+### Fixed
+- **Kebijakan pembatalan H-3/H-1 (nyata, bukan mock)** — sebelumnya pesan konfirmasi WA & dialog batalkan pesanan selalu bilang H-1 untuk semua booking. Sesuai klarifikasi bisnis: menginap = bebas biaya sampai H-3, day use = H-1. Diperbaiki di `apiClient.js` (buildBookingConfirmationMessage, dipakai Dashboard/Bookings/PublicBook) dan `PublicBook.jsx` (dialog Batalkan Pesanan + timer mundur, dibuat tipe-aware).
 
 ### Fixed
 - **PublicBook.jsx (halaman checkout tamu, live/nyata)** — sebelumnya booking yang pembayarannya expired/gagal (status `cancelled`) tidak menampilkan penjelasan apa pun ke tamu di halaman hasil. Sekarang ditampilkan status "Booking Dibatalkan" + info bahwa kamar sudah dilepas kembali, tanpa tombol "bayar ulang" palsu (backend belum mendukung retry — lihat catatan di TODO.md). Polling status juga dihentikan begitu status final (paid/cancelled) supaya tidak polling selamanya.
