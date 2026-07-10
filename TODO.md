@@ -45,8 +45,9 @@ daftar ini ringkasan untuk manusia, bisa sedikit basi — cek CLI kalau ragu.
 - [x] Log Percakapan (mock)
 - [ ] Pemantauan Status
 
-### Belum dimulai
-- [ ] Pemetaan Tipe Kamar (daftar pemetaan, tambah pemetaan, impor tipe kamar PMS)
+### Pemetaan Tipe Kamar
+- [x] Halaman daftar pemetaan (mock)
+- [ ] Sisa task halaman ini (tambah/ubah pemetaan, impor tipe kamar PMS, dll — cek `task next`)
 
 ## Fase 3
 - [ ] Belum dibaca detail PRD-nya — cek `plan get` saat fase 2 selesai.
