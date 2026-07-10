@@ -24,7 +24,7 @@ daftar ini ringkasan untuk manusia, bisa sedikit basi — cek CLI kalau ragu.
 - [x] Halaman utama + tab Status Sinkronisasi (mock)
 - [x] Indikator status koneksi real-time (live, polling 10s)
 - [x] Riwayat Perubahan Stok (mock, + filter tanggal/tipe kamar)
-- [ ] Pengaturan Sinkronisasi
+- [x] Pengaturan Sinkronisasi (frekuensi + prioritas saluran, mock)
 
 ### Belum dimulai
 - [ ] Pesan WhatsApp Otomatis (konfigurasi webhook, sinkronisasi data PMS, log percakapan, pemantauan status)

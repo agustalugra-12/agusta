@@ -5,10 +5,16 @@ import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
-import { RefreshCw, Wifi, WifiOff, AlertTriangle, CheckCircle2, History, Settings2, X } from "lucide-react";
+import { RefreshCw, Wifi, WifiOff, AlertTriangle, CheckCircle2, History, Settings2, X, ArrowUp, ArrowDown, Save } from "lucide-react";
 import { fmtDateTime } from "@/lib/apiClient";
 
 const ROOM_TYPE_FILTER_OPTIONS = ["Semua", "Standard", "Cottage"];
+const FREKUENSI_OPTIONS = [
+  { value: 1, label: "Setiap 1 menit (paling akurat, beban server lebih tinggi)" },
+  { value: 5, label: "Setiap 5 menit (disarankan)" },
+  { value: 15, label: "Setiap 15 menit" },
+  { value: 30, label: "Setiap 30 menit" },
+];
 
 const TABS = [
   { value: "status", label: "Status Sinkronisasi", icon: Wifi },
@@ -139,13 +145,88 @@ function RiwayatPerubahanStok({ history }) {
   );
 }
 
-function TabPlaceholder({ label }) {
+// Prioritas dipakai Availability Engine saat dua saluran melaporkan perubahan stok yang
+// bentrok pada waktu hampir bersamaan — saluran berprioritas lebih tinggi yang menang.
+// Pelangi PMS selalu #1 (Single Source of Truth di PRD) sehingga tidak bisa direorder.
+const MOCK_PRIORITAS = ["Pelangi PMS", "Email OTA", "Website", "WhatsApp Bot"];
+
+function PengaturanSinkronisasi() {
+  const [frekuensi, setFrekuensi] = useState(5);
+  const [prioritas, setPrioritas] = useState(MOCK_PRIORITAS);
+
+  const pindah = (idx, arah) => {
+    const target = idx + arah;
+    if (target < 1 || target >= prioritas.length) return; // index 0 (Pelangi PMS) terkunci
+    setPrioritas((p) => {
+      const next = [...p];
+      [next[idx], next[target]] = [next[target], next[idx]];
+      return next;
+    });
+  };
+
+  const simpan = () => {
+    toast.success(`Pengaturan disimpan: sinkron tiap ${frekuensi} menit, prioritas ${prioritas.join(" > ")}`);
+  };
+
   return (
-    <Card className="border-slate-200">
-      <CardContent className="p-8 text-center text-slate-500">
-        <p className="text-sm">Bagian &ldquo;{label}&rdquo; akan dibangun di task berikutnya.</p>
-      </CardContent>
-    </Card>
+    <div className="space-y-4">
+      <Card className="border-slate-200">
+        <CardContent className="p-4 space-y-3">
+          <h3 className="text-sm font-semibold text-slate-700">Frekuensi Sinkronisasi</h3>
+          <p className="text-xs text-slate-500 -mt-2">Seberapa sering Availability Engine mengecek ulang stok ke semua saluran.</p>
+          <div className="space-y-2">
+            {FREKUENSI_OPTIONS.map((f) => (
+              <label key={f.value} className="flex items-center gap-2.5 text-sm cursor-pointer">
+                <input
+                  type="radio"
+                  name="frekuensi"
+                  data-testid={`frekuensi-${f.value}`}
+                  checked={frekuensi === f.value}
+                  onChange={() => setFrekuensi(f.value)}
+                  className="accent-blue-700"
+                />
+                {f.label}
+              </label>
+            ))}
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card className="border-slate-200">
+        <CardContent className="p-4 space-y-3">
+          <h3 className="text-sm font-semibold text-slate-700">Prioritas Saluran (saat data bentrok)</h3>
+          <p className="text-xs text-slate-500 -mt-2">
+            Jika dua saluran melaporkan perubahan stok kamar yang sama nyaris bersamaan, saluran berperingkat lebih atas yang dipakai.
+          </p>
+          <div className="border border-slate-200 rounded-lg divide-y divide-slate-100" data-testid="prioritas-list">
+            {prioritas.map((nama, idx) => (
+              <div key={nama} className="p-2.5 flex items-center justify-between gap-3" data-testid={`prioritas-item-${idx}`}>
+                <div className="flex items-center gap-2.5">
+                  <span className="w-6 h-6 rounded-full bg-slate-100 text-slate-600 text-xs font-bold grid place-items-center">{idx + 1}</span>
+                  <span className="text-sm font-medium">{nama}</span>
+                  {idx === 0 && <span className="text-[10px] uppercase font-bold text-blue-700 bg-blue-50 px-1.5 py-0.5 rounded">Terkunci</span>}
+                </div>
+                {idx > 0 && (
+                  <div className="flex gap-1">
+                    <Button data-testid={`prioritas-naik-${idx}`} variant="ghost" size="icon" onClick={() => pindah(idx, -1)} disabled={idx === 1}>
+                      <ArrowUp className="w-3.5 h-3.5" />
+                    </Button>
+                    <Button data-testid={`prioritas-turun-${idx}`} variant="ghost" size="icon" onClick={() => pindah(idx, 1)} disabled={idx === prioritas.length - 1}>
+                      <ArrowDown className="w-3.5 h-3.5" />
+                    </Button>
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        </CardContent>
+      </Card>
+
+      <Button data-testid="simpan-pengaturan" onClick={simpan} className="gap-1.5 bg-blue-700 hover:bg-blue-800">
+        <Save className="w-3.5 h-3.5" /> Simpan Pengaturan
+      </Button>
+      <p className="text-[11px] text-slate-400">Data tiruan — belum tersambung ke Availability Engine sungguhan.</p>
+    </div>
   );
 }
 
@@ -271,11 +352,9 @@ export default function SinkronisasiKetersediaan() {
         <TabsContent value="riwayat" className="mt-4">
           <RiwayatPerubahanStok history={MOCK_STOCK_HISTORY} />
         </TabsContent>
-        {TABS.filter((t) => !["status", "riwayat"].includes(t.value)).map((t) => (
-          <TabsContent key={t.value} value={t.value} className="mt-4">
-            <TabPlaceholder label={t.label} />
-          </TabsContent>
-        ))}
+        <TabsContent value="pengaturan" className="mt-4">
+          <PengaturanSinkronisasi />
+        </TabsContent>
       </Tabs>
     </div>
   );
