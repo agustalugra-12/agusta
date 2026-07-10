@@ -1,9 +1,11 @@
 import { useMemo, useState } from "react";
+import { toast } from "sonner";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
-import { ArrowRight, Search, X } from "lucide-react";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
+import { ArrowRight, Search, X, Pencil, Trash2 } from "lucide-react";
 
 const SUMBER_BADGE = {
   Agoda: "bg-violet-100 text-violet-800",
@@ -11,8 +13,10 @@ const SUMBER_BADGE = {
   "Booking.com": "bg-amber-100 text-amber-800",
 };
 
-const PMS_TIPE_OPTIONS = ["Semua", "Standard", "Cottage"];
-const SUMBER_OPTIONS = ["Semua", "Agoda", "Traveloka", "Booking.com"];
+const ROOM_TYPE_OPTIONS = ["Standard", "Cottage"];
+const SUMBER_FORM_OPTIONS = ["Agoda", "Traveloka", "Booking.com"];
+const PMS_TIPE_OPTIONS = ["Semua", ...ROOM_TYPE_OPTIONS];
+const SUMBER_OPTIONS = ["Semua", ...SUMBER_FORM_OPTIONS];
 
 // Data tiruan (stub) — mengikuti entitas ROOM_MAPPINGS di PRD (id, pms_room_id,
 // ota_room_name, ota_source). Tiap OTA punya istilah sendiri untuk tipe kamar yang sama
@@ -26,20 +30,93 @@ const MOCK_MAPPINGS = [
   { id: "5", pms_tipe: "Cottage", ota_nama: "Family Cottage", sumber: "Traveloka" },
 ];
 
+function EditMappingDialog({ mapping, onClose, onSave }) {
+  const [form, setForm] = useState(mapping || {});
+
+  return (
+    <Dialog open={!!mapping} onOpenChange={(o) => { if (!o) onClose(); }}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle data-testid="pemetaan-edit-title">Ubah Pemetaan</DialogTitle>
+        </DialogHeader>
+        {mapping && (
+          <div className="space-y-3 text-sm">
+            <div>
+              <Label>Nama di OTA</Label>
+              <Input
+                data-testid="pemetaan-edit-ota-nama"
+                value={form.ota_nama}
+                onChange={(e) => setForm((f) => ({ ...f, ota_nama: e.target.value }))}
+                className="mt-1.5"
+              />
+            </div>
+            <div>
+              <Label>Tipe Kamar PMS</Label>
+              <select
+                data-testid="pemetaan-edit-tipe"
+                value={form.pms_tipe}
+                onChange={(e) => setForm((f) => ({ ...f, pms_tipe: e.target.value }))}
+                className="w-full h-10 rounded-md border border-slate-300 px-3 bg-white mt-1.5"
+              >
+                {ROOM_TYPE_OPTIONS.map((t) => <option key={t} value={t}>{t}</option>)}
+              </select>
+            </div>
+            <div>
+              <Label>Sumber OTA</Label>
+              <select
+                data-testid="pemetaan-edit-sumber"
+                value={form.sumber}
+                onChange={(e) => setForm((f) => ({ ...f, sumber: e.target.value }))}
+                className="w-full h-10 rounded-md border border-slate-300 px-3 bg-white mt-1.5"
+              >
+                {SUMBER_FORM_OPTIONS.map((s) => <option key={s} value={s}>{s}</option>)}
+              </select>
+            </div>
+          </div>
+        )}
+        <DialogFooter>
+          <Button variant="ghost" onClick={onClose}>Batal</Button>
+          <Button
+            data-testid="pemetaan-edit-save"
+            className="bg-blue-700 hover:bg-blue-800"
+            disabled={!form.ota_nama?.trim()}
+            onClick={() => { onSave(form); onClose(); }}
+          >
+            Simpan
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 export default function PemetaanTipeKamar() {
+  const [mappings, setMappings] = useState(MOCK_MAPPINGS);
   const [search, setSearch] = useState("");
   const [pmsTipe, setPmsTipe] = useState("Semua");
   const [sumber, setSumber] = useState("Semua");
+  const [editing, setEditing] = useState(null);
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
-    return MOCK_MAPPINGS.filter((m) => {
+    return mappings.filter((m) => {
       if (q && !m.ota_nama.toLowerCase().includes(q)) return false;
       if (pmsTipe !== "Semua" && m.pms_tipe !== pmsTipe) return false;
       if (sumber !== "Semua" && m.sumber !== sumber) return false;
       return true;
     });
-  }, [search, pmsTipe, sumber]);
+  }, [mappings, search, pmsTipe, sumber]);
+
+  const saveMapping = (form) => {
+    setMappings((ms) => ms.map((m) => (m.id === form.id ? { ...m, ...form } : m)));
+    toast.success(`Pemetaan "${form.ota_nama}" diperbarui`);
+  };
+
+  const deleteMapping = (m) => {
+    if (!window.confirm(`Hapus pemetaan "${m.ota_nama}" (${m.sumber}) → ${m.pms_tipe}?`)) return;
+    setMappings((ms) => ms.filter((x) => x.id !== m.id));
+    toast.success("Pemetaan dihapus");
+  };
 
   const resetFilters = () => { setSearch(""); setPmsTipe("Semua"); setSumber("Semua"); };
   const hasActiveFilter = search || pmsTipe !== "Semua" || sumber !== "Semua";
@@ -111,6 +188,7 @@ export default function PemetaanTipeKamar() {
                 <th className="text-left p-3"></th>
                 <th className="text-left p-3">Tipe Kamar PMS</th>
                 <th className="text-left p-3">Sumber</th>
+                <th className="text-right p-3">Aksi</th>
               </tr>
             </thead>
             <tbody>
@@ -122,16 +200,27 @@ export default function PemetaanTipeKamar() {
                   <td className="p-3">
                     <span className={`inline-flex px-2 py-1 rounded-md text-xs font-medium ${SUMBER_BADGE[m.sumber] || "bg-slate-100 text-slate-600"}`}>{m.sumber}</span>
                   </td>
+                  <td className="p-3">
+                    <div className="flex justify-end gap-1">
+                      <Button data-testid={`pemetaan-edit-${m.id}`} variant="ghost" size="icon" onClick={() => setEditing(m)}>
+                        <Pencil className="w-3.5 h-3.5" />
+                      </Button>
+                      <Button data-testid={`pemetaan-delete-${m.id}`} variant="ghost" size="icon" onClick={() => deleteMapping(m)} className="text-red-600 hover:bg-red-50">
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </Button>
+                    </div>
+                  </td>
                 </tr>
               ))}
               {filtered.length === 0 && (
-                <tr><td colSpan={4} className="p-6 text-center text-slate-500">Tidak ada pemetaan yang cocok dengan pencarian/filter</td></tr>
+                <tr><td colSpan={5} className="p-6 text-center text-slate-500">Tidak ada pemetaan yang cocok dengan pencarian/filter</td></tr>
               )}
             </tbody>
           </table>
         </CardContent>
       </Card>
       <p className="text-[11px] text-slate-400">Data tiruan — belum tersambung ke pemetaan sungguhan.</p>
+      <EditMappingDialog mapping={editing} onClose={() => setEditing(null)} onSave={saveMapping} />
     </div>
   );
 }
