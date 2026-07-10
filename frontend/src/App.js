@@ -29,6 +29,7 @@ import PemetaanTipeKamar from "@/pages/PemetaanTipeKamar";
 import SinkronisasiDataPMS from "@/pages/SinkronisasiDataPMS";
 import PermintaanKhususExtraBed from "@/pages/PermintaanKhususExtraBed";
 import PemantauanStatusWA from "@/pages/PemantauanStatusWA";
+import JenisReservasi from "@/pages/JenisReservasi";
 import PublicBook from "@/pages/PublicBook";
 import "@/App.css";
 
@@ -73,6 +74,7 @@ function AppRoutes() {
         <Route path="/sinkronisasi-data-pms" element={<SinkronisasiDataPMS />} />
         <Route path="/extra-bed" element={<PermintaanKhususExtraBed />} />
         <Route path="/pemantauan-status-wa" element={<PemantauanStatusWA />} />
+        <Route path="/jenis-reservasi" element={<JenisReservasi />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

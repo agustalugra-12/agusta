@@ -15,10 +15,10 @@ const toLocalInput = (iso) => { const d = new Date(iso); d.setMinutes(d.getMinut
 
 // Data tiruan (stub) — daftar reservasi lintas saluran, sebelum tersinkron dengan Pelangi PMS/Gmail/WhatsApp.
 const MOCK_RESERVATIONS = [
-  { id: "1", kode: "RSV-1042", nama_tamu: "Dewi Anggraini", no_hp: "081234567001", room_tipe: "Cottage", jam_mulai: "2026-07-11T14:00:00", jam_selesai: "2026-07-12T12:00:00", jumlah_tamu: 2, total: 260000, status: "Confirmed", source: "Website", catatan: "Minta kamar dekat kolam." },
+  { id: "1", kode: "RSV-1042", nama_tamu: "Dewi Anggraini", no_hp: "081234567001", room_tipe: "Cottage", jam_mulai: "2026-07-11T14:00:00", jam_selesai: "2026-07-12T12:00:00", jumlah_tamu: 2, total: 260000, status: "Confirmed", source: "Website", catatan: "Minta kamar dekat kolam.", extra_bed_qty: 1 },
   { id: "2", kode: "RSV-1041", nama_tamu: "Budi Santoso", no_hp: "081234567002", room_tipe: "Standard", jam_mulai: "2026-07-11T10:00:00", jam_selesai: "2026-07-11T16:00:00", jumlah_tamu: 1, total: 123600, status: "Pending", source: "WhatsApp", catatan: "" },
   { id: "3", kode: "RSV-1040", nama_tamu: "Agoda - Ahmad Fauzi", no_hp: "", room_tipe: "Standard", jam_mulai: "2026-07-12T14:00:00", jam_selesai: "2026-07-14T12:00:00", jumlah_tamu: 2, total: 240000, status: "Confirmed", source: "OTA", catatan: "Booking via Agoda, konfirmasi email terlampir." },
-  { id: "4", kode: "RSV-1039", nama_tamu: "Sri Wahyuni", no_hp: "081234567004", room_tipe: "Cottage", jam_mulai: "2026-07-10T14:00:00", jam_selesai: "2026-07-11T12:00:00", jumlah_tamu: 3, total: 130000, status: "Cancelled", source: "Website", catatan: "Dibatalkan tamu H-1." },
+  { id: "4", kode: "RSV-1039", nama_tamu: "Sri Wahyuni", no_hp: "081234567004", room_tipe: "Cottage", jam_mulai: "2026-07-10T14:00:00", jam_selesai: "2026-07-11T12:00:00", jumlah_tamu: 3, total: 130000, status: "Cancelled", source: "Website", catatan: "Dibatalkan tamu H-1.", extra_bed_qty: 2 },
   { id: "5", kode: "RSV-1038", nama_tamu: "Traveloka - Rina Kusuma", no_hp: "", room_tipe: "Standard", jam_mulai: "2026-07-13T14:00:00", jam_selesai: "2026-07-15T12:00:00", jumlah_tamu: 2, total: 240000, status: "Confirmed", source: "OTA", catatan: "" },
   { id: "6", kode: "RSV-1037", nama_tamu: "Hendra Wijaya", no_hp: "081234567006", room_tipe: "Standard", jam_mulai: "2026-07-10T09:00:00", jam_selesai: "2026-07-10T15:00:00", jumlah_tamu: 1, total: 123600, status: "Pending", source: "WhatsApp", catatan: "Menunggu pembayaran DP." },
 ];
@@ -207,6 +207,11 @@ export default function DaftarReservasi() {
               {selected.no_hp && <div><span className="text-slate-500">HP:</span> {selected.no_hp}</div>}
               <div><span className="text-slate-500">Tipe Kamar:</span> {selected.room_tipe}</div>
               <div><span className="text-slate-500">Jumlah Tamu:</span> {selected.jumlah_tamu}</div>
+              {selected.extra_bed_qty > 0 && (
+                <div data-testid="reservasi-detail-extra-bed">
+                  <span className="text-slate-500">Permintaan Khusus:</span> Extra Bed &times;{selected.extra_bed_qty}
+                </div>
+              )}
               <div><span className="text-slate-500">Check-in:</span> {fmtDateTime(selected.jam_mulai)}</div>
               <div><span className="text-slate-500">Check-out:</span> {fmtDateTime(selected.jam_selesai)}</div>
               <div className="bg-slate-50 border border-slate-200 rounded p-2 mt-2">

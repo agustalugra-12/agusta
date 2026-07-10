@@ -23,7 +23,6 @@ Format longgar mengikuti [Keep a Changelog](https://keepachangelog.com/).
 - Frontend: fitur "Buat Tagihan Baru" di halaman Pembayaran — staf pilih booking belum lunas + metode bayar (DP50/Lunas), simulasi Snap menghasilkan link pembayaran tiruan (copy/buka link) — `frontend/src/pages/Pembayaran.jsx`. Melengkapi (bukan menggantikan) alur checkout tamu asli di `PublicBook.jsx`.
 - Frontend: tab "Pengaturan" di halaman Pesan WhatsApp Otomatis — toggle data yang disinkron ke bot (ketersediaan/harga/status booking/reservasi baru) + frekuensi, plus tautan ke halaman Konfigurasi Webhook (tidak menduplikasi form kredensialnya) — `frontend/src/pages/PesanWhatsAppOtomatis.jsx`.
 - Frontend: tab "Log Percakapan" di halaman Pesan WhatsApp Otomatis — riwayat pesan masuk & balasan AI per tamu, cari nama/nomor, status kirim, data tiruan — `frontend/src/pages/PesanWhatsAppOtomatis.jsx`.
-
 - Frontend: tombol "Uji Koneksi" di halaman Konfigurasi Webhook — simulasi ping ke penyedia WhatsApp, tampilkan hasil (berhasil/gagal + waktu uji) — `frontend/src/pages/KonfigurasiWebhook.jsx`.
 - Frontend: tombol "Lihat Pembayaran" di detail Daftar Reservasi — buka halaman Pembayaran dengan filter kode booking otomatis terisi (`?kode=...`) — `frontend/src/pages/DaftarReservasi.jsx`, `frontend/src/pages/Pembayaran.jsx`.
 - Frontend: perhalus feedback form Konfigurasi Webhook — badge "perubahan belum disimpan", validasi inline per field saat gagal simpan, tombol "Batalkan Perubahan" — `frontend/src/pages/KonfigurasiWebhook.jsx`.
@@ -45,11 +44,15 @@ Format longgar mengikuti [Keep a Changelog](https://keepachangelog.com/).
 - Frontend: dialog detail pesan + tombol "Kirim Ulang" (mock) untuk pesan berstatus Gagal di halaman Pemantauan Status — `frontend/src/pages/PemantauanStatusWA.jsx`.
 - Frontend: form pemesanan demo (tipe kamar + malam + ExtraBedSelector) dengan total harga dinamis di halaman Permintaan Khusus Extra Bed — `frontend/src/pages/PermintaanKhususExtraBed.jsx`. Sengaja tetap demo (bukan form live) karena backend belum punya field/harga extra bed sungguhan.
 - Frontend: panel "Ringkasan Kegagalan" (dikelompokkan per alasan) + "Log Perubahan Status Koneksi" (naik-turun webhook) di halaman Pemantauan Status — `frontend/src/pages/PemantauanStatusWA.jsx`.
+- Frontend: info "Permintaan Khusus: Extra Bed" di dialog detail Daftar Reservasi (data tiruan, halaman ini memang sudah mock sepenuhnya) — `frontend/src/pages/DaftarReservasi.jsx`.
+- Frontend: info extra bed (kondisional, `bk.extra_bed_qty > 0`) di halaman voucher/konfirmasi booking tamu — `frontend/src/pages/PublicBook.jsx`. Live tapi aman: field belum ada di data nyata sehingga tidak pernah tampil sampai backend benar-benar mendukungnya, tidak memengaruhi total harga.
+
+- Frontend: komponen `TipeReservasiSelector` (Day Use/Menginap) + halaman pratinjau "Jenis Reservasi", gaya konsisten dengan form staf Bookings.jsx — `frontend/src/pages/JenisReservasi.jsx`, route `/jenis-reservasi`. Belum diintegrasikan ke form booking tamu (masih selalu day_use).
+- Frontend: form demo "Reservasi Menginap" (tanggal check-in, jumlah malam, tipe kamar, jumlah tamu, ringkasan check-in/out + total dinamis) di halaman Jenis Reservasi, muncul saat tipe Menginap dipilih — `frontend/src/pages/JenisReservasi.jsx`.
 
 ### Fixed
+- **Halaman voucher booking (nyata)** — tanggal/jam Check-Out tidak pernah ditampilkan padahal API sudah mengembalikan `jam_selesai`. Ditambahkan baris Check-Out di `PublicBook.jsx`.
 - **Kebijakan pembatalan H-3/H-1 (nyata, bukan mock)** — sebelumnya pesan konfirmasi WA & dialog batalkan pesanan selalu bilang H-1 untuk semua booking. Sesuai klarifikasi bisnis: menginap = bebas biaya sampai H-3, day use = H-1. Diperbaiki di `apiClient.js` (buildBookingConfirmationMessage, dipakai Dashboard/Bookings/PublicBook) dan `PublicBook.jsx` (dialog Batalkan Pesanan + timer mundur, dibuat tipe-aware).
-
-### Fixed
 - **PublicBook.jsx (halaman checkout tamu, live/nyata)** — sebelumnya booking yang pembayarannya expired/gagal (status `cancelled`) tidak menampilkan penjelasan apa pun ke tamu di halaman hasil. Sekarang ditampilkan status "Booking Dibatalkan" + info bahwa kamar sudah dilepas kembali, tanpa tombol "bayar ulang" palsu (backend belum mendukung retry — lihat catatan di TODO.md). Polling status juga dihentikan begitu status final (paid/cancelled) supaya tidak polling selamanya.
 
 ### Notes

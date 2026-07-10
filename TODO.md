@@ -43,7 +43,7 @@ daftar ini ringkasan untuk manusia, bisa sedikit basi — cek CLI kalau ragu.
 - [x] Halaman dasbor + tab Ringkasan (mock)
 - [x] Tab Pengaturan (sinkronisasi data ke bot + tautan Konfigurasi Webhook)
 - [x] Log Percakapan (mock)
-- [ ] Pemantauan Status
+- [x] Tab Pemantauan Status diubah jadi tautan ke halaman "Pemantauan Status" tersendiri (lihat bawah)
 
 ### Pemetaan Tipe Kamar
 - [x] Halaman daftar pemetaan (mock)
@@ -56,7 +56,8 @@ daftar ini ringkasan untuk manusia, bisa sedikit basi — cek CLI kalau ragu.
 ### Permintaan Khusus Extra Bed
 - [x] Komponen ExtraBedSelector + halaman pratinjau (mock, belum disambungkan ke checkout nyata)
 - [x] Form pemesanan demo dengan total dinamis (tetap demo, bukan form live)
-- [ ] Sisa task fitur ini (cek `task next`)
+- [x] Info extra bed di detail Daftar Reservasi (mock)
+- [x] Info extra bed di halaman voucher/konfirmasi tamu (kondisional, aman)
 
 ### Pemantauan Status (WhatsApp)
 - [x] Halaman utama (statistik, peringatan, log pengiriman, mock) — gantikan tab placeholder lama di Pesan WhatsApp Otomatis
@@ -69,6 +70,15 @@ daftar ini ringkasan untuk manusia, bisa sedikit basi — cek CLI kalau ragu.
 - [x] Tabel Log Peringatan Gangguan (mock)
 - [x] Panel Ketersediaan Kamar Bot vs PMS (mock)
 - [x] Panel Referensi Reservasi PMS (mock)
+
+### Detail Voucher Booking
+- [x] Info Check-In/Check-Out di halaman voucher tamu (nyata — field sudah ada di API, cuma belum ditampilkan)
+- [ ] Sisa task fitur ini (cek `task next`)
+
+### Jenis Reservasi
+- [x] Komponen TipeReservasiSelector + halaman pratinjau (mock, belum diintegrasikan ke form tamu)
+- [x] Form demo Reservasi Menginap (tanggal/malam/tipe kamar/tamu + total dinamis, mock)
+- [ ] Sisa task fitur ini (cek `task next`) — kemungkinan integrasi ke form booking tamu, itu perubahan alur nyata
 
 ### Kebijakan Pembatalan Mandiri
 - [x] Tombol "Batalkan Pesanan" di PublicBook.jsx (nyata, bukan mock) — hitung kebijakan/biaya real, aksi = ajukan permintaan (bukan instan)

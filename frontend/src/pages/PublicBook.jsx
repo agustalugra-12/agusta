@@ -513,6 +513,12 @@ function SuccessView({ bookingId }) {
             <div className="flex justify-between"><span className="text-slate-500">Nama</span><b>{bk.nama_tamu}</b></div>
             <div className="flex justify-between"><span className="text-slate-500">Kamar</span><b>{bk.room_nomor} ({bk.room_tipe})</b></div>
             <div className="flex justify-between"><span className="text-slate-500">Check-In</span><b>{new Date(bk.jam_mulai).toLocaleString("id-ID", { dateStyle: "medium", timeStyle: "short" })}</b></div>
+            {bk.jam_selesai && (
+              <div className="flex justify-between" data-testid="pb-success-checkout"><span className="text-slate-500">Check-Out</span><b>{new Date(bk.jam_selesai).toLocaleString("id-ID", { dateStyle: "medium", timeStyle: "short" })}</b></div>
+            )}
+            {bk.extra_bed_qty > 0 && (
+              <div className="flex justify-between" data-testid="pb-success-extra-bed"><span className="text-slate-500">Permintaan Khusus</span><b>Extra Bed &times;{bk.extra_bed_qty}</b></div>
+            )}
             <div className="flex justify-between border-t pt-2 mt-2"><span className="text-slate-500">Total</span><b className="text-blue-700">{fmtRp(bk.total)}</b></div>
             <div className="flex justify-between"><span className="text-slate-500">DP Minimum</span><b>{fmtRp(bk.dp_min)}</b></div>
             <div className="flex justify-between"><span className="text-slate-500">Status Pembayaran</span>
