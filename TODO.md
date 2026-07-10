@@ -56,6 +56,7 @@ daftar ini ringkasan untuk manusia, bisa sedikit basi — cek CLI kalau ragu.
 - [x] Halaman Dashboard Sinkronisasi (mock)
 - [x] Indikator status sinkronisasi (live)
 - [x] Tabel Log Peringatan Gangguan (mock)
+- [x] Panel Ketersediaan Kamar Bot vs PMS (mock)
 - [ ] Sisa task halaman ini (cek `task next`)
 
 ### Kebijakan Pembatalan Mandiri

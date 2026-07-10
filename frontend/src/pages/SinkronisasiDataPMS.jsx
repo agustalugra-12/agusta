@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Card, CardContent } from "@/components/ui/card";
-import { BedDouble, Tag, ClipboardList, Bot, CheckCircle2, Clock, AlertTriangle, CheckCircle } from "lucide-react";
+import { BedDouble, Tag, ClipboardList, Bot, CheckCircle2, Clock, AlertTriangle, CheckCircle, XCircle } from "lucide-react";
 import { fmtDateTime } from "@/lib/apiClient";
 
 const CHECK_INTERVAL_MS = 10000;
@@ -44,6 +44,15 @@ const STATUS_META = {
   pending: { label: "Menunggu Perubahan", cls: "bg-slate-200 text-slate-600" },
   error: { label: "Gagal Sinkron", cls: "bg-red-100 text-red-800" },
 };
+
+// Data tiruan (stub) — perbandingan jumlah kamar tersedia yang "dilihat" bot WhatsApp
+// (dari sinkronisasi terakhir) vs jumlah tersedia sungguhan di Pelangi PMS saat ini.
+// Kalau beda, artinya bot belum menerima update terbaru (drift) — inilah yang dicek
+// dashboard ini secara visual, bukan cuma percaya status "Tersinkron" begitu saja.
+const MOCK_AVAILABILITY_COMPARISON = [
+  { tipe: "Standard", bot: 7, pms: 7 },
+  { tipe: "Cottage", bot: 2, pms: 3 },
+];
 
 // Data tiruan (stub) — riwayat gangguan sinkronisasi data ke bot WhatsApp.
 const MOCK_ALERT_LOGS = [
@@ -104,6 +113,32 @@ export default function SinkronisasiDataPMS() {
           );
         })}
       </div>
+
+      <Card className="border-slate-200">
+        <CardContent className="p-4 space-y-3">
+          <h3 className="text-sm font-semibold text-slate-700">Ketersediaan Kamar: Bot vs PMS</h3>
+          <div className="grid sm:grid-cols-2 gap-3" data-testid="availability-comparison-grid">
+            {MOCK_AVAILABILITY_COMPARISON.map((c) => {
+              const cocok = c.bot === c.pms;
+              return (
+                <div key={c.tipe} className={`rounded-lg border p-3 ${cocok ? "border-slate-200" : "border-red-300 bg-red-50"}`} data-testid={`availability-comparison-${c.tipe}`}>
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="font-semibold text-sm">{c.tipe}</span>
+                    <span className={`inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded ${cocok ? "bg-emerald-100 text-emerald-800" : "bg-red-100 text-red-800"}`}>
+                      {cocok ? <CheckCircle className="w-3 h-3" /> : <XCircle className="w-3 h-3" />}
+                      {cocok ? "Cocok" : "Tidak Cocok"}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between text-sm">
+                    <div className="flex items-center gap-1.5 text-slate-600"><Bot className="w-3.5 h-3.5" /> Dilihat Bot: <b>{c.bot}</b></div>
+                    <div className="flex items-center gap-1.5 text-slate-600"><BedDouble className="w-3.5 h-3.5" /> Di PMS: <b>{c.pms}</b></div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </CardContent>
+      </Card>
 
       <Card className="border-slate-200">
         <CardContent className="p-0">
