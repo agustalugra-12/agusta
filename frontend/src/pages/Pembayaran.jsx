@@ -1,11 +1,19 @@
 import { useMemo, useState } from "react";
+import { toast } from "sonner";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Search, X, CreditCard } from "lucide-react";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
+import { Search, X, CreditCard, Plus, Copy, ExternalLink } from "lucide-react";
 import { fmtDateTime, fmtRp } from "@/lib/apiClient";
+
+// Data tiruan (stub) — booking yang belum lunas dan perlu ditagih staf (mis. reservasi
+// yang masuk lewat telepon/WA, bukan lewat form publik yang sudah otomatis pakai Snap).
+const MOCK_UNPAID_BOOKINGS = [
+  { id: "b1", kode: "RSV-1044", nama_tamu: "Fitri Handayani", total: 240000, dp_min: 120000 },
+  { id: "b2", kode: "RSV-1045", nama_tamu: "Yusuf Pratama", total: 130000, dp_min: 65000 },
+];
 
 // Data tiruan (stub) — daftar transaksi Midtrans, bentuknya mengikuti koleksi `payment_log`
 // yang sudah nyata di backend (backend/routes/payments.py). Alur checkout tamu (Snap.js)
@@ -32,29 +40,144 @@ const STATUS_META = {
 
 const STATUS_OPTIONS = ["Semua", "settlement", "pending", "expire", "deny", "cancel", "refund"];
 
+// Dialog "Buat Tagihan Baru" — simulasi alur Midtrans Snap dari sisi staf (bukan tamu):
+// pilih booking yang belum lunas + metode bayar (DP50/Lunas), hasilnya link pembayaran
+// tiruan yang bisa "dikirim" ke tamu. Ini melengkapi alur checkout tamu di PublicBook.jsx
+// (yang sudah nyata pakai Snap.js) untuk kasus reservasi yang masuk lewat telepon/WA.
+function BuatTagihanDialog({ open, onOpenChange, onCreated }) {
+  const [bookingId, setBookingId] = useState(MOCK_UNPAID_BOOKINGS[0]?.id || "");
+  const [opsi, setOpsi] = useState("dp50");
+  const [hasil, setHasil] = useState(null);
+
+  const booking = MOCK_UNPAID_BOOKINGS.find((b) => b.id === bookingId);
+  const nominal = booking ? (opsi === "dp50" ? booking.dp_min : booking.total) : 0;
+
+  const buatTagihan = () => {
+    const orderId = `${booking.kode}-${Date.now().toString().slice(-8)}SIM`;
+    const trx = {
+      id: orderId,
+      order_id: orderId,
+      booking_kode: booking.kode,
+      nama_tamu: booking.nama_tamu,
+      gross_amount: nominal,
+      payment_option: opsi,
+      payment_type: null,
+      transaction_status: "pending",
+      created_at: new Date().toISOString(),
+      redirect_url: `https://app.sandbox.midtrans.com/snap/v4/simulasi/${orderId}`,
+    };
+    setHasil(trx);
+    onCreated(trx);
+  };
+
+  const salinLink = () => {
+    navigator.clipboard?.writeText(hasil.redirect_url);
+    toast.success("Link pembayaran disalin");
+  };
+
+  const tutup = () => { setHasil(null); onOpenChange(false); };
+
+  return (
+    <Dialog open={open} onOpenChange={(o) => { if (!o) tutup(); }}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle data-testid="buat-tagihan-title">Buat Tagihan Baru (Simulasi Snap)</DialogTitle>
+        </DialogHeader>
+        {!hasil ? (
+          <div className="space-y-3 text-sm">
+            <div>
+              <Label>Booking</Label>
+              <select
+                data-testid="tagihan-booking"
+                value={bookingId}
+                onChange={(e) => setBookingId(e.target.value)}
+                className="w-full h-10 rounded-md border border-slate-300 px-3 bg-white mt-1.5"
+              >
+                {MOCK_UNPAID_BOOKINGS.map((b) => <option key={b.id} value={b.id}>{b.kode} — {b.nama_tamu}</option>)}
+              </select>
+            </div>
+            <div>
+              <Label>Metode Bayar</Label>
+              <div className="grid grid-cols-2 gap-2 mt-1.5">
+                <button
+                  type="button"
+                  data-testid="tagihan-opsi-dp50"
+                  onClick={() => setOpsi("dp50")}
+                  className={`p-2.5 rounded-lg border-2 text-left text-xs ${opsi === "dp50" ? "border-blue-600 bg-blue-50" : "border-slate-200"}`}
+                >
+                  <div className="font-semibold">DP 50%</div>
+                  <div className="text-slate-500">{booking && fmtRp(booking.dp_min)}</div>
+                </button>
+                <button
+                  type="button"
+                  data-testid="tagihan-opsi-full"
+                  onClick={() => setOpsi("full")}
+                  className={`p-2.5 rounded-lg border-2 text-left text-xs ${opsi === "full" ? "border-blue-600 bg-blue-50" : "border-slate-200"}`}
+                >
+                  <div className="font-semibold">Lunas</div>
+                  <div className="text-slate-500">{booking && fmtRp(booking.total)}</div>
+                </button>
+              </div>
+            </div>
+            <div className="bg-slate-50 border border-slate-200 rounded p-2 flex justify-between">
+              <span className="font-bold">Total Ditagih</span><b className="text-blue-700">{fmtRp(nominal)}</b>
+            </div>
+          </div>
+        ) : (
+          <div className="space-y-3 text-sm" data-testid="tagihan-hasil">
+            <p className="text-emerald-700 bg-emerald-50 border border-emerald-200 rounded p-2">Tagihan dibuat — kirim tautan ini ke tamu untuk membayar.</p>
+            <div className="flex items-center gap-2">
+              <Input readOnly value={hasil.redirect_url} className="font-mono text-xs" data-testid="tagihan-link" />
+              <Button variant="outline" size="icon" onClick={salinLink} data-testid="tagihan-salin-link"><Copy className="w-3.5 h-3.5" /></Button>
+              <Button variant="outline" size="icon" asChild data-testid="tagihan-buka-link">
+                <a href={hasil.redirect_url} target="_blank" rel="noreferrer"><ExternalLink className="w-3.5 h-3.5" /></a>
+              </Button>
+            </div>
+            <p className="text-[11px] text-slate-400">Simulasi — belum memanggil Midtrans Snap sungguhan.</p>
+          </div>
+        )}
+        <DialogFooter>
+          {!hasil ? (
+            <Button data-testid="tagihan-buat" onClick={buatTagihan} disabled={!booking} className="bg-blue-700 hover:bg-blue-800">Buat Tagihan</Button>
+          ) : (
+            <Button data-testid="tagihan-selesai" onClick={tutup} className="bg-blue-700 hover:bg-blue-800">Selesai</Button>
+          )}
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 export default function Pembayaran() {
+  const [transactions, setTransactions] = useState(MOCK_TRANSACTIONS);
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState("Semua");
   const [selected, setSelected] = useState(null);
+  const [tagihanOpen, setTagihanOpen] = useState(false);
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
-    return MOCK_TRANSACTIONS.filter((t) => {
+    return transactions.filter((t) => {
       if (q && !t.booking_kode.toLowerCase().includes(q) && !t.nama_tamu.toLowerCase().includes(q) && !t.order_id.toLowerCase().includes(q)) return false;
       if (status !== "Semua" && t.transaction_status !== status) return false;
       return true;
     });
-  }, [search, status]);
+  }, [transactions, search, status]);
 
   const resetFilters = () => { setSearch(""); setStatus("Semua"); };
   const hasActiveFilter = search || status !== "Semua";
 
   return (
     <div className="space-y-6" data-testid="pembayaran-page">
-      <div>
-        <p className="text-xs uppercase tracking-[0.25em] text-slate-500">Fase 2 — AI Reservation Automation</p>
-        <h1 className="text-3xl sm:text-4xl font-extrabold">Pembayaran</h1>
-        <p className="text-slate-500 mt-1">Daftar transaksi Midtrans dari semua reservasi (checkout tamu &amp; DP).</p>
+      <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-3">
+        <div>
+          <p className="text-xs uppercase tracking-[0.25em] text-slate-500">Fase 2 — AI Reservation Automation</p>
+          <h1 className="text-3xl sm:text-4xl font-extrabold">Pembayaran</h1>
+          <p className="text-slate-500 mt-1">Daftar transaksi Midtrans dari semua reservasi (checkout tamu &amp; DP).</p>
+        </div>
+        <Button data-testid="buat-tagihan-buka" onClick={() => setTagihanOpen(true)} className="gap-1.5 bg-blue-700 hover:bg-blue-800 shrink-0">
+          <Plus className="w-3.5 h-3.5" /> Buat Tagihan Baru
+        </Button>
       </div>
 
       <Card className="border-slate-200">
@@ -162,6 +285,15 @@ export default function Pembayaran() {
           )}
         </DialogContent>
       </Dialog>
+
+      <BuatTagihanDialog
+        open={tagihanOpen}
+        onOpenChange={setTagihanOpen}
+        onCreated={(trx) => {
+          setTransactions((ts) => [trx, ...ts]);
+          toast.success(`Tagihan ${trx.order_id} dibuat`);
+        }}
+      />
     </div>
   );
 }

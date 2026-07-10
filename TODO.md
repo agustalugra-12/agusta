@@ -32,6 +32,7 @@ daftar ini ringkasan untuk manusia, bisa sedikit basi — cek CLI kalau ragu.
 
 ### Integrasi Pembayaran Midtrans
 - [x] Halaman utama "Pembayaran" (daftar transaksi, mock) — catatan: checkout tamu sudah nyata di PublicBook.jsx, ini cuma monitoring admin
+- [x] Buat Tagihan Baru (simulasi Snap + pilihan metode bayar, mock)
 - [ ] Sisa task halaman ini (cek `task next`)
 
 ### Pesan WhatsApp Otomatis
