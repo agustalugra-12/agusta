@@ -1,10 +1,14 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { Label } from "@/components/ui/label";
+import { Input } from "@/components/ui/input";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
-import { RefreshCw, Wifi, WifiOff, AlertTriangle, CheckCircle2, History, Settings2 } from "lucide-react";
+import { RefreshCw, Wifi, WifiOff, AlertTriangle, CheckCircle2, History, Settings2, X } from "lucide-react";
 import { fmtDateTime } from "@/lib/apiClient";
+
+const ROOM_TYPE_FILTER_OPTIONS = ["Semua", "Standard", "Cottage"];
 
 const TABS = [
   { value: "status", label: "Status Sinkronisasi", icon: Wifi },
@@ -48,8 +52,55 @@ const SUMBER_BADGE = {
 };
 
 function RiwayatPerubahanStok({ history }) {
+  const [dari, setDari] = useState("");
+  const [sampai, setSampai] = useState("");
+  const [tipeKamar, setTipeKamar] = useState("Semua");
+
+  const filtered = useMemo(() => {
+    return history.filter((h) => {
+      if (tipeKamar !== "Semua" && h.room_tipe !== tipeKamar) return false;
+      const t = new Date(h.changed_at);
+      if (dari && t < new Date(`${dari}T00:00:00`)) return false;
+      if (sampai && t > new Date(`${sampai}T23:59:59.999`)) return false;
+      return true;
+    });
+  }, [history, dari, sampai, tipeKamar]);
+
+  const resetFilters = () => { setDari(""); setSampai(""); setTipeKamar("Semua"); };
+  const hasActiveFilter = dari || sampai || tipeKamar !== "Semua";
+
   return (
-    <Card className="border-slate-200">
+    <div className="space-y-3">
+      <Card className="border-slate-200">
+        <CardContent className="p-4 flex flex-wrap items-end gap-3">
+          <div className="w-full sm:w-44">
+            <Label htmlFor="riwayat-dari">Dari Tanggal</Label>
+            <Input id="riwayat-dari" data-testid="riwayat-filter-dari" type="date" value={dari} onChange={(e) => setDari(e.target.value)} className="mt-1.5" />
+          </div>
+          <div className="w-full sm:w-44">
+            <Label htmlFor="riwayat-sampai">Sampai Tanggal</Label>
+            <Input id="riwayat-sampai" data-testid="riwayat-filter-sampai" type="date" value={sampai} onChange={(e) => setSampai(e.target.value)} className="mt-1.5" />
+          </div>
+          <div className="w-full sm:w-44">
+            <Label htmlFor="riwayat-tipe">Tipe Kamar</Label>
+            <select
+              id="riwayat-tipe"
+              data-testid="riwayat-filter-tipe"
+              value={tipeKamar}
+              onChange={(e) => setTipeKamar(e.target.value)}
+              className="w-full h-10 rounded-md border border-slate-300 px-3 bg-white mt-1.5 text-sm"
+            >
+              {ROOM_TYPE_FILTER_OPTIONS.map((t) => <option key={t} value={t}>{t}</option>)}
+            </select>
+          </div>
+          {hasActiveFilter && (
+            <Button data-testid="riwayat-reset-filter" variant="ghost" size="sm" onClick={resetFilters} className="gap-1.5">
+              <X className="w-3.5 h-3.5" /> Reset
+            </Button>
+          )}
+        </CardContent>
+      </Card>
+      <Card className="border-slate-200">
       <CardContent className="p-0 overflow-x-auto">
         <table className="w-full text-sm" data-testid="stock-history-table">
           <thead className="bg-slate-50 text-slate-600 text-xs uppercase tracking-wider">
@@ -62,7 +113,7 @@ function RiwayatPerubahanStok({ history }) {
             </tr>
           </thead>
           <tbody>
-            {history.map((h) => (
+            {filtered.map((h) => (
               <tr key={h.id} data-testid={`stock-history-row-${h.id}`} className="border-t border-slate-100">
                 <td className="p-3 text-slate-500">{fmtDateTime(h.changed_at)}</td>
                 <td className="p-3 font-medium">{h.room_nomor} <span className="text-slate-400 font-normal">({h.room_tipe})</span></td>
@@ -77,13 +128,14 @@ function RiwayatPerubahanStok({ history }) {
                 </td>
               </tr>
             ))}
-            {history.length === 0 && (
-              <tr><td colSpan={5} className="p-6 text-center text-slate-500">Belum ada riwayat perubahan stok</td></tr>
+            {filtered.length === 0 && (
+              <tr><td colSpan={5} className="p-6 text-center text-slate-500">Tidak ada riwayat yang cocok dengan filter</td></tr>
             )}
           </tbody>
         </table>
       </CardContent>
-    </Card>
+      </Card>
+    </div>
   );
 }
 
