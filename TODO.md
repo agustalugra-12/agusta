@@ -34,10 +34,12 @@ daftar ini ringkasan untuk manusia, bisa sedikit basi — cek CLI kalau ragu.
 - [x] Halaman utama "Pembayaran" (daftar transaksi, mock) — catatan: checkout tamu sudah nyata di PublicBook.jsx, ini cuma monitoring admin
 - [ ] Sisa task halaman ini (cek `task next`)
 
+### Pesan WhatsApp Otomatis
+- [x] Halaman dasbor + tab Ringkasan (mock)
+- [ ] Log Percakapan
+- [ ] Pemantauan Status
+
 ### Belum dimulai
-- [ ] Sinkronisasi Data PMS -> WhatsApp Bot
-- [ ] Log Percakapan WhatsApp
-- [ ] Pemantauan Status WhatsApp
 - [ ] Pemetaan Tipe Kamar (daftar pemetaan, tambah pemetaan, impor tipe kamar PMS)
 
 ## Fase 3
