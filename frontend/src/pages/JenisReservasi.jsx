@@ -97,12 +97,22 @@ function FormReservasiMenginap() {
 const SERVICE_FEE_PCT = 0.03;
 const DAY_USE_DURATION_HOURS = 6;
 
+// Aturan jam check-in Day Use per PRD: khusus hari Minggu check-in paling awal jam 12:00;
+// Senin-Sabtu tamu boleh minta check-in mulai jam 10:00.
+function jamCheckinPalingAwal(tanggal) {
+  const hari = new Date(`${tanggal}T00:00:00`).getDay(); // 0 = Minggu
+  return hari === 0 ? "12:00" : "10:00";
+}
+
 function FormReservasiDayUse() {
   const [tanggal, setTanggal] = useState(todayStr());
   const [jamCheckin, setJamCheckin] = useState("14:00");
   const [tipeKamar, setTipeKamar] = useState("Standard");
   const [jumlahTamu, setJumlahTamu] = useState(2);
 
+  const batasAwal = jamCheckinPalingAwal(tanggal);
+  const namaHari = new Date(`${tanggal}T00:00:00`).toLocaleDateString("id-ID", { weekday: "long" });
+  const jamTerlaluAwal = jamCheckin < batasAwal;
   const checkinDate = new Date(`${tanggal}T${jamCheckin}:00`);
   const checkoutDate = new Date(checkinDate.getTime() + DAY_USE_DURATION_HOURS * 3600000);
   const subtotal = ROOM_RATES[tipeKamar];
@@ -119,6 +129,13 @@ function FormReservasiDayUse() {
             Durasi Day Use standar <b>6 jam</b> dari jam check-in. Kelebihan waktu dikenakan biaya overtime <b>{fmtRp(20000)}/jam</b>, dihitung saat check-out (bukan di muka).
           </p>
         </div>
+        <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 flex gap-2 text-xs" data-testid="dayuse-aturan-hari">
+          <Info className="w-4 h-4 text-blue-600 shrink-0 mt-0.5" />
+          <p className="text-blue-800">
+            Jam check-in Day Use paling awal untuk hari <b>{namaHari}</b> adalah <b>{batasAwal}</b>
+            {" "}({batasAwal === "12:00" ? "khusus hari Minggu" : "Senin–Sabtu"}).
+          </p>
+        </div>
         <div className="grid sm:grid-cols-2 gap-3">
           <div>
             <Label htmlFor="dayuse-tanggal">Tanggal</Label>
@@ -133,7 +150,16 @@ function FormReservasiDayUse() {
           </div>
           <div>
             <Label htmlFor="dayuse-jam">Jam Check-In</Label>
-            <Input id="dayuse-jam" data-testid="dayuse-jam-checkin" type="time" value={jamCheckin} onChange={(e) => setJamCheckin(e.target.value)} className="mt-1.5" />
+            <Input
+              id="dayuse-jam" data-testid="dayuse-jam-checkin" type="time" min={batasAwal} value={jamCheckin}
+              onChange={(e) => setJamCheckin(e.target.value)}
+              className={`mt-1.5 ${jamTerlaluAwal ? "border-red-400 focus-visible:ring-red-400" : ""}`}
+            />
+            {jamTerlaluAwal && (
+              <p className="text-xs text-red-600 mt-1 flex items-center gap-1" data-testid="dayuse-jam-error">
+                <AlertCircle className="w-3 h-3" /> Paling awal jam {batasAwal} untuk hari {namaHari}
+              </p>
+            )}
           </div>
         </div>
         <div className="grid sm:grid-cols-2 gap-3">

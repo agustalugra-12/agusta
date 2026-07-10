@@ -81,6 +81,13 @@ daftar ini ringkasan untuk manusia, bisa sedikit basi — cek CLI kalau ragu.
 - [x] Form demo Reservasi Day Use (tanggal/jam/tipe kamar/tamu + tarif flat & biaya layanan 3%, mock)
 - [x] Notifikasi ketentuan Day Use (durasi 6 jam + overtime, sesuai calc_tagihan nyata)
 - [x] Validasi input (tanggal tidak lampau, jumlah tamu minimal 1)
+- [x] Aturan jam check-in Day Use per hari (Minggu mulai 12:00, Senin-Sabtu mulai 10:00), mock
+
+### Paket Kamar
+- [x] Komponen PaketKamarSelector (dengan/tanpa breakfast per tipe kamar) + halaman pratinjau (mock, belum ada field paket di backend)
+
+### Rekomendasi AI Check-in Day Use
+- [x] Halaman "Rekomendasi Check-in" — saran jam check-in Day Use berdasarkan jam check-out Menginap malam sebelumnya + jeda bersih-bersih 1 jam, auto-update saat tanggal/tipe kamar berubah, alternatif kamar lain, skenario "penuh" (mock)
 
 ### Kebijakan Pembatalan Mandiri
 - [x] Tombol "Batalkan Pesanan" di PublicBook.jsx (nyata, bukan mock) — hitung kebijakan/biaya real, aksi = ajukan permintaan (bukan instan)
@@ -90,7 +97,9 @@ daftar ini ringkasan untuk manusia, bisa sedikit basi — cek CLI kalau ragu.
 
 ### Pengiriman Voucher Otomatis
 - [x] Halaman admin log pengiriman voucher (mock)
-- [ ] Sisa task fitur ini (cek `task next`)
+- [x] Notifikasi status kirim voucher ke email di halaman konfirmasi tamu (PublicBook.jsx) — bahasa "akan terkirim" (bukan "sudah terkirim") karena backend pengiriman email sungguhan belum ada
+
+Layer **frontend** Fase 2 selesai 100% (30/30 task NgodingPakeAI, 2026-07-11). Lanjut ke layer **backend** Fase 2 (99 task, dimulai dari Otomasi Email & Pemesanan).
 
 ## Fase 3
 - [ ] Belum dibaca detail PRD-nya — cek `plan get` saat fase 2 selesai.

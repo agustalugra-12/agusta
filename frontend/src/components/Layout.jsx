@@ -3,7 +3,7 @@ import { useAuth } from "@/context/AuthContext";
 import { Button } from "@/components/ui/button";
 import {
   LayoutDashboard, BedDouble, ShoppingCart, Users, Boxes,
-  Wallet, Sparkles, BarChart3, UserCog, ShieldCheck, LogOut, Hotel, Menu, CalendarCheck, HandCoins, DoorOpen, ListChecks, Mail, RefreshCw, MessageCircle, CreditCard, MessageSquare, Shuffle, Database, BedSingle, Activity, CalendarRange, Send,
+  Wallet, Sparkles, BarChart3, UserCog, ShieldCheck, LogOut, Hotel, Menu, CalendarCheck, HandCoins, DoorOpen, ListChecks, Mail, RefreshCw, MessageCircle, CreditCard, MessageSquare, Shuffle, Database, BedSingle, Activity, CalendarRange, Send, Coffee, Wand2,
 } from "lucide-react";
 import { useState } from "react";
 
@@ -22,6 +22,8 @@ const navItems = [
   { to: "/pemantauan-status-wa", label: "Pemantauan WA", icon: Activity },
   { to: "/jenis-reservasi", label: "Jenis Reservasi", icon: CalendarRange },
   { to: "/pengiriman-voucher", label: "Voucher Terkirim", icon: Send },
+  { to: "/paket-kamar", label: "Paket Kamar", icon: Coffee },
+  { to: "/rekomendasi-checkin", label: "Rekomendasi Check-in", icon: Wand2 },
   { to: "/rooms", label: "Kamar", icon: BedDouble },
   { to: "/bookings", label: "Booking", icon: CalendarCheck },
   { to: "/kasir", label: "Kasir", icon: ShoppingCart },

@@ -31,6 +31,8 @@ import PermintaanKhususExtraBed from "@/pages/PermintaanKhususExtraBed";
 import PemantauanStatusWA from "@/pages/PemantauanStatusWA";
 import JenisReservasi from "@/pages/JenisReservasi";
 import PengirimanVoucherOtomatis from "@/pages/PengirimanVoucherOtomatis";
+import PaketKamar from "@/pages/PaketKamar";
+import RekomendasiCheckinDayUse from "@/pages/RekomendasiCheckinDayUse";
 import PublicBook from "@/pages/PublicBook";
 import "@/App.css";
 
@@ -77,6 +79,8 @@ function AppRoutes() {
         <Route path="/pemantauan-status-wa" element={<PemantauanStatusWA />} />
         <Route path="/jenis-reservasi" element={<JenisReservasi />} />
         <Route path="/pengiriman-voucher" element={<PengirimanVoucherOtomatis />} />
+        <Route path="/paket-kamar" element={<PaketKamar />} />
+        <Route path="/rekomendasi-checkin" element={<RekomendasiCheckinDayUse />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

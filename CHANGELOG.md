@@ -6,6 +6,11 @@ Format longgar mengikuti [Keep a Changelog](https://keepachangelog.com/).
 ## [Unreleased]
 
 ### Added
+- Konfigurasi: aktivasi Gmail OAuth di `pms-backend.service` (GOOGLE_CLIENT_ID/SECRET, GOOGLE_OAUTH_REDIRECT_URI, FRONTEND_URL) — service direstart, siap dipakai tombol "Hubungkan Gmail".
+- Frontend: aturan jam check-in Day Use per hari (Minggu mulai 12:00, Senin-Sabtu mulai 10:00), validasi input jam — `frontend/src/pages/JenisReservasi.jsx`.
+- Frontend: halaman baru "Paket Kamar" (`/paket-kamar`) — komponen `PaketKamarSelector` (dengan/tanpa breakfast per tipe kamar), data tiruan — `frontend/src/pages/PaketKamar.jsx`.
+- Frontend: halaman baru "Rekomendasi Check-in" (`/rekomendasi-checkin`) — logika AI menyarankan jam check-in Day Use dari jam check-out Menginap malam sebelumnya + jeda bersih-bersih, alternatif kamar lain, skenario penuh, data tiruan — `frontend/src/pages/RekomendasiCheckinDayUse.jsx`.
+- Frontend: notifikasi status kirim voucher ke email di halaman konfirmasi tamu — `frontend/src/pages/PublicBook.jsx`.
 - Backend: endpoint koneksi Gmail OAuth (`/api/otomasi-email/gmail/connect`, `/callback`, `/status`, `/disconnect`) — `backend/routes/otomasi_email.py`, koleksi Mongo baru `integrations`.
 - Frontend: dialog detail log email (data hasil ekstraksi AI / alasan gagal parsing) di tab "Log Email Masuk" halaman Otomasi Email & Pemesanan — `frontend/src/pages/OtomasiEmail.jsx`.
 - Frontend: halaman "Otomasi Email & Pemesanan" (shell + tab navigasi, koneksi Gmail mock, log email mock) — `frontend/src/pages/OtomasiEmail.jsx`, route `/otomasi-email`.

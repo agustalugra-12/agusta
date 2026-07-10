@@ -581,6 +581,11 @@ function SuccessView({ bookingId }) {
           >
             <Download className="w-4 h-4" /> Unduh Voucher (PDF)
           </button>
+          {isPaid && bk.email && (
+            <p data-testid="pb-voucher-email-status" className="print:hidden text-xs text-slate-500 bg-slate-50 border border-slate-200 rounded-md px-2.5 py-1.5 flex items-center justify-center gap-1.5">
+              <Mail className="w-3.5 h-3.5" /> Voucher & bukti booking ini juga akan otomatis terkirim ke <b>{bk.email}</b>
+            </p>
+          )}
           {bk.no_hp && (
             <a
               data-testid="pb-success-wa"
