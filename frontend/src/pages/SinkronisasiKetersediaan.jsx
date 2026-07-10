@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -38,9 +38,40 @@ function TabPlaceholder({ label }) {
   );
 }
 
+const CHECK_INTERVAL_MS = 10000;
+
+// Indikator "live": titik berdenyut + jam berjalan sejak pengecekan terakhir. Jam benar-benar
+// berjalan (setInterval per detik) supaya terasa real-time meski siklus cek di baliknya (dari
+// StatusSinkronisasi) masih data tiruan.
+function LiveIndicator({ lastChecked }) {
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    const t = setInterval(() => setTick((n) => n + 1), 1000);
+    return () => clearInterval(t);
+  }, []);
+  const detik = Math.max(0, Math.round((Date.now() - new Date(lastChecked).getTime()) / 1000));
+  return (
+    <span className="inline-flex items-center gap-1.5 text-xs text-slate-500" data-testid="live-indicator">
+      <span className="relative flex h-2 w-2">
+        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
+        <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500" />
+      </span>
+      Live &bull; dicek {detik}d lalu
+    </span>
+  );
+}
+
 function StatusSinkronisasi() {
   const [channels, setChannels] = useState(MOCK_CHANNELS);
   const [syncing, setSyncing] = useState(false);
+  const [lastChecked, setLastChecked] = useState(() => new Date().toISOString());
+
+  // Simulasi pemantauan berkala (polling) — mengikuti pola setInterval sederhana yang
+  // sudah dipakai Dashboard.jsx, belum WebSocket karena tidak ada infrastrukturnya di backend.
+  useEffect(() => {
+    const t = setInterval(() => setLastChecked(new Date().toISOString()), CHECK_INTERVAL_MS);
+    return () => clearInterval(t);
+  }, []);
 
   const bermasalah = channels.filter((c) => c.status !== "connected");
 
@@ -48,7 +79,9 @@ function StatusSinkronisasi() {
     setSyncing(true);
     // Mock: nanti diganti panggilan nyata ke Availability Engine backend.
     setTimeout(() => {
-      setChannels((cs) => cs.map((c) => ({ ...c, status: "connected", last_sync: new Date().toISOString() })));
+      const now = new Date().toISOString();
+      setChannels((cs) => cs.map((c) => ({ ...c, status: "connected", last_sync: now })));
+      setLastChecked(now);
       setSyncing(false);
       toast.success("Sinkronisasi manual selesai — semua saluran tersambung");
     }, 900);
@@ -58,13 +91,14 @@ function StatusSinkronisasi() {
     <div className="space-y-4">
       <Card className={bermasalah.length ? "border-amber-300 bg-amber-50" : "border-emerald-300 bg-emerald-50"}>
         <CardContent className="p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-          <div className="flex items-center gap-2">
-            {bermasalah.length ? <AlertTriangle className="w-5 h-5 text-amber-600" /> : <CheckCircle2 className="w-5 h-5 text-emerald-600" />}
+          <div className="flex items-center gap-2 flex-wrap">
+            {bermasalah.length ? <AlertTriangle className="w-5 h-5 text-amber-600 shrink-0" /> : <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0" />}
             <p className={`text-sm font-medium ${bermasalah.length ? "text-amber-800" : "text-emerald-800"}`}>
               {bermasalah.length
                 ? `${bermasalah.length} saluran bermasalah — stok bisa tidak akurat sampai disinkron ulang.`
                 : "Semua saluran tersinkron dengan Pelangi PMS."}
             </p>
+            <LiveIndicator lastChecked={lastChecked} />
           </div>
           <Button data-testid="paksa-sinkron" size="sm" onClick={paksaSinkron} disabled={syncing} className="gap-1.5 bg-blue-700 hover:bg-blue-800 shrink-0">
             <RefreshCw className={`w-3.5 h-3.5 ${syncing ? "animate-spin" : ""}`} /> {syncing ? "Menyinkronkan…" : "Paksa Sinkronisasi"}
@@ -80,7 +114,7 @@ function StatusSinkronisasi() {
             <Card key={c.id} className="border-slate-200" data-testid={`channel-card-${c.id}`}>
               <CardContent className="p-4 flex items-center justify-between gap-3">
                 <div className="flex items-center gap-3">
-                  <span className={`w-2 h-2 rounded-full ${meta.dot}`} />
+                  <span className={`w-2 h-2 rounded-full ${meta.dot} ${c.status === "connected" ? "animate-pulse" : ""}`} />
                   <div>
                     <div className="font-semibold">{c.nama}</div>
                     <div className="text-xs text-slate-500">{c.peran}</div>
