@@ -1,6 +1,29 @@
+import { useEffect, useState } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { BedDouble, Tag, ClipboardList, Bot, CheckCircle2, Clock } from "lucide-react";
 import { fmtDateTime } from "@/lib/apiClient";
+
+const CHECK_INTERVAL_MS = 10000;
+
+// Indikator "live" (sama pola dengan SinkronisasiKetersediaan.jsx): titik berdenyut +
+// jam berjalan sejak pengecekan terakhir, supaya dasbor terasa real-time.
+function LiveIndicator({ lastChecked }) {
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    const t = setInterval(() => setTick((n) => n + 1), 1000);
+    return () => clearInterval(t);
+  }, []);
+  const detik = Math.max(0, Math.round((Date.now() - new Date(lastChecked).getTime()) / 1000));
+  return (
+    <span className="inline-flex items-center gap-1.5 text-xs text-emerald-700" data-testid="data-flow-live-indicator">
+      <span className="relative flex h-2 w-2">
+        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
+        <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500" />
+      </span>
+      Live &bull; dicek {detik}d lalu
+    </span>
+  );
+}
 
 // Dasbor monitoring aliran data dari Pelangi PMS ke bot WhatsApp (feature "Sinkronisasi
 // Data PMS" di PRD, bagian dari "Pesan WhatsApp Otomatis"). Beda dengan halaman
@@ -24,6 +47,12 @@ const STATUS_META = {
 
 export default function SinkronisasiDataPMS() {
   const lastSyncAll = MOCK_DATA_FLOWS.reduce((max, f) => (f.last_sync > max ? f.last_sync : max), MOCK_DATA_FLOWS[0].last_sync);
+  const [lastChecked, setLastChecked] = useState(() => new Date().toISOString());
+
+  useEffect(() => {
+    const t = setInterval(() => setLastChecked(new Date().toISOString()), CHECK_INTERVAL_MS);
+    return () => clearInterval(t);
+  }, []);
 
   return (
     <div className="space-y-6" data-testid="sinkronisasi-data-pms-page">
@@ -36,11 +65,12 @@ export default function SinkronisasiDataPMS() {
       </div>
 
       <Card className="border-emerald-300 bg-emerald-50">
-        <CardContent className="p-4 flex items-center gap-3">
+        <CardContent className="p-4 flex flex-wrap items-center gap-3">
           <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0" />
           <p className="text-sm font-medium text-emerald-800">
             Semua data terbaru sudah mengalir ke bot &bull; sinkron terakhir {fmtDateTime(lastSyncAll)}
           </p>
+          <LiveIndicator lastChecked={lastChecked} />
         </CardContent>
       </Card>
 
