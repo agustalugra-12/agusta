@@ -4,9 +4,10 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
-import { Mail, Inbox, Wand2, FileWarning, CheckCircle2, Unlink, AlertTriangle, Plus, Pencil, Trash2 } from "lucide-react";
+import { Mail, Inbox, Wand2, FileWarning, CheckCircle2, Unlink, AlertTriangle, Plus, Pencil, Trash2, FlaskConical } from "lucide-react";
 import { fmtDateTime, fmtRp } from "@/lib/apiClient";
 
 // Field hasil ekstraksi yang bisa dipetakan — sinkron dengan bentuk `extracted_data`
@@ -272,6 +273,95 @@ function AturanRuleDialog({ open, onOpenChange, initial, onSave }) {
   );
 }
 
+// Uji aturan pemetaan dengan menempel contoh isi email — regex tiap aturan aktif untuk
+// sumber terpilih benar-benar dijalankan (bukan hasil acak) terhadap teks yang ditempel,
+// jadi staff bisa cek apakah pola yang dibuat memang akan menangkap data yang benar
+// sebelum aturan itu dipakai AI Email Parser sungguhan.
+function UjiAturan({ rules }) {
+  const [sumber, setSumber] = useState(SUMBER_OPTIONS[0]);
+  const [contohEmail, setContohEmail] = useState("");
+  const [hasil, setHasil] = useState(null);
+
+  const aturanAktif = rules.filter((r) => r.sumber === sumber && r.aktif);
+
+  const jalankanUji = () => {
+    const rows = aturanAktif.map((r) => {
+      let nilai = null;
+      let polaValid = true;
+      try {
+        const m = contohEmail.match(new RegExp(r.pola));
+        nilai = m ? (m[1] ?? m[0]) : null;
+      } catch {
+        polaValid = false;
+      }
+      return { ...r, nilai, polaValid };
+    });
+    setHasil(rows);
+    if (rows.length === 0) {
+      toast.error(`Tidak ada aturan aktif untuk sumber ${sumber}`);
+    } else {
+      const cocok = rows.filter((r) => r.nilai !== null).length;
+      toast.success(`Uji selesai: ${cocok}/${rows.length} field cocok`);
+    }
+  };
+
+  return (
+    <Card className="border-slate-200">
+      <CardContent className="p-4 space-y-3">
+        <div className="flex items-center gap-2 text-sm font-semibold text-slate-700">
+          <FlaskConical className="w-4 h-4" /> Uji Aturan dengan Contoh Email
+        </div>
+        <p className="text-xs text-slate-500 -mt-2">
+          Tempel isi email OTA yang sebenarnya di sini untuk mengecek apakah aturan di atas berhasil menangkap datanya.
+        </p>
+        <div className="grid sm:grid-cols-[160px_1fr] gap-3 items-start">
+          <div>
+            <Label>Sumber OTA</Label>
+            <select
+              data-testid="uji-aturan-sumber"
+              value={sumber}
+              onChange={(e) => { setSumber(e.target.value); setHasil(null); }}
+              className="w-full h-10 rounded-md border border-slate-300 px-3 bg-white mt-1.5"
+            >
+              {SUMBER_OPTIONS.map((s) => <option key={s} value={s}>{s}</option>)}
+            </select>
+          </div>
+          <div>
+            <Label>Contoh Isi Email</Label>
+            <Textarea
+              data-testid="uji-aturan-contoh"
+              value={contohEmail}
+              onChange={(e) => { setContohEmail(e.target.value); setHasil(null); }}
+              placeholder={"Tempel isi email di sini, mis:\nBooking ID: #AGD-88213\nGuest name: Ahmad Fauzi"}
+              className="mt-1.5 min-h-[100px] font-mono text-xs"
+            />
+          </div>
+        </div>
+        <Button data-testid="uji-aturan-jalankan" onClick={jalankanUji} className="gap-1.5 bg-blue-700 hover:bg-blue-800">
+          <FlaskConical className="w-3.5 h-3.5" /> Jalankan Uji
+        </Button>
+
+        {hasil && (
+          <div className="border border-slate-200 rounded-lg divide-y divide-slate-100 mt-2" data-testid="uji-aturan-hasil">
+            {hasil.map((r) => (
+              <div key={r.id} className="p-2.5 flex items-center justify-between text-sm gap-3">
+                <span className="text-slate-500">{fieldLabel(r.field)}</span>
+                {!r.polaValid ? (
+                  <span className="text-xs font-medium text-red-700 bg-red-100 px-2 py-1 rounded">Pola regex tidak valid</span>
+                ) : r.nilai !== null ? (
+                  <span className="text-xs font-medium text-emerald-700 bg-emerald-100 px-2 py-1 rounded font-mono">{r.nilai}</span>
+                ) : (
+                  <span className="text-xs font-medium text-amber-700 bg-amber-100 px-2 py-1 rounded">Tidak ditemukan</span>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
 function AturanPemetaanAI() {
   const [rules, setRules] = useState(MOCK_MAPPING_RULES);
   const [formOpen, setFormOpen] = useState(false);
@@ -303,6 +393,7 @@ function AturanPemetaanAI() {
   };
 
   return (
+    <div className="space-y-4">
     <Card className="border-slate-200">
       <CardContent className="p-0">
         <div className="p-4 flex items-center justify-between border-b border-slate-100">
@@ -358,6 +449,8 @@ function AturanPemetaanAI() {
       </CardContent>
       <AturanRuleDialog open={formOpen} onOpenChange={setFormOpen} initial={editing} onSave={saveRule} />
     </Card>
+    <UjiAturan rules={rules} />
+    </div>
   );
 }
 
