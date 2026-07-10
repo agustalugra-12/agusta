@@ -5,6 +5,7 @@ import { AuthProvider, useAuth } from "@/context/AuthContext";
 import Login from "@/pages/Login";
 import Layout from "@/components/Layout";
 import Dashboard from "@/pages/Dashboard";
+import Ketersediaan from "@/pages/Ketersediaan";
 import Rooms from "@/pages/Rooms";
 import CheckIn from "@/pages/CheckIn";
 import CheckOut from "@/pages/CheckOut";
@@ -18,6 +19,7 @@ import Service from "@/pages/Service";
 import Pengguna from "@/pages/Pengguna";
 import Audit from "@/pages/Audit";
 import Bookings from "@/pages/Bookings";
+import DaftarReservasi from "@/pages/DaftarReservasi";
 import PublicBook from "@/pages/PublicBook";
 import "@/App.css";
 
@@ -38,6 +40,7 @@ function AppRoutes() {
       <Route path="/book/sukses/:bookingId" element={<PublicBook successView />} />
       <Route element={<Protected><Layout /></Protected>}>
         <Route path="/" element={<Dashboard />} />
+        <Route path="/ketersediaan" element={<Ketersediaan />} />
         <Route path="/rooms" element={<Rooms />} />
         <Route path="/checkin/:roomId" element={<CheckIn />} />
         <Route path="/checkout/:checkinId" element={<CheckOut />} />
@@ -51,6 +54,7 @@ function AppRoutes() {
         <Route path="/pengguna" element={<Protected ownerOnly><Pengguna /></Protected>} />
         <Route path="/audit" element={<Audit />} />
         <Route path="/bookings" element={<Bookings />} />
+        <Route path="/reservasi" element={<DaftarReservasi />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
