@@ -2,10 +2,37 @@ import { useState } from "react";
 import { toast } from "sonner";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { Label } from "@/components/ui/label";
+import { Input } from "@/components/ui/input";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Mail, Inbox, Wand2, FileWarning, CheckCircle2, Unlink, AlertTriangle } from "lucide-react";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
+import { Mail, Inbox, Wand2, FileWarning, CheckCircle2, Unlink, AlertTriangle, Plus, Pencil, Trash2 } from "lucide-react";
 import { fmtDateTime, fmtRp } from "@/lib/apiClient";
+
+// Field hasil ekstraksi yang bisa dipetakan — sinkron dengan bentuk `extracted_data`
+// di tab Log Email Masuk (lihat MOCK_EMAIL_LOGS di bawah).
+const FIELD_OPTIONS = [
+  { value: "no_reservasi", label: "Nomor Reservasi" },
+  { value: "nama_tamu", label: "Nama Tamu" },
+  { value: "tipe_kamar", label: "Tipe Kamar" },
+  { value: "check_in", label: "Tanggal Check-in" },
+  { value: "check_out", label: "Tanggal Check-out" },
+  { value: "harga", label: "Harga" },
+  { value: "status_pembayaran", label: "Status Pembayaran" },
+];
+const fieldLabel = (v) => FIELD_OPTIONS.find((f) => f.value === v)?.label || v;
+
+const SUMBER_OPTIONS = ["Agoda", "Traveloka", "Booking.com", "Lainnya"];
+
+// Data tiruan (stub) — aturan yang menentukan bagaimana AI Email Parser menemukan tiap
+// field di badan email tiap sumber OTA (mis. pola regex/kata kunci penanda).
+const MOCK_MAPPING_RULES = [
+  { id: "1", sumber: "Agoda", field: "no_reservasi", pola: "Booking ID: #AGD-\\d+", aktif: true },
+  { id: "2", sumber: "Agoda", field: "nama_tamu", pola: "Guest name: (.+)", aktif: true },
+  { id: "3", sumber: "Traveloka", field: "no_reservasi", pola: "Booking Code: (BKN-\\d+)", aktif: true },
+  { id: "4", sumber: "Traveloka", field: "harga", pola: "Total Payment: Rp ([\\d.,]+)", aktif: true },
+  { id: "5", sumber: "Booking.com", field: "no_reservasi", pola: "Reservation number (\\d+)", aktif: false },
+];
 
 // Data tiruan (stub) — log email OTA yang sudah diproses AI Email Parser. `extracted_data`
 // mengikuti entitas EMAIL_LOGS di PRD (JSON hasil ekstraksi AI); kosong untuk email yang
@@ -183,6 +210,157 @@ function LogEmailDetailDialog({ log, onClose }) {
   );
 }
 
+const emptyRuleForm = { sumber: SUMBER_OPTIONS[0], field: FIELD_OPTIONS[0].value, pola: "" };
+
+function AturanRuleDialog({ open, onOpenChange, initial, onSave }) {
+  const [form, setForm] = useState(initial || emptyRuleForm);
+
+  return (
+    <Dialog open={open} onOpenChange={(o) => { onOpenChange(o); if (o) setForm(initial || emptyRuleForm); }}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle data-testid="mapping-rule-form-title">{initial ? "Ubah Aturan" : "Tambah Aturan"}</DialogTitle>
+        </DialogHeader>
+        <div className="space-y-3 text-sm">
+          <div>
+            <Label>Sumber OTA</Label>
+            <select
+              data-testid="mapping-rule-sumber"
+              value={form.sumber}
+              onChange={(e) => setForm((f) => ({ ...f, sumber: e.target.value }))}
+              className="w-full h-10 rounded-md border border-slate-300 px-3 bg-white mt-1.5"
+            >
+              {SUMBER_OPTIONS.map((s) => <option key={s} value={s}>{s}</option>)}
+            </select>
+          </div>
+          <div>
+            <Label>Field yang Diekstrak</Label>
+            <select
+              data-testid="mapping-rule-field"
+              value={form.field}
+              onChange={(e) => setForm((f) => ({ ...f, field: e.target.value }))}
+              className="w-full h-10 rounded-md border border-slate-300 px-3 bg-white mt-1.5"
+            >
+              {FIELD_OPTIONS.map((f) => <option key={f.value} value={f.value}>{f.label}</option>)}
+            </select>
+          </div>
+          <div>
+            <Label>Pola / Kata Kunci Penanda</Label>
+            <Input
+              data-testid="mapping-rule-pola"
+              value={form.pola}
+              onChange={(e) => setForm((f) => ({ ...f, pola: e.target.value }))}
+              placeholder="Mis: Booking ID: #AGD-\d+"
+              className="mt-1.5 font-mono text-sm"
+            />
+            <p className="text-xs text-slate-400 mt-1">Teks/pola penanda yang dipakai AI untuk menemukan nilai field ini di badan email.</p>
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="ghost" onClick={() => onOpenChange(false)}>Batal</Button>
+          <Button
+            data-testid="mapping-rule-save"
+            className="bg-blue-700 hover:bg-blue-800"
+            disabled={!form.pola.trim()}
+            onClick={() => { onSave(form); onOpenChange(false); }}
+          >
+            Simpan
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function AturanPemetaanAI() {
+  const [rules, setRules] = useState(MOCK_MAPPING_RULES);
+  const [formOpen, setFormOpen] = useState(false);
+  const [editing, setEditing] = useState(null); // rule yang sedang diubah, null = tambah baru
+
+  const openAdd = () => { setEditing(null); setFormOpen(true); };
+  const openEdit = (rule) => { setEditing(rule); setFormOpen(true); };
+
+  const saveRule = (form) => {
+    if (editing) {
+      setRules((rs) => rs.map((r) => (r.id === editing.id ? { ...editing, ...form } : r)));
+      toast.success(`Aturan ${fieldLabel(form.field)} (${form.sumber}) diperbarui`);
+    } else {
+      const newRule = { id: crypto.randomUUID(), aktif: true, ...form };
+      setRules((rs) => [...rs, newRule]);
+      toast.success(`Aturan baru untuk ${form.sumber} ditambahkan`);
+    }
+  };
+
+  const toggleAktif = (rule) => {
+    setRules((rs) => rs.map((r) => (r.id === rule.id ? { ...r, aktif: !r.aktif } : r)));
+    toast.success(`Aturan ${fieldLabel(rule.field)} (${rule.sumber}) ${rule.aktif ? "dinonaktifkan" : "diaktifkan"}`);
+  };
+
+  const deleteRule = (rule) => {
+    if (!window.confirm(`Hapus aturan "${fieldLabel(rule.field)}" untuk sumber ${rule.sumber}?`)) return;
+    setRules((rs) => rs.filter((r) => r.id !== rule.id));
+    toast.success("Aturan dihapus");
+  };
+
+  return (
+    <Card className="border-slate-200">
+      <CardContent className="p-0">
+        <div className="p-4 flex items-center justify-between border-b border-slate-100">
+          <p className="text-sm text-slate-500">Atur pola/kata kunci yang dipakai AI untuk menemukan tiap data di email OTA.</p>
+          <Button data-testid="mapping-rule-add" size="sm" onClick={openAdd} className="gap-1.5 bg-blue-700 hover:bg-blue-800 shrink-0">
+            <Plus className="w-3.5 h-3.5" /> Tambah Aturan
+          </Button>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm" data-testid="mapping-rules-table">
+            <thead className="bg-slate-50 text-slate-600 text-xs uppercase tracking-wider">
+              <tr>
+                <th className="text-left p-3">Sumber OTA</th>
+                <th className="text-left p-3">Field</th>
+                <th className="text-left p-3">Pola / Kata Kunci</th>
+                <th className="text-left p-3">Status</th>
+                <th className="text-right p-3">Aksi</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rules.map((r) => (
+                <tr key={r.id} data-testid={`mapping-rule-row-${r.id}`} className="border-t border-slate-100">
+                  <td className="p-3 font-medium">{r.sumber}</td>
+                  <td className="p-3">{fieldLabel(r.field)}</td>
+                  <td className="p-3 font-mono text-xs text-slate-500">{r.pola}</td>
+                  <td className="p-3">
+                    <button
+                      data-testid={`mapping-rule-toggle-${r.id}`}
+                      onClick={() => toggleAktif(r)}
+                      className={`inline-flex px-2 py-1 rounded-md text-xs font-medium ${r.aktif ? "bg-emerald-100 text-emerald-800" : "bg-slate-200 text-slate-600"}`}
+                    >
+                      {r.aktif ? "Aktif" : "Nonaktif"}
+                    </button>
+                  </td>
+                  <td className="p-3">
+                    <div className="flex justify-end gap-1">
+                      <Button data-testid={`mapping-rule-edit-${r.id}`} variant="ghost" size="icon" onClick={() => openEdit(r)}>
+                        <Pencil className="w-3.5 h-3.5" />
+                      </Button>
+                      <Button data-testid={`mapping-rule-delete-${r.id}`} variant="ghost" size="icon" onClick={() => deleteRule(r)} className="text-red-600 hover:bg-red-50">
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </Button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+              {rules.length === 0 && (
+                <tr><td colSpan={5} className="p-6 text-center text-slate-500">Belum ada aturan pemetaan</td></tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </CardContent>
+      <AturanRuleDialog open={formOpen} onOpenChange={setFormOpen} initial={editing} onSave={saveRule} />
+    </Card>
+  );
+}
+
 function LogEmail() {
   const [selected, setSelected] = useState(null);
   return (
@@ -255,7 +433,10 @@ export default function OtomasiEmail() {
         <TabsContent value="log" className="mt-4">
           <LogEmail />
         </TabsContent>
-        {TABS.filter((t) => !["koneksi", "log"].includes(t.value)).map((t) => (
+        <TabsContent value="aturan" className="mt-4">
+          <AturanPemetaanAI />
+        </TabsContent>
+        {TABS.filter((t) => !["koneksi", "log", "aturan"].includes(t.value)).map((t) => (
           <TabsContent key={t.value} value={t.value} className="mt-4">
             <TabPlaceholder label={t.label} />
           </TabsContent>
