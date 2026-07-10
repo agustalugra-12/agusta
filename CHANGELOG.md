@@ -52,6 +52,7 @@ Format longgar mengikuti [Keep a Changelog](https://keepachangelog.com/).
 - Frontend: form demo "Reservasi Day Use" (tanggal/jam check-in, tipe kamar, jumlah tamu, tarif flat + biaya layanan 3% seperti perhitungan nyata) di halaman Jenis Reservasi, muncul saat tipe Day Use dipilih — `frontend/src/pages/JenisReservasi.jsx`.
 - Frontend: notifikasi ketentuan Day Use (durasi 6 jam standar + biaya overtime Rp20.000/jam, sama seperti `calc_tagihan` nyata di backend) di form demo Day Use — `frontend/src/pages/JenisReservasi.jsx`.
 - Frontend: validasi input (tanggal tidak boleh lampau, jumlah tamu minimal 1) di kedua form demo Jenis Reservasi — `frontend/src/pages/JenisReservasi.jsx`.
+- Frontend: halaman admin baru "Log Pengiriman Voucher" — riwayat pengiriman voucher/bukti booking otomatis (email/WhatsApp), cari/filter status, data tiruan — `frontend/src/pages/PengirimanVoucherOtomatis.jsx`, route `/pengiriman-voucher`.
 
 ### Fixed
 - **Halaman voucher booking (nyata)** — tanggal/jam Check-Out tidak pernah ditampilkan padahal API sudah mengembalikan `jam_selesai`. Ditambahkan baris Check-Out di `PublicBook.jsx`.

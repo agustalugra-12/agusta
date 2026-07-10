@@ -88,5 +88,9 @@ daftar ini ringkasan untuk manusia, bisa sedikit basi — cek CLI kalau ragu.
 - [ ] Sisa task fitur ini (cek `task next`)
 - [ ] **Backend (perlu keputusan bisnis kalau mau full self-service):** endpoint pembatalan mandiri sungguhan (bukan cuma "ajukan permintaan") — perlu tentukan siapa yang approve, apakah otomatis refund, dst.
 
+### Pengiriman Voucher Otomatis
+- [x] Halaman admin log pengiriman voucher (mock)
+- [ ] Sisa task fitur ini (cek `task next`)
+
 ## Fase 3
 - [ ] Belum dibaca detail PRD-nya — cek `plan get` saat fase 2 selesai.

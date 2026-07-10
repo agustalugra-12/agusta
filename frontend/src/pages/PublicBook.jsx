@@ -11,7 +11,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "
 import { bookingConfirmationWaLink } from "@/lib/apiClient";
 import {
   BedDouble, Wifi, Snowflake, Tv, Droplets, Bath, Trees, CheckCircle2, XCircle,
-  Calendar, Clock, User, Phone, IdCard, Car, Users as UsersIcon, Building2, ArrowRight, Mail, Ban,
+  Calendar, Clock, User, Phone, IdCard, Car, Users as UsersIcon, Building2, ArrowRight, Mail, Ban, Download,
 } from "lucide-react";
 
 // API client tanpa auth (untuk endpoint /api/public/*)
@@ -492,8 +492,8 @@ function SuccessView({ bookingId }) {
   const isFailed = bk.status === "cancelled" && (bk.payment_status === "expired" || bk.payment_status === "failed");
   const isPending = !isFailed && (bk.payment_status === "pending" || bk.status === "booking_pending");
   return (
-    <div className={`min-h-screen grid place-items-center p-4 bg-gradient-to-b ${isPaid ? "from-emerald-50 via-white to-blue-50" : isFailed ? "from-red-50 via-white to-blue-50" : "from-amber-50 via-white to-blue-50"}`}>
-      <Card className={`max-w-md w-full ${isPaid ? "border-emerald-200" : isFailed ? "border-red-200" : "border-amber-200"}`}>
+    <div className={`min-h-screen grid place-items-center p-4 bg-gradient-to-b print:bg-white print:block print:p-0 ${isPaid ? "from-emerald-50 via-white to-blue-50" : isFailed ? "from-red-50 via-white to-blue-50" : "from-amber-50 via-white to-blue-50"}`}>
+      <Card className={`max-w-md w-full print:max-w-none print:shadow-none print:border-0 ${isPaid ? "border-emerald-200" : isFailed ? "border-red-200" : "border-amber-200"}`}>
         <CardContent className="p-6 sm:p-8 text-center space-y-4">
           <div className={`w-16 h-16 mx-auto rounded-full grid place-items-center ${isPaid ? "bg-emerald-100" : isFailed ? "bg-red-100" : "bg-amber-100"}`}>
             {isFailed ? <XCircle className="w-9 h-9 text-red-600" /> : <CheckCircle2 className={`w-9 h-9 ${isPaid ? "text-emerald-600" : "text-amber-600"}`} />}
@@ -564,7 +564,7 @@ function SuccessView({ bookingId }) {
                 data-testid="pb-wa-konfirmasi-manual"
                 href={`https://wa.me/${bk.no_hp.replace(/^0/, "62").replace(/\D/g, "")}?text=${encodeURIComponent(`Halo, saya sudah transfer untuk booking *${bk.kode}* sebesar Rp ${(bk.dp_min || bk.total).toLocaleString("id-ID")}. Mohon verifikasi pembayaran saya. Terima kasih.`)}`}
                 target="_blank" rel="noreferrer"
-                className="block w-full text-center px-3 h-10 leading-10 rounded-md bg-blue-700 hover:bg-blue-800 text-white text-xs font-bold"
+                className="block w-full text-center px-3 h-10 leading-10 rounded-md bg-blue-700 hover:bg-blue-800 text-white text-xs font-bold print:hidden"
               >
                 Saya Sudah Transfer — Minta Verifikasi via WhatsApp
               </a>
@@ -573,12 +573,20 @@ function SuccessView({ bookingId }) {
           {isPaid && (
             <p className="text-xs text-slate-500">Mohon tunjukkan nomor booking saat kedatangan.</p>
           )}
+          <button
+            type="button"
+            data-testid="pb-unduh-voucher"
+            onClick={() => window.print()}
+            className="print:hidden inline-flex items-center justify-center gap-2 w-full px-4 h-10 rounded-md border border-slate-300 text-slate-700 hover:bg-slate-50 text-sm font-medium"
+          >
+            <Download className="w-4 h-4" /> Unduh Voucher (PDF)
+          </button>
           {bk.no_hp && (
             <a
               data-testid="pb-success-wa"
               href={bookingConfirmationWaLink(bk)}
               target="_blank" rel="noreferrer"
-              className="inline-flex items-center justify-center gap-2 w-full px-4 h-11 rounded-md bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-bold"
+              className="print:hidden inline-flex items-center justify-center gap-2 w-full px-4 h-11 rounded-md bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-bold"
             >
               <CheckCircle2 className="w-4 h-4" /> Konfirmasi via WhatsApp
             </a>
@@ -588,12 +596,12 @@ function SuccessView({ bookingId }) {
               type="button"
               data-testid="pb-batalkan-pesanan"
               onClick={() => setCancelOpen(true)}
-              className="inline-flex items-center justify-center gap-2 w-full px-4 h-10 rounded-md border border-red-300 text-red-600 hover:bg-red-50 text-sm font-medium"
+              className="print:hidden inline-flex items-center justify-center gap-2 w-full px-4 h-10 rounded-md border border-red-300 text-red-600 hover:bg-red-50 text-sm font-medium"
             >
               <Ban className="w-4 h-4" /> Batalkan Pesanan
             </button>
           )}
-          <Link to="/book" className="block text-sm text-blue-700 hover:underline">Buat booking lain</Link>
+          <Link to="/book" className="print:hidden block text-sm text-blue-700 hover:underline">Buat booking lain</Link>
         </CardContent>
       </Card>
       <BatalkanPesananDialog bk={bk} open={cancelOpen} onOpenChange={setCancelOpen} />
