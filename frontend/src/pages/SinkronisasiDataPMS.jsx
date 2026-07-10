@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
+import { Link } from "react-router-dom";
 import { Card, CardContent } from "@/components/ui/card";
-import { BedDouble, Tag, ClipboardList, Bot, CheckCircle2, Clock, AlertTriangle, CheckCircle, XCircle } from "lucide-react";
+import { BedDouble, Tag, ClipboardList, Bot, CheckCircle2, Clock, AlertTriangle, CheckCircle, XCircle, ExternalLink } from "lucide-react";
 import { fmtDateTime } from "@/lib/apiClient";
 
 const CHECK_INTERVAL_MS = 10000;
@@ -52,6 +53,15 @@ const STATUS_META = {
 const MOCK_AVAILABILITY_COMPARISON = [
   { tipe: "Standard", bot: 7, pms: 7 },
   { tipe: "Cottage", bot: 2, pms: 3 },
+];
+
+// Data tiruan (stub) — reservasi Pelangi PMS yang jadi rujukan/sumber data yang barusan
+// disinkron ke bot WhatsApp bot (mis. reservasi baru hasil AI Email Parser yang bot pakai
+// untuk menjawab "sudah dikonfirmasi ya?" dari tamu).
+const MOCK_PMS_REFERENCES = [
+  { id: "1", kode: "RSV-1043", nama_tamu: "Ahmad Fauzi", room_tipe: "Standard", status: "Confirmed" },
+  { id: "2", kode: "RSV-1042", nama_tamu: "Dewi Anggraini", room_tipe: "Cottage", status: "Confirmed" },
+  { id: "3", kode: "RSV-1041", nama_tamu: "Budi Santoso", room_tipe: "Standard", status: "Pending" },
 ];
 
 // Data tiruan (stub) — riwayat gangguan sinkronisasi data ke bot WhatsApp.
@@ -136,6 +146,28 @@ export default function SinkronisasiDataPMS() {
                 </div>
               );
             })}
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card className="border-slate-200">
+        <CardContent className="p-0">
+          <div className="p-4 border-b border-slate-100 flex items-center justify-between">
+            <h3 className="text-sm font-semibold text-slate-700">Referensi Reservasi PMS</h3>
+            <Link to="/reservasi" data-testid="referensi-lihat-semua" className="text-xs text-blue-700 hover:underline flex items-center gap-1">
+              Lihat Daftar Reservasi <ExternalLink className="w-3 h-3" />
+            </Link>
+          </div>
+          <div className="divide-y divide-slate-100" data-testid="pms-reference-list">
+            {MOCK_PMS_REFERENCES.map((r) => (
+              <div key={r.id} className="p-3 flex items-center justify-between gap-3" data-testid={`pms-reference-${r.id}`}>
+                <div>
+                  <span className="font-semibold text-sm">{r.kode}</span>
+                  <span className="text-sm text-slate-500"> — {r.nama_tamu} ({r.room_tipe})</span>
+                </div>
+                <span className={`text-xs font-medium px-2 py-1 rounded-md ${r.status === "Confirmed" ? "bg-emerald-100 text-emerald-800" : "bg-amber-100 text-amber-800"}`}>{r.status}</span>
+              </div>
+            ))}
           </div>
         </CardContent>
       </Card>

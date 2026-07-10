@@ -5,7 +5,8 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
-import { ArrowRight, Search, X, Pencil, Trash2, Plus } from "lucide-react";
+import { ArrowRight, Search, X, Pencil, Trash2, Plus, Download, Loader2, CheckCircle2, Wand2 } from "lucide-react";
+import { fmtDateTime } from "@/lib/apiClient";
 
 const SUMBER_BADGE = {
   Agoda: "bg-violet-100 text-violet-800",
@@ -32,14 +33,21 @@ const MOCK_MAPPINGS = [
 
 const emptyMappingForm = { ota_nama: "", pms_tipe: ROOM_TYPE_OPTIONS[0], sumber: SUMBER_FORM_OPTIONS[0] };
 
-function MappingFormDialog({ open, onOpenChange, initial, onSave }) {
-  const [form, setForm] = useState(initial || emptyMappingForm);
+// Data tiruan (stub) — nama tipe kamar yang terdeteksi AI Email Parser dari email OTA
+// tapi belum ada pemetaannya ke tipe kamar PMS, jadi butuh perhatian staff.
+const MOCK_UNMAPPED = [
+  { id: "u1", ota_nama: "Executive Suite", sumber: "Agoda", jumlah_kemunculan: 2 },
+  { id: "u2", ota_nama: "Twin Bed Non-Smoking", sumber: "Booking.com", jumlah_kemunculan: 1 },
+];
+
+function MappingFormDialog({ open, onOpenChange, prefill, isEdit, onSave }) {
+  const [form, setForm] = useState(prefill || emptyMappingForm);
 
   return (
-    <Dialog open={open} onOpenChange={(o) => { onOpenChange(o); if (o) setForm(initial || emptyMappingForm); }}>
+    <Dialog open={open} onOpenChange={(o) => { onOpenChange(o); if (o) setForm(prefill || emptyMappingForm); }}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle data-testid="pemetaan-form-title">{initial ? "Ubah Pemetaan" : "Tambah Pemetaan"}</DialogTitle>
+          <DialogTitle data-testid="pemetaan-form-title">{isEdit ? "Ubah Pemetaan" : "Tambah Pemetaan"}</DialogTitle>
         </DialogHeader>
         <div className="space-y-3 text-sm">
           <div>
@@ -96,8 +104,11 @@ export default function PemetaanTipeKamar() {
   const [search, setSearch] = useState("");
   const [pmsTipe, setPmsTipe] = useState("Semua");
   const [sumber, setSumber] = useState("Semua");
+  const [unmapped, setUnmapped] = useState(MOCK_UNMAPPED);
   const [formOpen, setFormOpen] = useState(false);
-  const [editing, setEditing] = useState(null); // mapping yang diubah, null = tambah baru
+  const [editingId, setEditingId] = useState(null); // id mapping yang diubah, null = tambah baru
+  const [formPrefill, setFormPrefill] = useState(emptyMappingForm);
+  const [resolvingUnmappedId, setResolvingUnmappedId] = useState(null);
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -109,17 +120,26 @@ export default function PemetaanTipeKamar() {
     });
   }, [mappings, search, pmsTipe, sumber]);
 
-  const openAdd = () => { setEditing(null); setFormOpen(true); };
-  const openEdit = (m) => { setEditing(m); setFormOpen(true); };
+  const openAdd = () => { setEditingId(null); setFormPrefill(emptyMappingForm); setResolvingUnmappedId(null); setFormOpen(true); };
+  const openEdit = (m) => { setEditingId(m.id); setFormPrefill(m); setResolvingUnmappedId(null); setFormOpen(true); };
+  const openPetakan = (u) => {
+    setEditingId(null);
+    setFormPrefill({ ota_nama: u.ota_nama, sumber: u.sumber, pms_tipe: ROOM_TYPE_OPTIONS[0] });
+    setResolvingUnmappedId(u.id);
+    setFormOpen(true);
+  };
 
   const saveMapping = (form) => {
-    if (editing) {
-      setMappings((ms) => ms.map((m) => (m.id === editing.id ? { ...editing, ...form } : m)));
+    if (editingId) {
+      setMappings((ms) => ms.map((m) => (m.id === editingId ? { ...m, ...form } : m)));
       toast.success(`Pemetaan "${form.ota_nama}" diperbarui`);
     } else {
       const newMapping = { id: crypto.randomUUID(), ...form };
       setMappings((ms) => [...ms, newMapping]);
       toast.success(`Pemetaan "${form.ota_nama}" ditambahkan`);
+      if (resolvingUnmappedId) {
+        setUnmapped((us) => us.filter((u) => u.id !== resolvingUnmappedId));
+      }
     }
   };
 
@@ -132,6 +152,19 @@ export default function PemetaanTipeKamar() {
   const resetFilters = () => { setSearch(""); setPmsTipe("Semua"); setSumber("Semua"); };
   const hasActiveFilter = search || pmsTipe !== "Semua" || sumber !== "Semua";
 
+  const [importing, setImporting] = useState(false);
+  const [importResult, setImportResult] = useState(null);
+
+  const imporDariPMS = () => {
+    setImporting(true);
+    // Mock: nanti diganti panggilan nyata ke GET /api/rooms untuk ambil tipe kamar aktual.
+    setTimeout(() => {
+      setImportResult({ tipe: ROOM_TYPE_OPTIONS, waktu: new Date().toISOString() });
+      setImporting(false);
+      toast.success(`${ROOM_TYPE_OPTIONS.length} tipe kamar berhasil diimpor dari Pelangi PMS`);
+    }, 900);
+  };
+
   return (
     <div className="space-y-6" data-testid="pemetaan-tipe-kamar-page">
       <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-3">
@@ -142,10 +175,24 @@ export default function PemetaanTipeKamar() {
             Samakan nama tipe kamar di tiap OTA dengan tipe kamar yang dipakai Pelangi PMS.
           </p>
         </div>
-        <Button data-testid="pemetaan-tambah" onClick={openAdd} className="gap-1.5 bg-blue-700 hover:bg-blue-800 shrink-0">
-          <Plus className="w-3.5 h-3.5" /> Tambah Pemetaan
-        </Button>
+        <div className="flex gap-2 shrink-0">
+          <Button data-testid="pemetaan-impor-pms" variant="outline" onClick={imporDariPMS} disabled={importing} className="gap-1.5">
+            {importing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-3.5 h-3.5" />} {importing ? "Mengimpor…" : "Impor dari PMS"}
+          </Button>
+          <Button data-testid="pemetaan-tambah" onClick={openAdd} className="gap-1.5 bg-blue-700 hover:bg-blue-800">
+            <Plus className="w-3.5 h-3.5" /> Tambah Pemetaan
+          </Button>
+        </div>
       </div>
+
+      {importResult && (
+        <Card className="border-emerald-300 bg-emerald-50" data-testid="pemetaan-import-result">
+          <CardContent className="p-3 flex items-center gap-2 text-sm text-emerald-800">
+            <CheckCircle2 className="w-4 h-4 shrink-0" />
+            Tipe kamar Pelangi PMS saat ini: <b>{importResult.tipe.join(", ")}</b> &bull; diimpor {fmtDateTime(importResult.waktu)}
+          </CardContent>
+        </Card>
+      )}
 
       <Card className="border-slate-200">
         <CardContent className="p-4 flex flex-wrap items-end gap-3">
@@ -235,8 +282,31 @@ export default function PemetaanTipeKamar() {
           </table>
         </CardContent>
       </Card>
+      {unmapped.length > 0 && (
+        <Card className="border-amber-300 bg-amber-50">
+          <CardContent className="p-4 space-y-3">
+            <h3 className="text-sm font-semibold text-amber-900">Tipe Kamar OTA Belum Dipetakan</h3>
+            <p className="text-xs text-amber-800 -mt-2">Terdeteksi AI Email Parser dari email OTA masuk, tapi belum ada pemetaannya ke tipe kamar PMS.</p>
+            <div className="space-y-2" data-testid="unmapped-list">
+              {unmapped.map((u) => (
+                <div key={u.id} className="bg-white border border-amber-200 rounded-lg p-3 flex items-center justify-between gap-3" data-testid={`unmapped-item-${u.id}`}>
+                  <div>
+                    <span className="font-medium text-sm">{u.ota_nama}</span>
+                    <span className={`ml-2 inline-flex px-2 py-0.5 rounded-md text-xs font-medium ${SUMBER_BADGE[u.sumber] || "bg-slate-100 text-slate-600"}`}>{u.sumber}</span>
+                    <span className="ml-2 text-xs text-slate-400">muncul {u.jumlah_kemunculan}x</span>
+                  </div>
+                  <Button data-testid={`unmapped-petakan-${u.id}`} size="sm" onClick={() => openPetakan(u)} className="gap-1.5 bg-amber-600 hover:bg-amber-700 shrink-0">
+                    <Wand2 className="w-3.5 h-3.5" /> Petakan
+                  </Button>
+                </div>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
       <p className="text-[11px] text-slate-400">Data tiruan — belum tersambung ke pemetaan sungguhan.</p>
-      <MappingFormDialog open={formOpen} onOpenChange={setFormOpen} initial={editing} onSave={saveMapping} />
+      <MappingFormDialog open={formOpen} onOpenChange={setFormOpen} prefill={formPrefill} isEdit={!!editingId} onSave={saveMapping} />
     </div>
   );
 }

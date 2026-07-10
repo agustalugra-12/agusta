@@ -50,14 +50,15 @@ daftar ini ringkasan untuk manusia, bisa sedikit basi — cek CLI kalau ragu.
 - [x] Filter cari/tipe kamar PMS/sumber OTA
 - [x] Tombol ubah/hapus + modal konfirmasi
 - [x] Form tambah pemetaan baru (dialog dipakai bersama tambah/ubah)
-- [ ] Sisa task halaman ini (impor tipe kamar PMS, dll — cek `task next`)
+- [x] Tombol Impor dari PMS (simulasi loading + notifikasi)
+- [x] Panel Tipe Kamar OTA Belum Dipetakan + tombol Petakan (pre-fill form)
 
 ### Sinkronisasi Data PMS -> WhatsApp Bot
 - [x] Halaman Dashboard Sinkronisasi (mock)
 - [x] Indikator status sinkronisasi (live)
 - [x] Tabel Log Peringatan Gangguan (mock)
 - [x] Panel Ketersediaan Kamar Bot vs PMS (mock)
-- [ ] Sisa task halaman ini (cek `task next`)
+- [x] Panel Referensi Reservasi PMS (mock)
 
 ### Kebijakan Pembatalan Mandiri
 - [x] Tombol "Batalkan Pesanan" di PublicBook.jsx (nyata, bukan mock) — hitung kebijakan/biaya real, aksi = ajukan permintaan (bukan instan)

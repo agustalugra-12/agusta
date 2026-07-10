@@ -37,6 +37,9 @@ Format longgar mengikuti [Keep a Changelog](https://keepachangelog.com/).
 - Frontend: tombol ubah/hapus (dengan modal edit & konfirmasi hapus) di tiap baris Pemetaan Tipe Kamar — `frontend/src/pages/PemetaanTipeKamar.jsx`.
 - Frontend: tombol "Tambah Pemetaan" di halaman Pemetaan Tipe Kamar (dialog form dipakai bersama untuk tambah & ubah) — `frontend/src/pages/PemetaanTipeKamar.jsx`.
 - Frontend: panel "Ketersediaan Kamar: Bot vs PMS" di halaman Sinkronisasi Data PMS — bandingkan jumlah kamar tersedia yang dilihat bot vs data PMS sungguhan per tipe kamar, tandai jika tidak cocok (drift) — `frontend/src/pages/SinkronisasiDataPMS.jsx`.
+- Frontend: panel "Referensi Reservasi PMS" di halaman Sinkronisasi Data PMS — daftar reservasi yang jadi rujukan data yang disinkron ke bot + tautan ke Daftar Reservasi — `frontend/src/pages/SinkronisasiDataPMS.jsx`.
+- Frontend: tombol "Impor dari PMS" (simulasi loading + notifikasi) di halaman Pemetaan Tipe Kamar — `frontend/src/pages/PemetaanTipeKamar.jsx`.
+- Frontend: panel "Tipe Kamar OTA Belum Dipetakan" di halaman Pemetaan Tipe Kamar — tombol "Petakan" per item membuka form tambah pemetaan pre-filled (nama OTA + sumber) — `frontend/src/pages/PemetaanTipeKamar.jsx`.
 
 ### Fixed
 - **Kebijakan pembatalan H-3/H-1 (nyata, bukan mock)** — sebelumnya pesan konfirmasi WA & dialog batalkan pesanan selalu bilang H-1 untuk semua booking. Sesuai klarifikasi bisnis: menginap = bebas biaya sampai H-3, day use = H-1. Diperbaiki di `apiClient.js` (buildBookingConfirmationMessage, dipakai Dashboard/Bookings/PublicBook) dan `PublicBook.jsx` (dialog Batalkan Pesanan + timer mundur, dibuat tipe-aware).
