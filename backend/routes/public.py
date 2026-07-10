@@ -1,5 +1,5 @@
 from core import *
-from reservation_service import check_room_available
+from reservation_service import check_room_available, create_reservation
 
 @api.get("/public/rooms-catalog")
 async def public_rooms_catalog():
@@ -69,11 +69,6 @@ async def public_create_booking(body: PublicBookingCreate):
     Tarif = tarif kamar + 3% service fee. Wajib bayar (DP 50% min) via Xendit (Fase C).
     Sementara Xendit belum ada, booking tetap berstatus pending sampai resepsionis approve.
     """
-    r = await db.rooms.find_one({"id": body.room_id})
-    if not r:
-        raise HTTPException(404, "Kamar tidak ditemukan")
-    if r["status"] != "kosong":
-        raise HTTPException(400, "Kamar tidak tersedia")
     # Validasi email wajib (untuk kirim bukti pembayaran)
     email = (body.email or "").strip().lower()
     if not email or "@" not in email or "." not in email.split("@")[-1]:
@@ -85,39 +80,17 @@ async def public_create_booking(body: PublicBookingCreate):
         raise HTTPException(400, "Format tanggal/jam tidak valid")
     start = local_in.astimezone(timezone.utc)
     end = start + timedelta(hours=6)  # day use 6 jam default
-    # Validasi overlap (semua status booking yang block: aktif, booking_pending, booking_paid)
-    await check_room_available(body.room_id, start, end)
-    subtotal = r["tarif"]
-    service_fee = round(subtotal * SERVICE_FEE_PCT)
-    total = subtotal + service_fee
-    dp_min = round(total * 0.5)
-    kode = f"BKO-{datetime.now().strftime('%Y%m%d%H%M%S')}-{uuid.uuid4().hex[:4].upper()}"
-    doc = {
-        "id": str(uuid.uuid4()), "kode": kode,
-        "room_id": body.room_id, "room_nomor": r["nomor"], "room_tipe": r["tipe"],
-        "tipe": "day_use",
+    data = {
+        "room_id": body.room_id,
         "nama_tamu": body.nama_tamu, "no_hp": body.no_hp,
         "email": email,
         "no_identitas": body.no_identitas, "kendaraan": body.kendaraan,
         "jumlah_tamu": body.jumlah_tamu,
-        "jam_mulai": start.isoformat(), "jam_selesai": end.isoformat(),
+        "jam_mulai": start, "jam_selesai": end,
         "catatan": body.catatan,
-        "status": "booking_pending",          # status booking utama (untuk public booking)
-        "payment_status": "pending",          # pending | paid | expired | failed | refunded
-        "subtotal": subtotal, "service_fee": service_fee, "total": total, "dp_min": dp_min,
-        "source": "online",                   # online | walk_in
-        "invoice_id": None, "payment_id": None,
-        "created_at": now_iso(), "created_by": body.nama_tamu,
+        "created_by": body.nama_tamu,
     }
-    await db.bookings.insert_one(doc)
-    await db.audit_log.insert_one({
-        "id": str(uuid.uuid4()), "user_id": None, "username": "public",
-        "action": "public_create_booking",
-        "detail": f"Public booking {kode} kamar {r['nomor']} ({r['tipe']}) untuk {body.nama_tamu}",
-        "entity": r["nomor"], "timestamp": now_iso(),
-    })
-    doc.pop("_id", None)
-    return doc
+    return await create_reservation(data, source="online")
 
 @api.get("/public/bookings/{bid}")
 async def public_get_booking(bid: str):
