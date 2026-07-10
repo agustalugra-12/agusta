@@ -49,6 +49,9 @@ Format longgar mengikuti [Keep a Changelog](https://keepachangelog.com/).
 
 - Frontend: komponen `TipeReservasiSelector` (Day Use/Menginap) + halaman pratinjau "Jenis Reservasi", gaya konsisten dengan form staf Bookings.jsx — `frontend/src/pages/JenisReservasi.jsx`, route `/jenis-reservasi`. Belum diintegrasikan ke form booking tamu (masih selalu day_use).
 - Frontend: form demo "Reservasi Menginap" (tanggal check-in, jumlah malam, tipe kamar, jumlah tamu, ringkasan check-in/out + total dinamis) di halaman Jenis Reservasi, muncul saat tipe Menginap dipilih — `frontend/src/pages/JenisReservasi.jsx`.
+- Frontend: form demo "Reservasi Day Use" (tanggal/jam check-in, tipe kamar, jumlah tamu, tarif flat + biaya layanan 3% seperti perhitungan nyata) di halaman Jenis Reservasi, muncul saat tipe Day Use dipilih — `frontend/src/pages/JenisReservasi.jsx`.
+- Frontend: notifikasi ketentuan Day Use (durasi 6 jam standar + biaya overtime Rp20.000/jam, sama seperti `calc_tagihan` nyata di backend) di form demo Day Use — `frontend/src/pages/JenisReservasi.jsx`.
+- Frontend: validasi input (tanggal tidak boleh lampau, jumlah tamu minimal 1) di kedua form demo Jenis Reservasi — `frontend/src/pages/JenisReservasi.jsx`.
 
 ### Fixed
 - **Halaman voucher booking (nyata)** — tanggal/jam Check-Out tidak pernah ditampilkan padahal API sudah mengembalikan `jam_selesai`. Ditambahkan baris Check-Out di `PublicBook.jsx`.

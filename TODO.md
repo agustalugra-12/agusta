@@ -78,7 +78,9 @@ daftar ini ringkasan untuk manusia, bisa sedikit basi — cek CLI kalau ragu.
 ### Jenis Reservasi
 - [x] Komponen TipeReservasiSelector + halaman pratinjau (mock, belum diintegrasikan ke form tamu)
 - [x] Form demo Reservasi Menginap (tanggal/malam/tipe kamar/tamu + total dinamis, mock)
-- [ ] Sisa task fitur ini (cek `task next`) — kemungkinan integrasi ke form booking tamu, itu perubahan alur nyata
+- [x] Form demo Reservasi Day Use (tanggal/jam/tipe kamar/tamu + tarif flat & biaya layanan 3%, mock)
+- [x] Notifikasi ketentuan Day Use (durasi 6 jam + overtime, sesuai calc_tagihan nyata)
+- [x] Validasi input (tanggal tidak lampau, jumlah tamu minimal 1)
 
 ### Kebijakan Pembatalan Mandiri
 - [x] Tombol "Batalkan Pesanan" di PublicBook.jsx (nyata, bukan mock) — hitung kebijakan/biaya real, aksi = ajukan permintaan (bukan instan)
