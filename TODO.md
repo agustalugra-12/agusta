@@ -26,8 +26,14 @@ daftar ini ringkasan untuk manusia, bisa sedikit basi — cek CLI kalau ragu.
 - [x] Riwayat Perubahan Stok (mock, + filter tanggal/tipe kamar)
 - [x] Pengaturan Sinkronisasi (frekuensi + prioritas saluran, mock)
 
+### Konfigurasi Webhook (WhatsApp Bot)
+- [x] Halaman utama + form endpoint & kredensial (mock)
+- [ ] Sisa task halaman ini (test koneksi, dll — cek `task next`)
+
 ### Belum dimulai
-- [ ] Pesan WhatsApp Otomatis (konfigurasi webhook, sinkronisasi data PMS, log percakapan, pemantauan status)
+- [ ] Sinkronisasi Data PMS -> WhatsApp Bot
+- [ ] Log Percakapan WhatsApp
+- [ ] Pemantauan Status WhatsApp
 - [ ] Pemetaan Tipe Kamar (daftar pemetaan, tambah pemetaan, impor tipe kamar PMS)
 
 ## Fase 3

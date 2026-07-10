@@ -17,6 +17,7 @@ Format longgar mengikuti [Keep a Changelog](https://keepachangelog.com/).
 - Frontend: tab "Riwayat Perubahan Stok" — tabel log pergerakan stok per kamar (waktu, perubahan +/-, alasan, sumber saluran), data tiruan — `frontend/src/pages/SinkronisasiKetersediaan.jsx`.
 - Frontend: filter rentang tanggal + tipe kamar untuk tabel Riwayat Perubahan Stok — `frontend/src/pages/SinkronisasiKetersediaan.jsx`.
 - Frontend: tab "Pengaturan" — pilih frekuensi sinkronisasi + atur prioritas saluran saat data bentrok (Pelangi PMS terkunci di posisi 1), data tiruan — `frontend/src/pages/SinkronisasiKetersediaan.jsx`.
+- Frontend: halaman baru "Konfigurasi Webhook" — form endpoint & kredensial penyedia WhatsApp (Fonnte/Wablas/Qontak/custom), API key tersamar dengan toggle lihat, data tiruan — `frontend/src/pages/KonfigurasiWebhook.jsx`, route `/konfigurasi-webhook`.
 
 ### Notes
 - Integrasi Gmail OAuth backend belum bisa dipakai nyata sampai `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_OAUTH_REDIRECT_URI` dikonfigurasi di environment `pms-backend.service` (perlu dibuat dulu di Google Cloud Console) — lihat rincian di laporan task terkait.
