@@ -37,6 +37,7 @@ daftar ini ringkasan untuk manusia, bisa sedikit basi — cek CLI kalau ragu.
 
 ### Pesan WhatsApp Otomatis
 - [x] Halaman dasbor + tab Ringkasan (mock)
+- [x] Tab Pengaturan (sinkronisasi data ke bot + tautan Konfigurasi Webhook)
 - [ ] Log Percakapan
 - [ ] Pemantauan Status
 
