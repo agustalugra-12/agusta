@@ -24,6 +24,8 @@ Format longgar mengikuti [Keep a Changelog](https://keepachangelog.com/).
 - Frontend: tab "Pengaturan" di halaman Pesan WhatsApp Otomatis — toggle data yang disinkron ke bot (ketersediaan/harga/status booking/reservasi baru) + frekuensi, plus tautan ke halaman Konfigurasi Webhook (tidak menduplikasi form kredensialnya) — `frontend/src/pages/PesanWhatsAppOtomatis.jsx`.
 - Frontend: tab "Log Percakapan" di halaman Pesan WhatsApp Otomatis — riwayat pesan masuk & balasan AI per tamu, cari nama/nomor, status kirim, data tiruan — `frontend/src/pages/PesanWhatsAppOtomatis.jsx`.
 
+- Frontend: tombol "Uji Koneksi" di halaman Konfigurasi Webhook — simulasi ping ke penyedia WhatsApp, tampilkan hasil (berhasil/gagal + waktu uji) — `frontend/src/pages/KonfigurasiWebhook.jsx`.
+
 ### Fixed
 - **PublicBook.jsx (halaman checkout tamu, live/nyata)** — sebelumnya booking yang pembayarannya expired/gagal (status `cancelled`) tidak menampilkan penjelasan apa pun ke tamu di halaman hasil. Sekarang ditampilkan status "Booking Dibatalkan" + info bahwa kamar sudah dilepas kembali, tanpa tombol "bayar ulang" palsu (backend belum mendukung retry — lihat catatan di TODO.md). Polling status juga dihentikan begitu status final (paid/cancelled) supaya tidak polling selamanya.
 

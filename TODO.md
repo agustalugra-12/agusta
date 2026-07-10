@@ -29,7 +29,8 @@ daftar ini ringkasan untuk manusia, bisa sedikit basi — cek CLI kalau ragu.
 
 ### Konfigurasi Webhook (WhatsApp Bot)
 - [x] Halaman utama + form endpoint & kredensial (mock)
-- [ ] Sisa task halaman ini (test koneksi, dll — cek `task next`)
+- [x] Uji Koneksi (mock)
+- [ ] Sisa task halaman ini (cek `task next`)
 
 ### Integrasi Pembayaran Midtrans
 - [x] Halaman utama "Pembayaran" (daftar transaksi, mock) — catatan: checkout tamu sudah nyata di PublicBook.jsx, ini cuma monitoring admin
