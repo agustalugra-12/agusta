@@ -84,6 +84,7 @@ async def create_reservation(data: Dict[str, Any], source: str = "public",
         "created_at": now_iso(), "created_by": data["created_by"],
     }
     await db.bookings.insert_one(doc)
+    await log_availability_change(r["id"], r["tipe"], -1, "booking_dibuat", booking_id=doc["id"])
 
     if source == "online":
         action, username = "public_create_booking", "public"

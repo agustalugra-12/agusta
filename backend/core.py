@@ -106,6 +106,20 @@ async def log_activity(user: dict, action: str, detail: str = "", entity: str = 
         "timestamp": now_iso(),
     })
 
+async def log_availability_change(room_id: str, room_tipe: str, stock_change: int, reason: str, booking_id: Optional[str] = None):
+    """Catat pergerakan ketersediaan kamar (Dasbor Ketersediaan — riwayat stok & okupansi).
+    stock_change: +1 saat kamar dilepas kembali jadi tersedia, -1 saat kamar terisi/dibooking.
+    """
+    await db.availability_logs.insert_one({
+        "id": str(uuid.uuid4()),
+        "room_id": room_id,
+        "room_tipe": room_tipe,
+        "stock_change": stock_change,
+        "reason": reason,
+        "booking_id": booking_id,
+        "changed_at": now_iso(),
+    })
+
 def calc_tagihan(tarif_dasar: int, jam_checkin: datetime, jam_checkout: datetime, overtime_manual: Optional[int] = None):
     """Hitung tagihan check-out: 6 jam pertama = tarif dasar, sisanya Rp 20.000/jam (ceiling)."""
     delta = jam_checkout - jam_checkin
@@ -295,3 +309,15 @@ class ManualMarkPaidBody(BaseModel):
 class CollectBalanceBody(BaseModel):
     nominal: int
     metode: str = "cash"  # cash / qris
+
+class AvailabilityLog(BaseModel):
+    """Dokumen di collection `availability_logs` — riwayat pergerakan ketersediaan kamar
+    (Dasbor Ketersediaan). Dicatat setiap kali kamar berpindah status tersedia <-> terisi.
+    """
+    id: str
+    room_id: str
+    room_tipe: str  # Standard | Cottage
+    stock_change: int  # +1 tersedia kembali, -1 terisi/dibooking
+    reason: str  # mis: booking_dibuat, booking_dibatalkan, checkin, checkout
+    booking_id: Optional[str] = None
+    changed_at: str

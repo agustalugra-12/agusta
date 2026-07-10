@@ -41,16 +41,34 @@ async def create_booking(body: BookingCreate, user: dict = Depends(get_current_u
         "created_at": now_iso(), "created_by": user["nama"],
     }
     await db.bookings.insert_one(doc)
+    await log_availability_change(r["id"], r["tipe"], -1, "booking_dibuat", booking_id=doc["id"])
     await log_activity(user, "create_booking", f"Booking {body.tipe} kamar {r['nomor']} untuk {body.nama_tamu}", entity=r["nomor"])
     doc.pop("_id", None)
     return doc
 
 @api.get("/bookings")
 async def list_bookings(status: Optional[str] = None, tipe: Optional[str] = None,
+                        search: Optional[str] = None, date: Optional[str] = None,
                         user: dict = Depends(get_current_user)):
+    """Daftar reservasi. `search` mencocokkan nama tamu atau kode booking (case-insensitive).
+    `date` (YYYY-MM-DD) memfilter booking yang overlap tanggal tersebut — dipakai Daftar Reservasi.
+    """
     q: Dict[str, Any] = {}
     if status: q["status"] = status
     if tipe: q["tipe"] = tipe
+    if search:
+        q["$or"] = [
+            {"nama_tamu": {"$regex": search, "$options": "i"}},
+            {"kode": {"$regex": search, "$options": "i"}},
+        ]
+    if date:
+        try:
+            day_start = datetime.fromisoformat(date).replace(hour=0, minute=0, second=0, microsecond=0)
+        except Exception:
+            raise HTTPException(400, "date harus YYYY-MM-DD")
+        day_end = day_start + timedelta(days=1)
+        q["jam_mulai"] = {"$lt": day_end.isoformat()}
+        q["jam_selesai"] = {"$gte": day_start.isoformat()}
     items = await db.bookings.find(q, {"_id": 0}).sort("jam_mulai", 1).to_list(1000)
     return items
 
@@ -78,6 +96,7 @@ async def cancel_with_fee(bid: str, body: CancelWithFeeBody, user: dict = Depend
     if b.get("status") == "booking_paid":
         update_fields["payment_status"] = "refunded" if refund > 0 else "forfeited"
     await db.bookings.update_one({"id": bid}, {"$set": update_fields})
+    await log_availability_change(b["room_id"], b.get("room_tipe", ""), 1, "booking_dibatalkan", booking_id=b["id"])
     detail = (
         f"Cancel booking {b['kode']}: total Rp{total:,}, fee Rp{fee:,}, "
         f"{'refund Rp' + format(refund, ',') if refund > 0 else 'tidak ada refund'}"
@@ -233,6 +252,7 @@ async def mark_no_show(bid: str, body: NoShowBody, user: dict = Depends(get_curr
         "status": "no_show", "payment_status": "kept",
         "no_show_at": now, "no_show_by": user["nama"], "no_show_reason": body.alasan,
     }})
+    await log_availability_change(b["room_id"], b.get("room_tipe", ""), 1, "no_show", booking_id=b["id"])
     await log_activity(user, "no_show",
                        f"No-show booking {b['kode']} kamar {b.get('room_nomor','')}: Rp{paid:,} tetap masuk pembukuan".replace(",", "."),
                        entity=b.get("room_nomor", ""))
@@ -283,6 +303,16 @@ async def booking_availability(room_id: str, from_date: str, days: int = 14,
         })
     return {"room_id": room_id, "room_nomor": r["nomor"], "room_tipe": r["tipe"], "from_date": from_date, "days": days, "slots": slots}
 
+@api.get("/bookings/{bid}")
+async def get_booking(bid: str, user: dict = Depends(get_current_user)):
+    """Detail satu reservasi (dipakai modal detail di halaman Daftar Reservasi).
+    Didaftarkan setelah /bookings/availability agar tidak menutupi path literal itu.
+    """
+    b = await db.bookings.find_one({"id": bid}, {"_id": 0})
+    if not b:
+        raise HTTPException(404, "Booking tidak ditemukan")
+    return b
+
 @api.put("/bookings/{bid}")
 async def update_booking(bid: str, body: BookingCreate, user: dict = Depends(get_current_user)):
     b = await db.bookings.find_one({"id": bid})
@@ -324,5 +354,6 @@ async def cancel_booking(bid: str, user: dict = Depends(get_current_user)):
     if b["status"] not in ("aktif", "booking_pending", "booking_paid"):
         raise HTTPException(400, "Booking sudah tidak dapat dibatalkan")
     await db.bookings.update_one({"id": bid}, {"$set": {"status": "cancelled", "cancelled_at": now_iso(), "cancelled_by": user["nama"]}})
+    await log_availability_change(b["room_id"], b.get("room_tipe", ""), 1, "booking_dibatalkan", booking_id=b["id"])
     await log_activity(user, "cancel_booking", f"Batalkan booking {b['kode']} kamar {b['room_nomor']}")
     return {"ok": True}

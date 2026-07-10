@@ -33,6 +33,8 @@ async def startup():
     await db.audit_log.create_index("timestamp")
     await db.bookings.create_index("room_id")
     await db.bookings.create_index("jam_mulai")
+    await db.availability_logs.create_index("room_id")
+    await db.availability_logs.create_index("changed_at")
 
     # Seed users
     async def ensure_user(username, password, nama, role):
