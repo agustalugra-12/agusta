@@ -136,9 +136,10 @@ export function buildBookingConfirmationMessage(b) {
     }
   }
 
+  const batasHari = b.tipe === "menginap" ? "H-3" : "H-1";
   lines.push(
     "\u2139\uFE0F *Kebijakan Pembatalan*",
-    "Pembatalan dapat dilakukan maksimal H-1 sebelum tanggal check-in dengan biaya pembatalan sebesar 10% dari total tagihan.",
+    `Pembatalan dapat dilakukan maksimal ${batasHari} sebelum tanggal check-in dengan biaya pembatalan sebesar 10% dari total tagihan.`,
     "",
     "Pembatalan pada hari check-in atau tamu tidak datang (No Show) tidak mendapatkan refund.",
     "",

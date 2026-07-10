@@ -366,24 +366,34 @@ function Row({ icon: Icon, label, value }) {
 }
 
 // Kebijakan pembatalan yang sama dengan yang sudah dijanjikan di pesan konfirmasi WA
-// (lihat buildBookingConfirmationMessage di apiClient.js): gratis jika >=24 jam sebelum
-// check-in, biaya 10% dari total jika sudah H-1, dan tidak ada refund untuk No Show/hari-H.
+// (lihat buildBookingConfirmationMessage di apiClient.js): batas bebas biaya H-3 untuk
+// booking menginap, H-1 untuk day use; biaya 10% dari total jika sudah lewat batas, dan
+// tidak ada refund untuk No Show/hari-H. Booking publik saat ini selalu day_use, tapi
+// dibuat tipe-aware supaya tetap benar kalau nanti booking menginap dibuka untuk publik.
+function batasJamBebasBiaya(bk) {
+  return bk.tipe === "menginap" ? 72 : 24;
+}
+
 function calcCancelPolicy(bk) {
+  const batasJam = batasJamBebasBiaya(bk);
+  const batasLabel = bk.tipe === "menginap" ? "H-3" : "H-1";
   const jamCheckin = new Date(bk.jam_mulai);
   const jamTersisa = (jamCheckin.getTime() - Date.now()) / 3600000;
   const dasarBiaya = bk.payment_status === "paid" ? Number(bk.total || 0) : Number(bk.dp_min || 0);
   if (jamTersisa < 0) return { label: "Hari check-in / lewat", biaya: dasarBiaya, gratis: false };
-  if (jamTersisa < 24) return { label: "Kurang dari H-1", biaya: Math.round(dasarBiaya * 0.1), gratis: false };
-  return { label: "Lebih dari H-1", biaya: 0, gratis: true };
+  if (jamTersisa < batasJam) return { label: `Kurang dari ${batasLabel}`, biaya: Math.round(dasarBiaya * 0.1), gratis: false };
+  return { label: `Lebih dari ${batasLabel}`, biaya: 0, gratis: true };
 }
 
-function CountdownBebasBiaya({ jamMulai }) {
+function CountdownBebasBiaya({ bk }) {
   const [, setTick] = useState(0);
   useEffect(() => {
     const t = setInterval(() => setTick((n) => n + 1), 30000); // update tiap 30 detik, cukup untuk granularitas menit
     return () => clearInterval(t);
   }, []);
-  const msTersisa = new Date(jamMulai).getTime() - 24 * 3600000 - Date.now();
+  const batasJam = batasJamBebasBiaya(bk);
+  const batasLabel = bk.tipe === "menginap" ? "H-3" : "H-1";
+  const msTersisa = new Date(bk.jam_mulai).getTime() - batasJam * 3600000 - Date.now();
   if (msTersisa <= 0) return null;
   const totalMenit = Math.floor(msTersisa / 60000);
   const hari = Math.floor(totalMenit / 1440);
@@ -391,7 +401,7 @@ function CountdownBebasBiaya({ jamMulai }) {
   const menit = totalMenit % 60;
   return (
     <p className="text-xs text-emerald-700" data-testid="batalkan-countdown">
-      Waktu tersisa sebelum kena biaya (H-1): <b>{hari > 0 && `${hari}h `}{jam}j {menit}m</b>
+      Waktu tersisa sebelum kena biaya ({batasLabel}): <b>{hari > 0 && `${hari}h `}{jam}j {menit}m</b>
     </p>
   );
 }
@@ -415,7 +425,10 @@ function BatalkanPesananDialog({ bk, open, onOpenChange }) {
           <div className="space-y-3 text-sm text-left">
             <div className="bg-slate-50 border border-slate-200 rounded-lg p-3 text-xs space-y-1.5">
               <p className="font-semibold text-slate-700">Kebijakan Pembatalan</p>
-              <p className="text-slate-600">Gratis jika dibatalkan lebih dari 24 jam (H-1) sebelum check-in. Kurang dari H-1 dikenakan biaya 10% dari total tagihan. Tidak ada refund untuk pembatalan di hari check-in atau tidak datang (No Show).</p>
+              <p className="text-slate-600">
+                Gratis jika dibatalkan lebih dari {bk.tipe === "menginap" ? "3 hari (H-3)" : "24 jam (H-1)"} sebelum check-in.
+                Kurang dari itu dikenakan biaya 10% dari total tagihan. Tidak ada refund untuk pembatalan di hari check-in atau tidak datang (No Show).
+              </p>
             </div>
             <div className="flex justify-between items-center bg-white border border-slate-200 rounded-lg p-3">
               <div>
@@ -429,7 +442,7 @@ function BatalkanPesananDialog({ bk, open, onOpenChange }) {
                 </div>
               </div>
             </div>
-            {policy.gratis && <CountdownBebasBiaya jamMulai={bk.jam_mulai} />}
+            {policy.gratis && <CountdownBebasBiaya bk={bk} />}
           </div>
         ) : (
           <div className="space-y-2 text-sm text-left" data-testid="batalkan-terkirim">
