@@ -36,7 +36,7 @@ daftar ini ringkasan untuk manusia, bisa sedikit basi — cek CLI kalau ragu.
 - [x] Halaman utama "Pembayaran" (daftar transaksi, mock) — catatan: checkout tamu sudah nyata di PublicBook.jsx, ini cuma monitoring admin
 - [x] Buat Tagihan Baru (simulasi Snap + pilihan metode bayar, mock)
 - [x] Penanganan status pembayaran gagal/kedaluwarsa di PublicBook.jsx (nyata, bukan mock)
-- [ ] Sisa task halaman ini (cek `task next`)
+- [x] Navigasi Daftar Reservasi -> Pembayaran (filter kode otomatis)
 - [ ] **Backend (perlu keputusan bisnis, ditunda atas persetujuan user 2026-07-11):** izinkan booking `cancelled` (karena expired/gagal bayar) dibuka lagi untuk retry Snap — perlu re-cek ketersediaan kamar saat retry supaya tidak double-booking. Frontend "Coba Bayar Lagi" sengaja belum dibuat sampai ini selesai.
 
 ### Pesan WhatsApp Otomatis

@@ -1,11 +1,12 @@
 import { useMemo, useState } from "react";
+import { Link } from "react-router-dom";
 import { toast } from "sonner";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
-import { Search, X, Pencil, Ban } from "lucide-react";
+import { Search, X, Pencil, Ban, CreditCard } from "lucide-react";
 import { fmtDateTime, fmtRp } from "@/lib/apiClient";
 
 const ROOM_TYPES = ["Standard", "Cottage"];
@@ -239,6 +240,13 @@ export default function DaftarReservasi() {
             </div>
           )}
           <DialogFooter>
+            {selected && !editMode && (
+              <Button asChild data-testid="reservasi-lihat-pembayaran" variant="outline" className="gap-1.5">
+                <Link to={`/pembayaran?kode=${encodeURIComponent(selected.kode)}`}>
+                  <CreditCard className="w-3.5 h-3.5" /> Lihat Pembayaran
+                </Link>
+              </Button>
+            )}
             {selected && !editMode && selected.status !== "Cancelled" && (
               <>
                 <Button data-testid="reservasi-batalkan" variant="outline" onClick={cancelReservation} className="gap-1.5 text-red-600 border-red-300 hover:bg-red-50">

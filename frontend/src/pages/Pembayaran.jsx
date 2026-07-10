@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -149,8 +150,10 @@ function BuatTagihanDialog({ open, onOpenChange, onCreated }) {
 }
 
 export default function Pembayaran() {
+  const [searchParams] = useSearchParams();
   const [transactions, setTransactions] = useState(MOCK_TRANSACTIONS);
-  const [search, setSearch] = useState("");
+  // Terima navigasi dari Daftar Reservasi (?kode=RSV-1042) — langsung filter ke booking itu.
+  const [search, setSearch] = useState(searchParams.get("kode") || "");
   const [status, setStatus] = useState("Semua");
   const [selected, setSelected] = useState(null);
   const [tagihanOpen, setTagihanOpen] = useState(false);
