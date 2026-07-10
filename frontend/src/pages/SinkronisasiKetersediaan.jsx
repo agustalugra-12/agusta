@@ -28,6 +28,65 @@ const STATUS_META = {
   disconnected: { label: "Terputus", cls: "bg-slate-200 text-slate-600", icon: WifiOff, dot: "bg-slate-400" },
 };
 
+// Data tiruan (stub) — mengikuti entitas AVAILABILITY_LOGS di PRD (id, pms_room_id,
+// stock_change, reason, changed_at), ditambah `sumber` untuk menandai saluran pemicu
+// perubahan (relevan di Fase 2 karena banyak saluran menulis ke Availability Engine yang sama).
+const MOCK_STOCK_HISTORY = [
+  { id: "1", room_nomor: "5", room_tipe: "Standard", stock_change: -1, reason: "Booking baru dari Traveloka", sumber: "Email OTA", changed_at: "2026-07-11T09:55:00" },
+  { id: "2", room_nomor: "14", room_tipe: "Cottage", stock_change: -1, reason: "Booking baru dari Website", sumber: "Website", changed_at: "2026-07-11T09:40:00" },
+  { id: "3", room_nomor: "5", room_tipe: "Standard", stock_change: 1, reason: "Reservasi dibatalkan tamu", sumber: "WhatsApp Bot", changed_at: "2026-07-11T08:20:00" },
+  { id: "4", room_nomor: "2", room_tipe: "Standard", stock_change: -1, reason: "Check-in langsung", sumber: "Pelangi PMS", changed_at: "2026-07-11T07:05:00" },
+  { id: "5", room_nomor: "16", room_tipe: "Cottage", stock_change: 1, reason: "Check-out", sumber: "Pelangi PMS", changed_at: "2026-07-10T12:00:00" },
+  { id: "6", room_nomor: "9", room_tipe: "Standard", stock_change: -1, reason: "Booking baru dari Agoda", sumber: "Email OTA", changed_at: "2026-07-10T10:30:00" },
+];
+
+const SUMBER_BADGE = {
+  "Pelangi PMS": "bg-blue-100 text-blue-800",
+  "Website": "bg-violet-100 text-violet-800",
+  "Email OTA": "bg-amber-100 text-amber-800",
+  "WhatsApp Bot": "bg-emerald-100 text-emerald-800",
+};
+
+function RiwayatPerubahanStok({ history }) {
+  return (
+    <Card className="border-slate-200">
+      <CardContent className="p-0 overflow-x-auto">
+        <table className="w-full text-sm" data-testid="stock-history-table">
+          <thead className="bg-slate-50 text-slate-600 text-xs uppercase tracking-wider">
+            <tr>
+              <th className="text-left p-3">Waktu</th>
+              <th className="text-left p-3">Kamar</th>
+              <th className="text-left p-3">Perubahan</th>
+              <th className="text-left p-3">Alasan</th>
+              <th className="text-left p-3">Sumber</th>
+            </tr>
+          </thead>
+          <tbody>
+            {history.map((h) => (
+              <tr key={h.id} data-testid={`stock-history-row-${h.id}`} className="border-t border-slate-100">
+                <td className="p-3 text-slate-500">{fmtDateTime(h.changed_at)}</td>
+                <td className="p-3 font-medium">{h.room_nomor} <span className="text-slate-400 font-normal">({h.room_tipe})</span></td>
+                <td className="p-3">
+                  <span className={`inline-flex px-2 py-1 rounded-md text-xs font-bold ${h.stock_change > 0 ? "bg-emerald-100 text-emerald-800" : "bg-red-100 text-red-800"}`}>
+                    {h.stock_change > 0 ? `+${h.stock_change}` : h.stock_change}
+                  </span>
+                </td>
+                <td className="p-3 text-slate-600">{h.reason}</td>
+                <td className="p-3">
+                  <span className={`inline-flex px-2 py-1 rounded-md text-xs font-medium ${SUMBER_BADGE[h.sumber] || "bg-slate-100 text-slate-600"}`}>{h.sumber}</span>
+                </td>
+              </tr>
+            ))}
+            {history.length === 0 && (
+              <tr><td colSpan={5} className="p-6 text-center text-slate-500">Belum ada riwayat perubahan stok</td></tr>
+            )}
+          </tbody>
+        </table>
+      </CardContent>
+    </Card>
+  );
+}
+
 function TabPlaceholder({ label }) {
   return (
     <Card className="border-slate-200">
@@ -157,7 +216,10 @@ export default function SinkronisasiKetersediaan() {
         <TabsContent value="status" className="mt-4">
           <StatusSinkronisasi />
         </TabsContent>
-        {TABS.filter((t) => t.value !== "status").map((t) => (
+        <TabsContent value="riwayat" className="mt-4">
+          <RiwayatPerubahanStok history={MOCK_STOCK_HISTORY} />
+        </TabsContent>
+        {TABS.filter((t) => !["status", "riwayat"].includes(t.value)).map((t) => (
           <TabsContent key={t.value} value={t.value} className="mt-4">
             <TabPlaceholder label={t.label} />
           </TabsContent>

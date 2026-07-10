@@ -23,7 +23,7 @@ daftar ini ringkasan untuk manusia, bisa sedikit basi — cek CLI kalau ragu.
 ### Sinkronisasi Ketersediaan
 - [x] Halaman utama + tab Status Sinkronisasi (mock)
 - [x] Indikator status koneksi real-time (live, polling 10s)
-- [ ] Riwayat Perubahan Stok
+- [x] Riwayat Perubahan Stok (mock)
 - [ ] Pengaturan Sinkronisasi
 
 ### Belum dimulai

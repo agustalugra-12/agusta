@@ -14,6 +14,7 @@ Format longgar mengikuti [Keep a Changelog](https://keepachangelog.com/).
 - Frontend: tab "Proses Manual" — daftar email berstatus Manual_Required/Failed + form isi data reservasi manual yang mengubah status email jadi Parsed_Success, data bersama (shared state) dengan tab Log Email Masuk — `frontend/src/pages/OtomasiEmail.jsx`.
 - Frontend: halaman baru "Sinkronisasi Ketersediaan" — tab Status Sinkronisasi (status per saluran: Pelangi PMS, Website, Email OTA, WhatsApp Bot + tombol Paksa Sinkronisasi), data tiruan — `frontend/src/pages/SinkronisasiKetersediaan.jsx`, route `/sinkronisasi-ketersediaan`.
 - Frontend: indikator "Live" (titik berdenyut + jam berjalan sejak cek terakhir, polling berkala 10 detik) di tab Status Sinkronisasi — `frontend/src/pages/SinkronisasiKetersediaan.jsx`.
+- Frontend: tab "Riwayat Perubahan Stok" — tabel log pergerakan stok per kamar (waktu, perubahan +/-, alasan, sumber saluran), data tiruan — `frontend/src/pages/SinkronisasiKetersediaan.jsx`.
 
 ### Notes
 - Integrasi Gmail OAuth backend belum bisa dipakai nyata sampai `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_OAUTH_REDIRECT_URI` dikonfigurasi di environment `pms-backend.service` (perlu dibuat dulu di Google Cloud Console) — lihat rincian di laporan task terkait.
