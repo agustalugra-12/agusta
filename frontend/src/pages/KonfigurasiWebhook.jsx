@@ -4,7 +4,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
-import { MessageCircle, Save, Eye, EyeOff, CheckCircle2, XCircle, Zap, Loader2 } from "lucide-react";
+import { MessageCircle, Save, Eye, EyeOff, CheckCircle2, XCircle, Zap, Loader2, Undo2, AlertCircle } from "lucide-react";
 import { fmtDateTime } from "@/lib/apiClient";
 
 // Provider webhook WhatsApp pihak ketiga yang umum dipakai bisnis di Indonesia.
@@ -26,19 +26,33 @@ export default function KonfigurasiWebhook() {
   const [showKey, setShowKey] = useState(false);
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState(null); // { ok, message, tested_at }
+  const [attemptedSave, setAttemptedSave] = useState(false);
 
   const dirty = JSON.stringify(form) !== JSON.stringify(saved);
-  const valid = form.provider && form.webhook_url.trim() && form.api_key.trim() && form.nomor_whatsapp.trim();
+  const errors = {
+    webhook_url: !form.webhook_url.trim() && "Wajib diisi",
+    api_key: !form.api_key.trim() && "Wajib diisi",
+    nomor_whatsapp: !form.nomor_whatsapp.trim() && "Wajib diisi",
+  };
+  const valid = !errors.webhook_url && !errors.api_key && !errors.nomor_whatsapp;
 
   const maskedKey = (key) => (key.length <= 8 ? "••••••••" : `${key.slice(0, 6)}${"•".repeat(Math.min(16, key.length - 10))}${key.slice(-4)}`);
 
   const simpan = () => {
+    setAttemptedSave(true);
+    if (!valid) { toast.error("Lengkapi dulu field yang wajib diisi"); return; }
     const now = new Date().toISOString();
     const next = { ...form, updated_at: now };
     setSaved(next);
     setForm(next);
     setTestResult(null);
+    setAttemptedSave(false);
     toast.success("Konfigurasi webhook WhatsApp disimpan");
+  };
+
+  const batalkanPerubahan = () => {
+    setForm(saved);
+    setAttemptedSave(false);
   };
 
   const ujiKoneksi = () => {
@@ -102,7 +116,14 @@ export default function KonfigurasiWebhook() {
 
       <Card className="border-slate-200">
         <CardContent className="p-4 space-y-4">
-          <h3 className="text-sm font-semibold text-slate-700">Endpoint &amp; Kredensial</h3>
+          <div className="flex items-center justify-between">
+            <h3 className="text-sm font-semibold text-slate-700">Endpoint &amp; Kredensial</h3>
+            {dirty && (
+              <span data-testid="webhook-dirty-badge" className="text-[10px] uppercase font-bold text-amber-700 bg-amber-100 px-2 py-1 rounded">
+                Perubahan belum disimpan
+              </span>
+            )}
+          </div>
           <div>
             <Label htmlFor="webhook-provider">Penyedia Layanan WhatsApp</Label>
             <select
@@ -123,8 +144,11 @@ export default function KonfigurasiWebhook() {
               value={form.webhook_url}
               onChange={(e) => setForm((f) => ({ ...f, webhook_url: e.target.value }))}
               placeholder="https://api.penyedia.com/send"
-              className="mt-1.5 font-mono text-sm"
+              className={`mt-1.5 font-mono text-sm ${attemptedSave && errors.webhook_url ? "border-red-400 focus-visible:ring-red-400" : ""}`}
             />
+            {attemptedSave && errors.webhook_url && (
+              <p className="text-xs text-red-600 mt-1 flex items-center gap-1"><AlertCircle className="w-3 h-3" /> {errors.webhook_url}</p>
+            )}
           </div>
           <div>
             <Label htmlFor="webhook-api-key">API Key / Token</Label>
@@ -135,7 +159,7 @@ export default function KonfigurasiWebhook() {
                 type={showKey ? "text" : "password"}
                 value={form.api_key}
                 onChange={(e) => setForm((f) => ({ ...f, api_key: e.target.value }))}
-                className="font-mono text-sm pr-10"
+                className={`font-mono text-sm pr-10 ${attemptedSave && errors.api_key ? "border-red-400 focus-visible:ring-red-400" : ""}`}
               />
               <button
                 type="button"
@@ -146,7 +170,9 @@ export default function KonfigurasiWebhook() {
                 {showKey ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
               </button>
             </div>
-            {!showKey && form.api_key === saved.api_key && (
+            {attemptedSave && errors.api_key ? (
+              <p className="text-xs text-red-600 mt-1 flex items-center gap-1"><AlertCircle className="w-3 h-3" /> {errors.api_key}</p>
+            ) : !showKey && form.api_key === saved.api_key && (
               <p className="text-xs text-slate-400 mt-1 font-mono">Tersimpan: {maskedKey(saved.api_key)}</p>
             )}
           </div>
@@ -158,12 +184,22 @@ export default function KonfigurasiWebhook() {
               value={form.nomor_whatsapp}
               onChange={(e) => setForm((f) => ({ ...f, nomor_whatsapp: e.target.value }))}
               placeholder="628123456789"
-              className="mt-1.5"
+              className={`mt-1.5 ${attemptedSave && errors.nomor_whatsapp ? "border-red-400 focus-visible:ring-red-400" : ""}`}
             />
+            {attemptedSave && errors.nomor_whatsapp && (
+              <p className="text-xs text-red-600 mt-1 flex items-center gap-1"><AlertCircle className="w-3 h-3" /> {errors.nomor_whatsapp}</p>
+            )}
           </div>
-          <Button data-testid="webhook-simpan" onClick={simpan} disabled={!valid || !dirty} className="gap-1.5 bg-blue-700 hover:bg-blue-800">
-            <Save className="w-3.5 h-3.5" /> Simpan Konfigurasi
-          </Button>
+          <div className="flex gap-2">
+            <Button data-testid="webhook-simpan" onClick={simpan} disabled={!dirty} className="gap-1.5 bg-blue-700 hover:bg-blue-800">
+              <Save className="w-3.5 h-3.5" /> Simpan Konfigurasi
+            </Button>
+            {dirty && (
+              <Button data-testid="webhook-batal" variant="ghost" onClick={batalkanPerubahan} className="gap-1.5">
+                <Undo2 className="w-3.5 h-3.5" /> Batalkan Perubahan
+              </Button>
+            )}
+          </div>
           <p className="text-[11px] text-slate-400">Data tiruan — belum terhubung ke penyedia WhatsApp sungguhan.</p>
         </CardContent>
       </Card>

@@ -26,6 +26,7 @@ Format longgar mengikuti [Keep a Changelog](https://keepachangelog.com/).
 
 - Frontend: tombol "Uji Koneksi" di halaman Konfigurasi Webhook — simulasi ping ke penyedia WhatsApp, tampilkan hasil (berhasil/gagal + waktu uji) — `frontend/src/pages/KonfigurasiWebhook.jsx`.
 - Frontend: tombol "Lihat Pembayaran" di detail Daftar Reservasi — buka halaman Pembayaran dengan filter kode booking otomatis terisi (`?kode=...`) — `frontend/src/pages/DaftarReservasi.jsx`, `frontend/src/pages/Pembayaran.jsx`.
+- Frontend: perhalus feedback form Konfigurasi Webhook — badge "perubahan belum disimpan", validasi inline per field saat gagal simpan, tombol "Batalkan Perubahan" — `frontend/src/pages/KonfigurasiWebhook.jsx`.
 
 ### Fixed
 - **PublicBook.jsx (halaman checkout tamu, live/nyata)** — sebelumnya booking yang pembayarannya expired/gagal (status `cancelled`) tidak menampilkan penjelasan apa pun ke tamu di halaman hasil. Sekarang ditampilkan status "Booking Dibatalkan" + info bahwa kamar sudah dilepas kembali, tanpa tombol "bayar ulang" palsu (backend belum mendukung retry — lihat catatan di TODO.md). Polling status juga dihentikan begitu status final (paid/cancelled) supaya tidak polling selamanya.
