@@ -6,6 +6,9 @@ Format longgar mengikuti [Keep a Changelog](https://keepachangelog.com/).
 ## [Unreleased]
 
 ### Added
+- Backend: skema `EmailLog`/`EmailExtractedData` (collection `email_logs`) — `backend/core.py`.
+- Backend: model `RoomMappingCreate`/`RoomMappingUpdate` + endpoint CRUD `/api/mappings`, GET `/api/pms-room-types`, POST `/api/pms-room-types/sync`, GET `/api/unmapped-ota-rooms` — `backend/routes/pemetaan_tipe_kamar.py`, collection baru `room_mappings`.
+- Frontend: `PemetaanTipeKamar.jsx` disambungkan ke endpoint nyata di atas (bukan data tiruan lagi).
 - Konfigurasi: aktivasi Gmail OAuth di `pms-backend.service` (GOOGLE_CLIENT_ID/SECRET, GOOGLE_OAUTH_REDIRECT_URI, FRONTEND_URL) — service direstart, siap dipakai tombol "Hubungkan Gmail".
 - Frontend: aturan jam check-in Day Use per hari (Minggu mulai 12:00, Senin-Sabtu mulai 10:00), validasi input jam — `frontend/src/pages/JenisReservasi.jsx`.
 - Frontend: halaman baru "Paket Kamar" (`/paket-kamar`) — komponen `PaketKamarSelector` (dengan/tanpa breakfast per tipe kamar), data tiruan — `frontend/src/pages/PaketKamar.jsx`.

@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -6,7 +6,7 @@ import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { ArrowRight, Search, X, Pencil, Trash2, Plus, Download, Loader2, CheckCircle2, Wand2 } from "lucide-react";
-import { fmtDateTime } from "@/lib/apiClient";
+import api, { fmtDateTime } from "@/lib/apiClient";
 
 const SUMBER_BADGE = {
   Agoda: "bg-violet-100 text-violet-800",
@@ -19,26 +19,7 @@ const SUMBER_FORM_OPTIONS = ["Agoda", "Traveloka", "Booking.com"];
 const PMS_TIPE_OPTIONS = ["Semua", ...ROOM_TYPE_OPTIONS];
 const SUMBER_OPTIONS = ["Semua", ...SUMBER_FORM_OPTIONS];
 
-// Data tiruan (stub) — mengikuti entitas ROOM_MAPPINGS di PRD (id, pms_room_id,
-// ota_room_name, ota_source). Tiap OTA punya istilah sendiri untuk tipe kamar yang sama
-// di Pelangi PMS; pemetaan ini yang dipakai AI Email Parser & Availability Engine supaya
-// merujuk ke kamar PMS yang benar.
-const MOCK_MAPPINGS = [
-  { id: "1", pms_tipe: "Standard", ota_nama: "Deluxe Room", sumber: "Agoda" },
-  { id: "2", pms_tipe: "Standard", ota_nama: "Superior Twin", sumber: "Traveloka" },
-  { id: "3", pms_tipe: "Standard", ota_nama: "Standard Double Room", sumber: "Booking.com" },
-  { id: "4", pms_tipe: "Cottage", ota_nama: "Bungalow Deluxe", sumber: "Agoda" },
-  { id: "5", pms_tipe: "Cottage", ota_nama: "Family Cottage", sumber: "Traveloka" },
-];
-
 const emptyMappingForm = { ota_nama: "", pms_tipe: ROOM_TYPE_OPTIONS[0], sumber: SUMBER_FORM_OPTIONS[0] };
-
-// Data tiruan (stub) — nama tipe kamar yang terdeteksi AI Email Parser dari email OTA
-// tapi belum ada pemetaannya ke tipe kamar PMS, jadi butuh perhatian staff.
-const MOCK_UNMAPPED = [
-  { id: "u1", ota_nama: "Executive Suite", sumber: "Agoda", jumlah_kemunculan: 2 },
-  { id: "u2", ota_nama: "Twin Bed Non-Smoking", sumber: "Booking.com", jumlah_kemunculan: 1 },
-];
 
 function MappingFormDialog({ open, onOpenChange, prefill, isEdit, onSave }) {
   const [form, setForm] = useState(prefill || emptyMappingForm);
@@ -100,15 +81,21 @@ function MappingFormDialog({ open, onOpenChange, prefill, isEdit, onSave }) {
 }
 
 export default function PemetaanTipeKamar() {
-  const [mappings, setMappings] = useState(MOCK_MAPPINGS);
+  const [mappings, setMappings] = useState([]);
   const [search, setSearch] = useState("");
   const [pmsTipe, setPmsTipe] = useState("Semua");
   const [sumber, setSumber] = useState("Semua");
-  const [unmapped, setUnmapped] = useState(MOCK_UNMAPPED);
+  const [unmapped, setUnmapped] = useState([]);
   const [formOpen, setFormOpen] = useState(false);
   const [editingId, setEditingId] = useState(null); // id mapping yang diubah, null = tambah baru
   const [formPrefill, setFormPrefill] = useState(emptyMappingForm);
   const [resolvingUnmappedId, setResolvingUnmappedId] = useState(null);
+
+  const load = () => {
+    api.get("/mappings").then((r) => setMappings(r.data)).catch(() => toast.error("Gagal memuat pemetaan"));
+    api.get("/unmapped-ota-rooms").then((r) => setUnmapped(r.data)).catch(() => {});
+  };
+  useEffect(() => { load(); }, []);
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -129,24 +116,30 @@ export default function PemetaanTipeKamar() {
     setFormOpen(true);
   };
 
-  const saveMapping = (form) => {
-    if (editingId) {
-      setMappings((ms) => ms.map((m) => (m.id === editingId ? { ...m, ...form } : m)));
-      toast.success(`Pemetaan "${form.ota_nama}" diperbarui`);
-    } else {
-      const newMapping = { id: crypto.randomUUID(), ...form };
-      setMappings((ms) => [...ms, newMapping]);
-      toast.success(`Pemetaan "${form.ota_nama}" ditambahkan`);
-      if (resolvingUnmappedId) {
-        setUnmapped((us) => us.filter((u) => u.id !== resolvingUnmappedId));
+  const saveMapping = async (form) => {
+    try {
+      if (editingId) {
+        await api.put(`/mappings/${editingId}`, form);
+        toast.success(`Pemetaan "${form.ota_nama}" diperbarui`);
+      } else {
+        await api.post("/mappings", form);
+        toast.success(`Pemetaan "${form.ota_nama}" ditambahkan`);
       }
+      load();
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Gagal menyimpan pemetaan");
     }
   };
 
-  const deleteMapping = (m) => {
+  const deleteMapping = async (m) => {
     if (!window.confirm(`Hapus pemetaan "${m.ota_nama}" (${m.sumber}) → ${m.pms_tipe}?`)) return;
-    setMappings((ms) => ms.filter((x) => x.id !== m.id));
-    toast.success("Pemetaan dihapus");
+    try {
+      await api.delete(`/mappings/${m.id}`);
+      toast.success("Pemetaan dihapus");
+      load();
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Gagal menghapus pemetaan");
+    }
   };
 
   const resetFilters = () => { setSearch(""); setPmsTipe("Semua"); setSumber("Semua"); };
@@ -155,14 +148,17 @@ export default function PemetaanTipeKamar() {
   const [importing, setImporting] = useState(false);
   const [importResult, setImportResult] = useState(null);
 
-  const imporDariPMS = () => {
+  const imporDariPMS = async () => {
     setImporting(true);
-    // Mock: nanti diganti panggilan nyata ke GET /api/rooms untuk ambil tipe kamar aktual.
-    setTimeout(() => {
-      setImportResult({ tipe: ROOM_TYPE_OPTIONS, waktu: new Date().toISOString() });
+    try {
+      const { data } = await api.post("/pms-room-types/sync");
+      setImportResult(data);
+      toast.success(`${data.tipe.length} tipe kamar berhasil diimpor dari Pelangi PMS`);
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Gagal impor dari PMS");
+    } finally {
       setImporting(false);
-      toast.success(`${ROOM_TYPE_OPTIONS.length} tipe kamar berhasil diimpor dari Pelangi PMS`);
-    }, 900);
+    }
   };
 
   return (
@@ -305,7 +301,6 @@ export default function PemetaanTipeKamar() {
         </Card>
       )}
 
-      <p className="text-[11px] text-slate-400">Data tiruan — belum tersambung ke pemetaan sungguhan.</p>
       <MappingFormDialog open={formOpen} onOpenChange={setFormOpen} prefill={formPrefill} isEdit={!!editingId} onSave={saveMapping} />
     </div>
   );

@@ -101,5 +101,15 @@ daftar ini ringkasan untuk manusia, bisa sedikit basi — cek CLI kalau ragu.
 
 Layer **frontend** Fase 2 selesai 100% (30/30 task NgodingPakeAI, 2026-07-11). Lanjut ke layer **backend** Fase 2 (99 task, dimulai dari Otomasi Email & Pemesanan).
 
+### Backend — Otomasi Email & Pemesanan
+- [x] Skema `EmailLog`/`EmailExtractedData` di `core.py` (collection `email_logs`)
+
+### Backend — Pemetaan Tipe Kamar
+- [x] Model `RoomMappingCreate`/`RoomMappingUpdate`, collection `room_mappings`
+- [x] Endpoint GET `/api/pms-room-types` + POST `/api/pms-room-types/sync` — diambil langsung dari `rooms` (bukan tabel terpisah; Pelangi PMS = aplikasi ini sendiri, jadi selalu live, tidak ada yang bisa basi)
+- [x] Endpoint CRUD `/api/mappings` (+ validasi duplikasi sumber+nama OTA)
+- [x] Endpoint GET `/api/unmapped-ota-rooms` (dari `email_logs.extracted_data.tipe_kamar` yang belum dipetakan — kosong sampai email parsing sungguhan aktif)
+- [x] Frontend `PemetaanTipeKamar.jsx` disambungkan ke endpoint nyata (bukan mock lagi)
+
 ## Fase 3
 - [ ] Belum dibaca detail PRD-nya — cek `plan get` saat fase 2 selesai.

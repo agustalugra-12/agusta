@@ -326,3 +326,45 @@ class AvailabilityLog(BaseModel):
     reason: str  # mis: booking_dibuat, booking_dibatalkan, checkin, checkout
     booking_id: Optional[str] = None
     changed_at: str
+
+class EmailExtractedData(BaseModel):
+    """Bentuk `extracted_data` — hasil ekstraksi AI Email Parser dari satu email OTA.
+    Sesuai kontrak yang sudah dipakai frontend (lihat MOCK_EMAIL_LOGS di OtomasiEmail.jsx).
+    """
+    no_reservasi: str
+    nama_tamu: str
+    tipe_kamar: str
+    check_in: str
+    check_out: str
+    jumlah_tamu: int
+    harga: int
+    status_pembayaran: str  # Lunas | Belum Bayar | Dibatalkan
+
+class RoomMappingCreate(BaseModel):
+    """Dokumen di collection `room_mappings` — entitas ROOM_MAPPINGS di PRD, menyamakan
+    nama tipe kamar tiap OTA dengan tipe kamar yang dipakai Pelangi PMS.
+    """
+    ota_nama: str
+    pms_tipe: str  # Standard | Cottage
+    sumber: str  # Agoda | Traveloka | Booking.com
+
+class RoomMappingUpdate(BaseModel):
+    ota_nama: Optional[str] = None
+    pms_tipe: Optional[str] = None
+    sumber: Optional[str] = None
+
+class EmailLog(BaseModel):
+    """Dokumen di collection `email_logs` — riwayat email OTA yang masuk ke Gmail dan
+    diproses (atau gagal diproses) oleh AI Email Parser. Entitas EMAIL_LOGS di PRD
+    (gmail_message_id, status, extracted_data, processed_at), ditambah field tampilan
+    (subjek/pengirim/sumber/alasan) yang sudah dipakai frontend Otomasi Email & Pemesanan.
+    """
+    id: str
+    gmail_message_id: str
+    subjek: str
+    pengirim: str
+    sumber: str  # Agoda | Traveloka | Booking.com | Lainnya, dst — hasil deteksi domain pengirim
+    status: str  # Parsed_Success | Failed | Manual_Required
+    extracted_data: Optional[EmailExtractedData] = None
+    alasan: Optional[str] = None  # diisi kalau status Failed/Manual_Required
+    processed_at: str
