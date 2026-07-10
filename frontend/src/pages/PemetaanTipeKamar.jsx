@@ -5,7 +5,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
-import { ArrowRight, Search, X, Pencil, Trash2 } from "lucide-react";
+import { ArrowRight, Search, X, Pencil, Trash2, Plus } from "lucide-react";
 
 const SUMBER_BADGE = {
   Agoda: "bg-violet-100 text-violet-800",
@@ -30,57 +30,58 @@ const MOCK_MAPPINGS = [
   { id: "5", pms_tipe: "Cottage", ota_nama: "Family Cottage", sumber: "Traveloka" },
 ];
 
-function EditMappingDialog({ mapping, onClose, onSave }) {
-  const [form, setForm] = useState(mapping || {});
+const emptyMappingForm = { ota_nama: "", pms_tipe: ROOM_TYPE_OPTIONS[0], sumber: SUMBER_FORM_OPTIONS[0] };
+
+function MappingFormDialog({ open, onOpenChange, initial, onSave }) {
+  const [form, setForm] = useState(initial || emptyMappingForm);
 
   return (
-    <Dialog open={!!mapping} onOpenChange={(o) => { if (!o) onClose(); }}>
+    <Dialog open={open} onOpenChange={(o) => { onOpenChange(o); if (o) setForm(initial || emptyMappingForm); }}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle data-testid="pemetaan-edit-title">Ubah Pemetaan</DialogTitle>
+          <DialogTitle data-testid="pemetaan-form-title">{initial ? "Ubah Pemetaan" : "Tambah Pemetaan"}</DialogTitle>
         </DialogHeader>
-        {mapping && (
-          <div className="space-y-3 text-sm">
-            <div>
-              <Label>Nama di OTA</Label>
-              <Input
-                data-testid="pemetaan-edit-ota-nama"
-                value={form.ota_nama}
-                onChange={(e) => setForm((f) => ({ ...f, ota_nama: e.target.value }))}
-                className="mt-1.5"
-              />
-            </div>
-            <div>
-              <Label>Tipe Kamar PMS</Label>
-              <select
-                data-testid="pemetaan-edit-tipe"
-                value={form.pms_tipe}
-                onChange={(e) => setForm((f) => ({ ...f, pms_tipe: e.target.value }))}
-                className="w-full h-10 rounded-md border border-slate-300 px-3 bg-white mt-1.5"
-              >
-                {ROOM_TYPE_OPTIONS.map((t) => <option key={t} value={t}>{t}</option>)}
-              </select>
-            </div>
-            <div>
-              <Label>Sumber OTA</Label>
-              <select
-                data-testid="pemetaan-edit-sumber"
-                value={form.sumber}
-                onChange={(e) => setForm((f) => ({ ...f, sumber: e.target.value }))}
-                className="w-full h-10 rounded-md border border-slate-300 px-3 bg-white mt-1.5"
-              >
-                {SUMBER_FORM_OPTIONS.map((s) => <option key={s} value={s}>{s}</option>)}
-              </select>
-            </div>
+        <div className="space-y-3 text-sm">
+          <div>
+            <Label>Nama di OTA</Label>
+            <Input
+              data-testid="pemetaan-form-ota-nama"
+              value={form.ota_nama}
+              onChange={(e) => setForm((f) => ({ ...f, ota_nama: e.target.value }))}
+              placeholder="Mis: Deluxe Room"
+              className="mt-1.5"
+            />
           </div>
-        )}
+          <div>
+            <Label>Tipe Kamar PMS</Label>
+            <select
+              data-testid="pemetaan-form-tipe"
+              value={form.pms_tipe}
+              onChange={(e) => setForm((f) => ({ ...f, pms_tipe: e.target.value }))}
+              className="w-full h-10 rounded-md border border-slate-300 px-3 bg-white mt-1.5"
+            >
+              {ROOM_TYPE_OPTIONS.map((t) => <option key={t} value={t}>{t}</option>)}
+            </select>
+          </div>
+          <div>
+            <Label>Sumber OTA</Label>
+            <select
+              data-testid="pemetaan-form-sumber"
+              value={form.sumber}
+              onChange={(e) => setForm((f) => ({ ...f, sumber: e.target.value }))}
+              className="w-full h-10 rounded-md border border-slate-300 px-3 bg-white mt-1.5"
+            >
+              {SUMBER_FORM_OPTIONS.map((s) => <option key={s} value={s}>{s}</option>)}
+            </select>
+          </div>
+        </div>
         <DialogFooter>
-          <Button variant="ghost" onClick={onClose}>Batal</Button>
+          <Button variant="ghost" onClick={() => onOpenChange(false)}>Batal</Button>
           <Button
-            data-testid="pemetaan-edit-save"
+            data-testid="pemetaan-form-save"
             className="bg-blue-700 hover:bg-blue-800"
-            disabled={!form.ota_nama?.trim()}
-            onClick={() => { onSave(form); onClose(); }}
+            disabled={!form.ota_nama.trim()}
+            onClick={() => { onSave(form); onOpenChange(false); }}
           >
             Simpan
           </Button>
@@ -95,7 +96,8 @@ export default function PemetaanTipeKamar() {
   const [search, setSearch] = useState("");
   const [pmsTipe, setPmsTipe] = useState("Semua");
   const [sumber, setSumber] = useState("Semua");
-  const [editing, setEditing] = useState(null);
+  const [formOpen, setFormOpen] = useState(false);
+  const [editing, setEditing] = useState(null); // mapping yang diubah, null = tambah baru
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -107,9 +109,18 @@ export default function PemetaanTipeKamar() {
     });
   }, [mappings, search, pmsTipe, sumber]);
 
+  const openAdd = () => { setEditing(null); setFormOpen(true); };
+  const openEdit = (m) => { setEditing(m); setFormOpen(true); };
+
   const saveMapping = (form) => {
-    setMappings((ms) => ms.map((m) => (m.id === form.id ? { ...m, ...form } : m)));
-    toast.success(`Pemetaan "${form.ota_nama}" diperbarui`);
+    if (editing) {
+      setMappings((ms) => ms.map((m) => (m.id === editing.id ? { ...editing, ...form } : m)));
+      toast.success(`Pemetaan "${form.ota_nama}" diperbarui`);
+    } else {
+      const newMapping = { id: crypto.randomUUID(), ...form };
+      setMappings((ms) => [...ms, newMapping]);
+      toast.success(`Pemetaan "${form.ota_nama}" ditambahkan`);
+    }
   };
 
   const deleteMapping = (m) => {
@@ -123,12 +134,17 @@ export default function PemetaanTipeKamar() {
 
   return (
     <div className="space-y-6" data-testid="pemetaan-tipe-kamar-page">
-      <div>
-        <p className="text-xs uppercase tracking-[0.25em] text-slate-500">Fase 2 — AI Reservation Automation</p>
-        <h1 className="text-3xl sm:text-4xl font-extrabold">Pemetaan Tipe Kamar</h1>
-        <p className="text-slate-500 mt-1">
-          Samakan nama tipe kamar di tiap OTA dengan tipe kamar yang dipakai Pelangi PMS.
-        </p>
+      <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-3">
+        <div>
+          <p className="text-xs uppercase tracking-[0.25em] text-slate-500">Fase 2 — AI Reservation Automation</p>
+          <h1 className="text-3xl sm:text-4xl font-extrabold">Pemetaan Tipe Kamar</h1>
+          <p className="text-slate-500 mt-1">
+            Samakan nama tipe kamar di tiap OTA dengan tipe kamar yang dipakai Pelangi PMS.
+          </p>
+        </div>
+        <Button data-testid="pemetaan-tambah" onClick={openAdd} className="gap-1.5 bg-blue-700 hover:bg-blue-800 shrink-0">
+          <Plus className="w-3.5 h-3.5" /> Tambah Pemetaan
+        </Button>
       </div>
 
       <Card className="border-slate-200">
@@ -202,7 +218,7 @@ export default function PemetaanTipeKamar() {
                   </td>
                   <td className="p-3">
                     <div className="flex justify-end gap-1">
-                      <Button data-testid={`pemetaan-edit-${m.id}`} variant="ghost" size="icon" onClick={() => setEditing(m)}>
+                      <Button data-testid={`pemetaan-edit-${m.id}`} variant="ghost" size="icon" onClick={() => openEdit(m)}>
                         <Pencil className="w-3.5 h-3.5" />
                       </Button>
                       <Button data-testid={`pemetaan-delete-${m.id}`} variant="ghost" size="icon" onClick={() => deleteMapping(m)} className="text-red-600 hover:bg-red-50">
@@ -220,7 +236,7 @@ export default function PemetaanTipeKamar() {
         </CardContent>
       </Card>
       <p className="text-[11px] text-slate-400">Data tiruan — belum tersambung ke pemetaan sungguhan.</p>
-      <EditMappingDialog mapping={editing} onClose={() => setEditing(null)} onSave={saveMapping} />
+      <MappingFormDialog open={formOpen} onOpenChange={setFormOpen} initial={editing} onSave={saveMapping} />
     </div>
   );
 }

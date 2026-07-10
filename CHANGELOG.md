@@ -35,6 +35,7 @@ Format longgar mengikuti [Keep a Changelog](https://keepachangelog.com/).
 - Frontend: timer mundur (real, benar-benar berjalan) sampai batas bebas biaya di dialog Batalkan Pesanan tamu — `frontend/src/pages/PublicBook.jsx`.
 - Frontend: tabel "Log Peringatan Gangguan" di halaman Sinkronisasi Data PMS — `frontend/src/pages/SinkronisasiDataPMS.jsx`.
 - Frontend: tombol ubah/hapus (dengan modal edit & konfirmasi hapus) di tiap baris Pemetaan Tipe Kamar — `frontend/src/pages/PemetaanTipeKamar.jsx`.
+- Frontend: tombol "Tambah Pemetaan" di halaman Pemetaan Tipe Kamar (dialog form dipakai bersama untuk tambah & ubah) — `frontend/src/pages/PemetaanTipeKamar.jsx`.
 
 ### Fixed
 - **Kebijakan pembatalan H-3/H-1 (nyata, bukan mock)** — sebelumnya pesan konfirmasi WA & dialog batalkan pesanan selalu bilang H-1 untuk semua booking. Sesuai klarifikasi bisnis: menginap = bebas biaya sampai H-3, day use = H-1. Diperbaiki di `apiClient.js` (buildBookingConfirmationMessage, dipakai Dashboard/Bookings/PublicBook) dan `PublicBook.jsx` (dialog Batalkan Pesanan + timer mundur, dibuat tipe-aware).

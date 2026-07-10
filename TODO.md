@@ -49,7 +49,8 @@ daftar ini ringkasan untuk manusia, bisa sedikit basi — cek CLI kalau ragu.
 - [x] Halaman daftar pemetaan (mock)
 - [x] Filter cari/tipe kamar PMS/sumber OTA
 - [x] Tombol ubah/hapus + modal konfirmasi
-- [ ] Sisa task halaman ini (tambah pemetaan, impor tipe kamar PMS, dll — cek `task next`)
+- [x] Form tambah pemetaan baru (dialog dipakai bersama tambah/ubah)
+- [ ] Sisa task halaman ini (impor tipe kamar PMS, dll — cek `task next`)
 
 ### Sinkronisasi Data PMS -> WhatsApp Bot
 - [x] Halaman Dashboard Sinkronisasi (mock)
