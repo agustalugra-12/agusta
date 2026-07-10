@@ -377,6 +377,25 @@ function calcCancelPolicy(bk) {
   return { label: "Lebih dari H-1", biaya: 0, gratis: true };
 }
 
+function CountdownBebasBiaya({ jamMulai }) {
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    const t = setInterval(() => setTick((n) => n + 1), 30000); // update tiap 30 detik, cukup untuk granularitas menit
+    return () => clearInterval(t);
+  }, []);
+  const msTersisa = new Date(jamMulai).getTime() - 24 * 3600000 - Date.now();
+  if (msTersisa <= 0) return null;
+  const totalMenit = Math.floor(msTersisa / 60000);
+  const hari = Math.floor(totalMenit / 1440);
+  const jam = Math.floor((totalMenit % 1440) / 60);
+  const menit = totalMenit % 60;
+  return (
+    <p className="text-xs text-emerald-700" data-testid="batalkan-countdown">
+      Waktu tersisa sebelum kena biaya (H-1): <b>{hari > 0 && `${hari}h `}{jam}j {menit}m</b>
+    </p>
+  );
+}
+
 function BatalkanPesananDialog({ bk, open, onOpenChange }) {
   const [sent, setSent] = useState(false);
   const policy = calcCancelPolicy(bk);
@@ -410,6 +429,7 @@ function BatalkanPesananDialog({ bk, open, onOpenChange }) {
                 </div>
               </div>
             </div>
+            {policy.gratis && <CountdownBebasBiaya jamMulai={bk.jam_mulai} />}
           </div>
         ) : (
           <div className="space-y-2 text-sm text-left" data-testid="batalkan-terkirim">
