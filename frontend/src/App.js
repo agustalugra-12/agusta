@@ -27,6 +27,8 @@ import Pembayaran from "@/pages/Pembayaran";
 import PesanWhatsAppOtomatis from "@/pages/PesanWhatsAppOtomatis";
 import PemetaanTipeKamar from "@/pages/PemetaanTipeKamar";
 import SinkronisasiDataPMS from "@/pages/SinkronisasiDataPMS";
+import PermintaanKhususExtraBed from "@/pages/PermintaanKhususExtraBed";
+import PemantauanStatusWA from "@/pages/PemantauanStatusWA";
 import PublicBook from "@/pages/PublicBook";
 import "@/App.css";
 
@@ -69,6 +71,8 @@ function AppRoutes() {
         <Route path="/whatsapp-otomatis" element={<PesanWhatsAppOtomatis />} />
         <Route path="/pemetaan-tipe-kamar" element={<PemetaanTipeKamar />} />
         <Route path="/sinkronisasi-data-pms" element={<SinkronisasiDataPMS />} />
+        <Route path="/extra-bed" element={<PermintaanKhususExtraBed />} />
+        <Route path="/pemantauan-status-wa" element={<PemantauanStatusWA />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

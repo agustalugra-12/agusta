@@ -40,6 +40,11 @@ Format longgar mengikuti [Keep a Changelog](https://keepachangelog.com/).
 - Frontend: panel "Referensi Reservasi PMS" di halaman Sinkronisasi Data PMS — daftar reservasi yang jadi rujukan data yang disinkron ke bot + tautan ke Daftar Reservasi — `frontend/src/pages/SinkronisasiDataPMS.jsx`.
 - Frontend: tombol "Impor dari PMS" (simulasi loading + notifikasi) di halaman Pemetaan Tipe Kamar — `frontend/src/pages/PemetaanTipeKamar.jsx`.
 - Frontend: panel "Tipe Kamar OTA Belum Dipetakan" di halaman Pemetaan Tipe Kamar — tombol "Petakan" per item membuka form tambah pemetaan pre-filled (nama OTA + sumber) — `frontend/src/pages/PemetaanTipeKamar.jsx`.
+- Frontend: komponen `ExtraBedSelector` + halaman pratinjau "Permintaan Khusus: Extra Bed", data tiruan — `frontend/src/pages/PermintaanKhususExtraBed.jsx`, route `/extra-bed`. Belum disambungkan ke checkout tamu nyata (backend belum punya field/harga extra bed).
+- Frontend: halaman baru "Pemantauan Status" — statistik pengiriman pesan WA, area peringatan gangguan, log pengiriman pesan, data tiruan — `frontend/src/pages/PemantauanStatusWA.jsx`, route `/pemantauan-status-wa`. Tab placeholder "Pemantauan Status" lama di halaman Pesan WhatsApp Otomatis diubah jadi tautan ke halaman baru ini (menghindari duplikasi).
+- Frontend: dialog detail pesan + tombol "Kirim Ulang" (mock) untuk pesan berstatus Gagal di halaman Pemantauan Status — `frontend/src/pages/PemantauanStatusWA.jsx`.
+- Frontend: form pemesanan demo (tipe kamar + malam + ExtraBedSelector) dengan total harga dinamis di halaman Permintaan Khusus Extra Bed — `frontend/src/pages/PermintaanKhususExtraBed.jsx`. Sengaja tetap demo (bukan form live) karena backend belum punya field/harga extra bed sungguhan.
+- Frontend: panel "Ringkasan Kegagalan" (dikelompokkan per alasan) + "Log Perubahan Status Koneksi" (naik-turun webhook) di halaman Pemantauan Status — `frontend/src/pages/PemantauanStatusWA.jsx`.
 
 ### Fixed
 - **Kebijakan pembatalan H-3/H-1 (nyata, bukan mock)** — sebelumnya pesan konfirmasi WA & dialog batalkan pesanan selalu bilang H-1 untuk semua booking. Sesuai klarifikasi bisnis: menginap = bebas biaya sampai H-3, day use = H-1. Diperbaiki di `apiClient.js` (buildBookingConfirmationMessage, dipakai Dashboard/Bookings/PublicBook) dan `PublicBook.jsx` (dialog Batalkan Pesanan + timer mundur, dibuat tipe-aware).

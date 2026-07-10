@@ -16,16 +16,6 @@ const TABS = [
   { value: "pengaturan", label: "Pengaturan", icon: Settings2 },
 ];
 
-function TabPlaceholder({ label }) {
-  return (
-    <Card className="border-slate-200">
-      <CardContent className="p-8 text-center text-slate-500">
-        <p className="text-sm">Bagian &ldquo;{label}&rdquo; akan dibangun di task berikutnya.</p>
-      </CardContent>
-    </Card>
-  );
-}
-
 // Data tiruan (stub) — ringkasan aktivitas bot WhatsApp hari ini.
 const MOCK_STATS = {
   pesan_masuk_hari_ini: 18,
@@ -279,11 +269,16 @@ export default function PesanWhatsAppOtomatis() {
         <TabsContent value="log" className="mt-4">
           <LogPercakapan />
         </TabsContent>
-        {TABS.filter((t) => !["ringkasan", "pengaturan", "log"].includes(t.value)).map((t) => (
-          <TabsContent key={t.value} value={t.value} className="mt-4">
-            <TabPlaceholder label={t.label} />
-          </TabsContent>
-        ))}
+        <TabsContent value="pemantauan" className="mt-4">
+          <Card className="border-slate-200">
+            <CardContent className="p-8 text-center space-y-3">
+              <p className="text-sm text-slate-500">Pemantauan status pengiriman/penerimaan pesan sekarang punya halaman tersendiri.</p>
+              <Button asChild className="gap-1.5 bg-blue-700 hover:bg-blue-800" data-testid="wa-buka-pemantauan-status">
+                <Link to="/pemantauan-status-wa">Buka Pemantauan Status <ExternalLink className="w-3.5 h-3.5" /></Link>
+              </Button>
+            </CardContent>
+          </Card>
+        </TabsContent>
       </Tabs>
     </div>
   );

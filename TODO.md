@@ -53,6 +53,16 @@ daftar ini ringkasan untuk manusia, bisa sedikit basi — cek CLI kalau ragu.
 - [x] Tombol Impor dari PMS (simulasi loading + notifikasi)
 - [x] Panel Tipe Kamar OTA Belum Dipetakan + tombol Petakan (pre-fill form)
 
+### Permintaan Khusus Extra Bed
+- [x] Komponen ExtraBedSelector + halaman pratinjau (mock, belum disambungkan ke checkout nyata)
+- [x] Form pemesanan demo dengan total dinamis (tetap demo, bukan form live)
+- [ ] Sisa task fitur ini (cek `task next`)
+
+### Pemantauan Status (WhatsApp)
+- [x] Halaman utama (statistik, peringatan, log pengiriman, mock) — gantikan tab placeholder lama di Pesan WhatsApp Otomatis
+- [x] Dialog detail pesan + tombol Kirim Ulang (mock)
+- [x] Ringkasan Kegagalan + Log Perubahan Status Koneksi (mock)
+
 ### Sinkronisasi Data PMS -> WhatsApp Bot
 - [x] Halaman Dashboard Sinkronisasi (mock)
 - [x] Indikator status sinkronisasi (live)
