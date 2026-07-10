@@ -24,6 +24,8 @@ const FIELD_OPTIONS = [
 const fieldLabel = (v) => FIELD_OPTIONS.find((f) => f.value === v)?.label || v;
 
 const SUMBER_OPTIONS = ["Agoda", "Traveloka", "Booking.com", "Lainnya"];
+const ROOM_TYPE_OPTIONS = ["Standard", "Cottage"];
+const PAYMENT_STATUS_OPTIONS = ["Lunas", "DP", "Belum Bayar", "Dibatalkan"];
 
 // Data tiruan (stub) — aturan yang menentukan bagaimana AI Email Parser menemukan tiap
 // field di badan email tiap sumber OTA (mis. pola regex/kata kunci penanda).
@@ -86,25 +88,13 @@ const EMAIL_STATUS_BADGE = {
   Failed: { label: "Gagal", cls: "bg-red-100 text-red-800" },
 };
 
-// Layout utama halaman Otomasi Email & Pemesanan (Fase 2). Isi tiap tab (koneksi Gmail,
-// log email, aturan pemetaan AI, proses manual) dibangun di task terpisah berikutnya —
-// task ini hanya menyusun struktur navigasi & shell halamannya.
+// Tab halaman Otomasi Email & Pemesanan (Fase 2).
 const TABS = [
   { value: "koneksi", label: "Hubungkan Gmail", icon: Mail },
   { value: "log", label: "Log Email Masuk", icon: Inbox },
   { value: "aturan", label: "Aturan Pemetaan AI", icon: Wand2 },
   { value: "manual", label: "Proses Manual", icon: FileWarning },
 ];
-
-function TabPlaceholder({ label }) {
-  return (
-    <Card className="border-slate-200">
-      <CardContent className="p-8 text-center text-slate-500">
-        <p className="text-sm">Bagian &ldquo;{label}&rdquo; akan dibangun di task berikutnya.</p>
-      </CardContent>
-    </Card>
-  );
-}
 
 // Status koneksi Gmail — data tiruan. OAuth (Client ID/Secret) menyusul di task backend terpisah.
 function KoneksiGmail() {
@@ -454,7 +444,7 @@ function AturanPemetaanAI() {
   );
 }
 
-function LogEmail() {
+function LogEmail({ logs }) {
   const [selected, setSelected] = useState(null);
   return (
     <Card className="border-slate-200">
@@ -470,7 +460,7 @@ function LogEmail() {
             </tr>
           </thead>
           <tbody>
-            {MOCK_EMAIL_LOGS.map((e) => {
+            {logs.map((e) => {
               const badge = EMAIL_STATUS_BADGE[e.status];
               return (
                 <tr
@@ -489,7 +479,7 @@ function LogEmail() {
                 </tr>
               );
             })}
-            {MOCK_EMAIL_LOGS.length === 0 && (
+            {logs.length === 0 && (
               <tr><td colSpan={5} className="p-6 text-center text-slate-500">Belum ada email yang diproses</td></tr>
             )}
           </tbody>
@@ -500,7 +490,159 @@ function LogEmail() {
   );
 }
 
+const emptyManualForm = {
+  no_reservasi: "", nama_tamu: "", tipe_kamar: ROOM_TYPE_OPTIONS[0],
+  check_in: "", check_out: "", jumlah_tamu: 1, harga: 0, status_pembayaran: PAYMENT_STATUS_OPTIONS[0],
+};
+const isoFromLocal = (v) => (v ? new Date(v).toISOString() : "");
+
+function ManualProcessDialog({ log, onClose, onSave }) {
+  const [form, setForm] = useState(emptyManualForm);
+  const valid = form.no_reservasi.trim() && form.nama_tamu.trim() && form.check_in && form.check_out;
+
+  return (
+    <Dialog key={log?.id || "none"} open={!!log} onOpenChange={(o) => { if (!o) onClose(); }}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle data-testid="manual-process-form-title">Proses Manual: {log?.subjek}</DialogTitle>
+        </DialogHeader>
+        <div className="space-y-3 text-sm max-h-[60vh] overflow-y-auto pr-1">
+          <p className="text-xs text-slate-500">Isi data reservasi berdasarkan isi email di atas — akan dibuat sebagai reservasi begitu disimpan.</p>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <Label>No. Reservasi</Label>
+              <Input data-testid="manual-no-reservasi" value={form.no_reservasi} onChange={(e) => setForm((f) => ({ ...f, no_reservasi: e.target.value }))} className="mt-1.5" />
+            </div>
+            <div>
+              <Label>Nama Tamu</Label>
+              <Input data-testid="manual-nama-tamu" value={form.nama_tamu} onChange={(e) => setForm((f) => ({ ...f, nama_tamu: e.target.value }))} className="mt-1.5" />
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <Label>Tipe Kamar</Label>
+              <select
+                data-testid="manual-tipe-kamar"
+                value={form.tipe_kamar}
+                onChange={(e) => setForm((f) => ({ ...f, tipe_kamar: e.target.value }))}
+                className="w-full h-10 rounded-md border border-slate-300 px-3 bg-white mt-1.5"
+              >
+                {ROOM_TYPE_OPTIONS.map((t) => <option key={t} value={t}>{t}</option>)}
+              </select>
+            </div>
+            <div>
+              <Label>Jumlah Tamu</Label>
+              <Input data-testid="manual-jumlah-tamu" type="number" min={1} value={form.jumlah_tamu} onChange={(e) => setForm((f) => ({ ...f, jumlah_tamu: e.target.value }))} className="mt-1.5" />
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <Label>Check-in</Label>
+              <Input data-testid="manual-check-in" type="datetime-local" value={form.check_in} onChange={(e) => setForm((f) => ({ ...f, check_in: e.target.value }))} className="mt-1.5" />
+            </div>
+            <div>
+              <Label>Check-out</Label>
+              <Input data-testid="manual-check-out" type="datetime-local" value={form.check_out} onChange={(e) => setForm((f) => ({ ...f, check_out: e.target.value }))} className="mt-1.5" />
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <Label>Harga</Label>
+              <Input data-testid="manual-harga" type="number" min={0} value={form.harga} onChange={(e) => setForm((f) => ({ ...f, harga: e.target.value }))} className="mt-1.5" />
+            </div>
+            <div>
+              <Label>Status Pembayaran</Label>
+              <select
+                data-testid="manual-status-pembayaran"
+                value={form.status_pembayaran}
+                onChange={(e) => setForm((f) => ({ ...f, status_pembayaran: e.target.value }))}
+                className="w-full h-10 rounded-md border border-slate-300 px-3 bg-white mt-1.5"
+              >
+                {PAYMENT_STATUS_OPTIONS.map((s) => <option key={s} value={s}>{s}</option>)}
+              </select>
+            </div>
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="ghost" onClick={onClose}>Batal</Button>
+          <Button
+            data-testid="manual-process-save"
+            disabled={!valid}
+            className="bg-blue-700 hover:bg-blue-800"
+            onClick={() => onSave({
+              no_reservasi: form.no_reservasi.trim(),
+              nama_tamu: form.nama_tamu.trim(),
+              tipe_kamar: form.tipe_kamar,
+              check_in: isoFromLocal(form.check_in),
+              check_out: isoFromLocal(form.check_out),
+              jumlah_tamu: Number(form.jumlah_tamu) || 1,
+              harga: Number(form.harga) || 0,
+              status_pembayaran: form.status_pembayaran,
+            })}
+          >
+            Simpan &amp; Buat Reservasi
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function ProsesManualEmail({ logs, onResolve }) {
+  const [selected, setSelected] = useState(null);
+  const perluManual = logs.filter((l) => l.status === "Manual_Required" || l.status === "Failed");
+
+  const handleSave = (extractedData) => {
+    onResolve(selected.id, extractedData);
+    toast.success(`Reservasi dibuat manual dari email "${selected.subjek}"`);
+    setSelected(null);
+  };
+
+  if (perluManual.length === 0) {
+    return (
+      <Card className="border-slate-200">
+        <CardContent className="p-8 text-center text-slate-500">
+          <p className="text-sm">Tidak ada email yang perlu diproses manual saat ini.</p>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  return (
+    <div className="space-y-3" data-testid="manual-process-list">
+      {perluManual.map((log) => (
+        <Card key={log.id} className="border-slate-200" data-testid={`manual-item-${log.id}`}>
+          <CardContent className="p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div className="flex items-start gap-3">
+              <div className={`w-9 h-9 rounded-lg grid place-items-center shrink-0 ${log.status === "Failed" ? "bg-red-50 text-red-600" : "bg-amber-50 text-amber-600"}`}>
+                <FileWarning className="w-4 h-4" />
+              </div>
+              <div>
+                <div className="font-semibold">{log.subjek}</div>
+                <div className="text-xs text-slate-500">{log.sumber} &bull; {log.pengirim} &bull; {fmtDateTime(log.processed_at)}</div>
+                <p className="text-xs text-slate-600 mt-1 italic">{log.alasan}</p>
+              </div>
+            </div>
+            <Button data-testid={`manual-proses-${log.id}`} size="sm" onClick={() => setSelected(log)} className="gap-1.5 bg-blue-700 hover:bg-blue-800 shrink-0">
+              <Wand2 className="w-3.5 h-3.5" /> Proses Manual
+            </Button>
+          </CardContent>
+        </Card>
+      ))}
+      <ManualProcessDialog log={selected} onClose={() => setSelected(null)} onSave={handleSave} />
+    </div>
+  );
+}
+
 export default function OtomasiEmail() {
+  const [logs, setLogs] = useState(MOCK_EMAIL_LOGS);
+
+  const resolveManual = (logId, extractedData) => {
+    setLogs((ls) => ls.map((l) => (l.id === logId
+      ? { ...l, status: "Parsed_Success", extracted_data: extractedData, alasan: undefined }
+      : l)));
+  };
+
   return (
     <div className="space-y-6" data-testid="otomasi-email-page">
       <div>
@@ -524,16 +666,14 @@ export default function OtomasiEmail() {
           <KoneksiGmail />
         </TabsContent>
         <TabsContent value="log" className="mt-4">
-          <LogEmail />
+          <LogEmail logs={logs} />
         </TabsContent>
         <TabsContent value="aturan" className="mt-4">
           <AturanPemetaanAI />
         </TabsContent>
-        {TABS.filter((t) => !["koneksi", "log", "aturan"].includes(t.value)).map((t) => (
-          <TabsContent key={t.value} value={t.value} className="mt-4">
-            <TabPlaceholder label={t.label} />
-          </TabsContent>
-        ))}
+        <TabsContent value="manual" className="mt-4">
+          <ProsesManualEmail logs={logs} onResolve={resolveManual} />
+        </TabsContent>
       </Tabs>
     </div>
   );

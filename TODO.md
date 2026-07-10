@@ -15,7 +15,7 @@ daftar ini ringkasan untuk manusia, bisa sedikit basi — cek CLI kalau ragu.
 - [ ] Sisa tab "Log Email Masuk" (jika ada task lanjutan dari `task next`)
 - [x] Aturan Pemetaan AI (mock)
 - [x] Form uji aturan pemetaan (mock, regex fungsional)
-- [ ] Proses Manual Email
+- [x] Proses Manual Email (mock)
 - [x] Backend: koneksi Gmail OAuth (endpoint jadi, **butuh kredensial Google Cloud** dari user sebelum bisa dipakai nyata)
 - [ ] Backend: baca email Gmail asli + AI parser (perlu API key AI — cek kredensial sebelum mulai)
 - [ ] Backend: sambungkan frontend (Koneksi Gmail, Log Email) ke endpoint asli
