@@ -20,8 +20,12 @@ daftar ini ringkasan untuk manusia, bisa sedikit basi — cek CLI kalau ragu.
 - [ ] Backend: baca email Gmail asli + AI parser (perlu API key AI — cek kredensial sebelum mulai)
 - [ ] Backend: sambungkan frontend (Koneksi Gmail, Log Email) ke endpoint asli
 
+### Sinkronisasi Ketersediaan
+- [x] Halaman utama + tab Status Sinkronisasi (mock)
+- [ ] Riwayat Perubahan Stok
+- [ ] Pengaturan Sinkronisasi
+
 ### Belum dimulai
-- [ ] Sinkronisasi Ketersediaan (status sinkronisasi, riwayat stok, pengaturan, paksa sinkronisasi)
 - [ ] Pesan WhatsApp Otomatis (konfigurasi webhook, sinkronisasi data PMS, log percakapan, pemantauan status)
 - [ ] Pemetaan Tipe Kamar (daftar pemetaan, tambah pemetaan, impor tipe kamar PMS)
 

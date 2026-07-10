@@ -1,0 +1,134 @@
+import { useState } from "react";
+import { toast } from "sonner";
+import { Card, CardContent } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import { RefreshCw, Wifi, WifiOff, AlertTriangle, CheckCircle2, History, Settings2 } from "lucide-react";
+import { fmtDateTime } from "@/lib/apiClient";
+
+const TABS = [
+  { value: "status", label: "Status Sinkronisasi", icon: Wifi },
+  { value: "riwayat", label: "Riwayat Perubahan Stok", icon: History },
+  { value: "pengaturan", label: "Pengaturan", icon: Settings2 },
+];
+
+// Data tiruan (stub) — status koneksi tiap saluran penjualan ke Availability Engine.
+// Pelangi PMS adalah Single Source of Truth (lihat PRD); saluran lain "menarik" data
+// darinya, bukan sebaliknya.
+const MOCK_CHANNELS = [
+  { id: "pms", nama: "Pelangi PMS", peran: "Sumber Kebenaran Tunggal", status: "connected", last_sync: "2026-07-11T09:58:00" },
+  { id: "website", nama: "Website Booking Engine", peran: "Saluran Penjualan", status: "connected", last_sync: "2026-07-11T09:58:00" },
+  { id: "gmail", nama: "Email OTA (Gmail)", peran: "Sumber Reservasi OTA", status: "connected", last_sync: "2026-07-11T09:55:00" },
+  { id: "whatsapp", nama: "WhatsApp Bot", peran: "Saluran Penjualan", status: "error", last_sync: "2026-07-11T08:10:00" },
+];
+
+const STATUS_META = {
+  connected: { label: "Tersambung", cls: "bg-emerald-100 text-emerald-800", icon: CheckCircle2, dot: "bg-emerald-500" },
+  error: { label: "Gangguan Sinkron", cls: "bg-red-100 text-red-800", icon: AlertTriangle, dot: "bg-red-500" },
+  disconnected: { label: "Terputus", cls: "bg-slate-200 text-slate-600", icon: WifiOff, dot: "bg-slate-400" },
+};
+
+function TabPlaceholder({ label }) {
+  return (
+    <Card className="border-slate-200">
+      <CardContent className="p-8 text-center text-slate-500">
+        <p className="text-sm">Bagian &ldquo;{label}&rdquo; akan dibangun di task berikutnya.</p>
+      </CardContent>
+    </Card>
+  );
+}
+
+function StatusSinkronisasi() {
+  const [channels, setChannels] = useState(MOCK_CHANNELS);
+  const [syncing, setSyncing] = useState(false);
+
+  const bermasalah = channels.filter((c) => c.status !== "connected");
+
+  const paksaSinkron = () => {
+    setSyncing(true);
+    // Mock: nanti diganti panggilan nyata ke Availability Engine backend.
+    setTimeout(() => {
+      setChannels((cs) => cs.map((c) => ({ ...c, status: "connected", last_sync: new Date().toISOString() })));
+      setSyncing(false);
+      toast.success("Sinkronisasi manual selesai — semua saluran tersambung");
+    }, 900);
+  };
+
+  return (
+    <div className="space-y-4">
+      <Card className={bermasalah.length ? "border-amber-300 bg-amber-50" : "border-emerald-300 bg-emerald-50"}>
+        <CardContent className="p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div className="flex items-center gap-2">
+            {bermasalah.length ? <AlertTriangle className="w-5 h-5 text-amber-600" /> : <CheckCircle2 className="w-5 h-5 text-emerald-600" />}
+            <p className={`text-sm font-medium ${bermasalah.length ? "text-amber-800" : "text-emerald-800"}`}>
+              {bermasalah.length
+                ? `${bermasalah.length} saluran bermasalah — stok bisa tidak akurat sampai disinkron ulang.`
+                : "Semua saluran tersinkron dengan Pelangi PMS."}
+            </p>
+          </div>
+          <Button data-testid="paksa-sinkron" size="sm" onClick={paksaSinkron} disabled={syncing} className="gap-1.5 bg-blue-700 hover:bg-blue-800 shrink-0">
+            <RefreshCw className={`w-3.5 h-3.5 ${syncing ? "animate-spin" : ""}`} /> {syncing ? "Menyinkronkan…" : "Paksa Sinkronisasi"}
+          </Button>
+        </CardContent>
+      </Card>
+
+      <div className="grid sm:grid-cols-2 gap-3" data-testid="channel-status-grid">
+        {channels.map((c) => {
+          const meta = STATUS_META[c.status];
+          const Icon = meta.icon;
+          return (
+            <Card key={c.id} className="border-slate-200" data-testid={`channel-card-${c.id}`}>
+              <CardContent className="p-4 flex items-center justify-between gap-3">
+                <div className="flex items-center gap-3">
+                  <span className={`w-2 h-2 rounded-full ${meta.dot}`} />
+                  <div>
+                    <div className="font-semibold">{c.nama}</div>
+                    <div className="text-xs text-slate-500">{c.peran}</div>
+                    <div className="text-xs text-slate-400 mt-0.5">Terakhir sinkron: {fmtDateTime(c.last_sync)}</div>
+                  </div>
+                </div>
+                <span className={`inline-flex items-center gap-1 px-2 py-1 rounded-md text-xs font-medium shrink-0 ${meta.cls}`}>
+                  <Icon className="w-3 h-3" /> {meta.label}
+                </span>
+              </CardContent>
+            </Card>
+          );
+        })}
+      </div>
+      <p className="text-[11px] text-slate-400">Data tiruan — belum tersambung ke Availability Engine sungguhan.</p>
+    </div>
+  );
+}
+
+export default function SinkronisasiKetersediaan() {
+  return (
+    <div className="space-y-6" data-testid="sinkronisasi-ketersediaan-page">
+      <div>
+        <p className="text-xs uppercase tracking-[0.25em] text-slate-500">Fase 2 — AI Reservation Automation</p>
+        <h1 className="text-3xl sm:text-4xl font-extrabold">Sinkronisasi Ketersediaan</h1>
+        <p className="text-slate-500 mt-1">
+          Pusat sinkronisasi stok kamar antara Pelangi PMS dan semua saluran penjualan.
+        </p>
+      </div>
+
+      <Tabs defaultValue="status">
+        <TabsList data-testid="sinkronisasi-tabs">
+          {TABS.map((t) => (
+            <TabsTrigger key={t.value} value={t.value} data-testid={`tab-${t.value}`} className="gap-1.5">
+              <t.icon className="w-3.5 h-3.5" /> {t.label}
+            </TabsTrigger>
+          ))}
+        </TabsList>
+
+        <TabsContent value="status" className="mt-4">
+          <StatusSinkronisasi />
+        </TabsContent>
+        {TABS.filter((t) => t.value !== "status").map((t) => (
+          <TabsContent key={t.value} value={t.value} className="mt-4">
+            <TabPlaceholder label={t.label} />
+          </TabsContent>
+        ))}
+      </Tabs>
+    </div>
+  );
+}

@@ -21,6 +21,7 @@ import Audit from "@/pages/Audit";
 import Bookings from "@/pages/Bookings";
 import DaftarReservasi from "@/pages/DaftarReservasi";
 import OtomasiEmail from "@/pages/OtomasiEmail";
+import SinkronisasiKetersediaan from "@/pages/SinkronisasiKetersediaan";
 import PublicBook from "@/pages/PublicBook";
 import "@/App.css";
 
@@ -57,6 +58,7 @@ function AppRoutes() {
         <Route path="/bookings" element={<Bookings />} />
         <Route path="/reservasi" element={<DaftarReservasi />} />
         <Route path="/otomasi-email" element={<OtomasiEmail />} />
+        <Route path="/sinkronisasi-ketersediaan" element={<SinkronisasiKetersediaan />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
