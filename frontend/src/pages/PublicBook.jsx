@@ -9,7 +9,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { bookingConfirmationWaLink } from "@/lib/apiClient";
 import {
-  BedDouble, Wifi, Snowflake, Tv, Droplets, Bath, Trees, CheckCircle2,
+  BedDouble, Wifi, Snowflake, Tv, Droplets, Bath, Trees, CheckCircle2, XCircle,
   Calendar, Clock, User, Phone, IdCard, Car, Users as UsersIcon, Building2, ArrowRight, Mail,
 } from "lucide-react";
 
@@ -368,29 +368,40 @@ function SuccessView({ bookingId }) {
   const [bk, setBk] = useState(null);
   const [banks, setBanks] = useState(null);
   useEffect(() => {
-    const fetch = () => PUBLIC_API.get(`/public/bookings/${bookingId}`).then(r => setBk(r.data)).catch(() => {});
+    let stop = false;
+    const fetch = () => PUBLIC_API.get(`/public/bookings/${bookingId}`).then((r) => {
+      if (stop) return;
+      setBk(r.data);
+      // hentikan polling begitu status final (paid, atau dibatalkan karena expired/gagal) — tidak akan berubah lagi
+      const b = r.data;
+      const isTerminal = b.payment_status === "paid" || (b.status === "cancelled" && (b.payment_status === "expired" || b.payment_status === "failed"));
+      if (isTerminal) { stop = true; clearInterval(t); }
+    }).catch(() => {});
     fetch();
     PUBLIC_API.get(`/public/bank-accounts`).then(r => setBanks(r.data)).catch(() => {});
     // poll status setiap 5 detik untuk auto-refresh pembayaran
     const t = setInterval(fetch, 5000);
-    return () => clearInterval(t);
+    return () => { stop = true; clearInterval(t); };
   }, [bookingId]);
 
   if (!bk) return <div className="min-h-screen grid place-items-center text-slate-500">Memuat...</div>;
   const isPaid = bk.payment_status === "paid";
-  const isPending = bk.payment_status === "pending" || bk.status === "booking_pending";
+  const isFailed = bk.status === "cancelled" && (bk.payment_status === "expired" || bk.payment_status === "failed");
+  const isPending = !isFailed && (bk.payment_status === "pending" || bk.status === "booking_pending");
   return (
-    <div className={`min-h-screen grid place-items-center p-4 bg-gradient-to-b ${isPaid ? "from-emerald-50 via-white to-blue-50" : "from-amber-50 via-white to-blue-50"}`}>
-      <Card className={`max-w-md w-full ${isPaid ? "border-emerald-200" : "border-amber-200"}`}>
+    <div className={`min-h-screen grid place-items-center p-4 bg-gradient-to-b ${isPaid ? "from-emerald-50 via-white to-blue-50" : isFailed ? "from-red-50 via-white to-blue-50" : "from-amber-50 via-white to-blue-50"}`}>
+      <Card className={`max-w-md w-full ${isPaid ? "border-emerald-200" : isFailed ? "border-red-200" : "border-amber-200"}`}>
         <CardContent className="p-6 sm:p-8 text-center space-y-4">
-          <div className={`w-16 h-16 mx-auto rounded-full grid place-items-center ${isPaid ? "bg-emerald-100" : "bg-amber-100"}`}>
-            <CheckCircle2 className={`w-9 h-9 ${isPaid ? "text-emerald-600" : "text-amber-600"}`} />
+          <div className={`w-16 h-16 mx-auto rounded-full grid place-items-center ${isPaid ? "bg-emerald-100" : isFailed ? "bg-red-100" : "bg-amber-100"}`}>
+            {isFailed ? <XCircle className="w-9 h-9 text-red-600" /> : <CheckCircle2 className={`w-9 h-9 ${isPaid ? "text-emerald-600" : "text-amber-600"}`} />}
           </div>
           <div>
-            <h2 className="text-2xl font-extrabold">{isPaid ? "Pembayaran Diterima!" : "Booking Berhasil Dibuat!"}</h2>
+            <h2 className="text-2xl font-extrabold">{isPaid ? "Pembayaran Diterima!" : isFailed ? "Booking Dibatalkan" : "Booking Berhasil Dibuat!"}</h2>
             <p className="text-slate-600 text-sm mt-1">
               {isPaid
                 ? "Booking Anda sudah terkonfirmasi. Simpan nomor booking di bawah."
+                : isFailed
+                ? "Pembayaran tidak diselesaikan tepat waktu sehingga booking otomatis dibatalkan dan kamar dilepas kembali."
                 : "Selesaikan pembayaran agar booking terkonfirmasi. Halaman ini akan auto-refresh setiap 5 detik."}
             </p>
           </div>
@@ -402,9 +413,15 @@ function SuccessView({ bookingId }) {
             <div className="flex justify-between border-t pt-2 mt-2"><span className="text-slate-500">Total</span><b className="text-blue-700">{fmtRp(bk.total)}</b></div>
             <div className="flex justify-between"><span className="text-slate-500">DP Minimum</span><b>{fmtRp(bk.dp_min)}</b></div>
             <div className="flex justify-between"><span className="text-slate-500">Status Pembayaran</span>
-              <b data-testid="pb-success-paystatus" className={isPaid ? "text-emerald-600" : "text-amber-600"}>{bk.payment_status?.toUpperCase()}</b>
+              <b data-testid="pb-success-paystatus" className={isPaid ? "text-emerald-600" : isFailed ? "text-red-600" : "text-amber-600"}>{bk.payment_status?.toUpperCase()}</b>
             </div>
           </div>
+          {isFailed && (
+            <div data-testid="pb-payment-failed" className="bg-red-50 border-2 border-red-300 rounded-lg p-4 text-left text-xs space-y-2">
+              <p className="font-bold text-red-900">✕ Kamar Sudah Dilepas Kembali</p>
+              <p className="text-red-800">Karena booking ini dibatalkan otomatis, kamar yang tadi dipesan sudah tersedia lagi untuk tamu lain. Silakan buat reservasi baru di bawah jika masih ingin menginap.</p>
+            </div>
+          )}
           {isPending && (
             <div className="bg-amber-50 border-2 border-amber-300 rounded-lg p-4 text-left text-xs space-y-2">
               <p className="font-bold text-amber-900">⚠ Pembayaran Belum Selesai</p>

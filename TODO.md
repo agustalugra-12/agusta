@@ -16,7 +16,8 @@ daftar ini ringkasan untuk manusia, bisa sedikit basi — cek CLI kalau ragu.
 - [x] Aturan Pemetaan AI (mock)
 - [x] Form uji aturan pemetaan (mock, regex fungsional)
 - [x] Proses Manual Email (mock)
-- [x] Backend: koneksi Gmail OAuth (endpoint jadi, **butuh kredensial Google Cloud** dari user sebelum bisa dipakai nyata)
+- [x] Backend: koneksi Gmail OAuth (endpoint jadi)
+- [ ] Aktivasi: kredensial Google OAuth **sudah diterima dari user (2026-07-11)** tapi belum dipasang — user minta tunda restart service. Saat siap: edit unit `pms-backend.service` (tambah GOOGLE_CLIENT_ID/SECRET, GOOGLE_OAUTH_REDIRECT_URI, FRONTEND_URL), `daemon-reload`, restart. Minta user kirim ulang kredensial saat itu (tidak disimpan di repo).
 - [ ] Backend: baca email Gmail asli + AI parser (perlu API key AI — cek kredensial sebelum mulai)
 - [ ] Backend: sambungkan frontend (Koneksi Gmail, Log Email) ke endpoint asli
 
@@ -33,7 +34,9 @@ daftar ini ringkasan untuk manusia, bisa sedikit basi — cek CLI kalau ragu.
 ### Integrasi Pembayaran Midtrans
 - [x] Halaman utama "Pembayaran" (daftar transaksi, mock) — catatan: checkout tamu sudah nyata di PublicBook.jsx, ini cuma monitoring admin
 - [x] Buat Tagihan Baru (simulasi Snap + pilihan metode bayar, mock)
+- [x] Penanganan status pembayaran gagal/kedaluwarsa di PublicBook.jsx (nyata, bukan mock)
 - [ ] Sisa task halaman ini (cek `task next`)
+- [ ] **Backend (perlu keputusan bisnis, ditunda atas persetujuan user 2026-07-11):** izinkan booking `cancelled` (karena expired/gagal bayar) dibuka lagi untuk retry Snap — perlu re-cek ketersediaan kamar saat retry supaya tidak double-booking. Frontend "Coba Bayar Lagi" sengaja belum dibuat sampai ini selesai.
 
 ### Pesan WhatsApp Otomatis
 - [x] Halaman dasbor + tab Ringkasan (mock)
