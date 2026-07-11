@@ -85,7 +85,7 @@ async def public_create_booking(body: PublicBookingCreate):
         "nama_tamu": body.nama_tamu, "no_hp": body.no_hp,
         "email": email,
         "no_identitas": body.no_identitas, "kendaraan": body.kendaraan,
-        "jumlah_tamu": body.jumlah_tamu,
+        "jumlah_tamu": body.jumlah_tamu, "extra_bed_qty": body.extra_bed_qty,
         "jam_mulai": start, "jam_selesai": end,
         "catatan": body.catatan,
         "created_by": body.nama_tamu,
@@ -100,7 +100,7 @@ async def public_get_booking(bid: str):
     # batasi field yang dikembalikan ke publik
     safe = {k: b.get(k) for k in [
         "id", "kode", "room_nomor", "room_tipe", "tipe", "nama_tamu", "no_hp", "email",
-        "jumlah_tamu", "jam_mulai", "jam_selesai", "status", "payment_status",
+        "jumlah_tamu", "extra_bed_qty", "jam_mulai", "jam_selesai", "status", "payment_status",
         "subtotal", "service_fee", "total", "dp_min", "invoice_id",
     ]}
     return safe

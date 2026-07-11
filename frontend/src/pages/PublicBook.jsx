@@ -9,6 +9,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { bookingConfirmationWaLink } from "@/lib/apiClient";
+import { ExtraBedSelector } from "@/pages/PermintaanKhususExtraBed";
 import {
   BedDouble, Wifi, Snowflake, Tv, Droplets, Bath, Trees, CheckCircle2, XCircle,
   Calendar, Clock, User, Phone, IdCard, Car, Users as UsersIcon, Building2, ArrowRight, Mail, Ban, Download,
@@ -17,6 +18,10 @@ import {
 // API client tanpa auth (untuk endpoint /api/public/*)
 const PUBLIC_API = axios.create({ baseURL: `${process.env.REACT_APP_BACKEND_URL}/api` });
 const fmtRp = (n) => "Rp " + Number(n || 0).toLocaleString("id-ID");
+// Sama dengan EXTRA_BED_PRICE/EXTRA_BED_MAX di backend/core.py — flat, tidak per malam
+// (day use publik saat ini selalu satu sesi, bukan bermalam).
+const EXTRA_BED_PRICE = 50000;
+const EXTRA_BED_MAX = 2;
 const todayStr = () => {
   const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 };
@@ -56,6 +61,7 @@ function BookingForm() {
     nama_tamu: "", no_hp: "", email: "", no_identitas: "", jumlah_tamu: 1, kendaraan: "",
     jam_checkin: "13:00", catatan: "",
   });
+  const [extraBedQty, setExtraBedQty] = useState(0);
   const [submitting, setSubmitting] = useState(false);
   const [paymentOption, setPaymentOption] = useState("dp50"); // dp50 | full
   const nav = useNavigate();
@@ -73,14 +79,16 @@ function BookingForm() {
 
   const summary = useMemo(() => {
     if (!selectedRoom) return null;
-    const subtotal = selectedRoom.tarif;
+    const extraBedTotal = extraBedQty * EXTRA_BED_PRICE;
+    const subtotal = selectedRoom.tarif + extraBedTotal;
     const svc = Math.round(subtotal * 0.03);
     const total = subtotal + svc;
-    return { subtotal, service_fee: svc, total, dp_min: Math.round(total * 0.5) };
-  }, [selectedRoom]);
+    return { tarifKamar: selectedRoom.tarif, extraBedTotal, subtotal, service_fee: svc, total, dp_min: Math.round(total * 0.5) };
+  }, [selectedRoom, extraBedQty]);
 
   const onSelectRoom = (room) => {
     setSelectedRoom(room);
+    setExtraBedQty(0);
     setStep(2);
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
@@ -110,6 +118,7 @@ function BookingForm() {
         room_id: selectedRoom.id,
         tanggal, jam_checkin: form.jam_checkin,
         catatan: form.catatan.trim(),
+        extra_bed_qty: extraBedQty,
       });
       // 2. Buat Snap token
       const { data: tx } = await PUBLIC_API.post("/payments/midtrans/create-snap-token", {
@@ -277,6 +286,10 @@ function BookingForm() {
                   <Input data-testid="pb-jam" type="time" value={form.jam_checkin} onChange={(e) => setForm(f => ({ ...f, jam_checkin: e.target.value }))} className="h-12" />
                 </FieldIcon>
                 <div>
+                  <Label className="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-1.5 block">Permintaan Khusus</Label>
+                  <ExtraBedSelector value={extraBedQty} onChange={setExtraBedQty} max={EXTRA_BED_MAX} harga={EXTRA_BED_PRICE} satuan="pemesanan" />
+                </div>
+                <div>
                   <Label className="text-xs font-semibold uppercase tracking-wider text-slate-500">Catatan (opsional)</Label>
                   <Textarea data-testid="pb-catatan" value={form.catatan} onChange={(e) => setForm(f => ({ ...f, catatan: e.target.value }))} className="mt-1.5" rows={3} placeholder="Mis: request lantai bawah, late check-in, dll" />
                 </div>
@@ -296,7 +309,10 @@ function BookingForm() {
                   <Row icon={Building2} label="Tipe" value={selectedRoom.tipe} />
                 </div>
                 <div className="space-y-1.5 border-t border-slate-100 pt-3 text-sm">
-                  <div className="flex justify-between"><span className="text-slate-600">Tarif Kamar</span><b>{fmtRp(summary.subtotal)}</b></div>
+                  <div className="flex justify-between"><span className="text-slate-600">Tarif Kamar</span><b>{fmtRp(summary.tarifKamar)}</b></div>
+                  {extraBedQty > 0 && (
+                    <div className="flex justify-between" data-testid="pb-extra-bed-fee"><span className="text-slate-600">Extra Bed &times;{extraBedQty}</span><b>{fmtRp(summary.extraBedTotal)}</b></div>
+                  )}
                   <div className="flex justify-between"><span className="text-slate-600">Service Fee (3%)</span><b data-testid="pb-service-fee">{fmtRp(summary.service_fee)}</b></div>
                   <div className="flex justify-between text-base pt-1.5 border-t border-slate-200 mt-1.5"><span className="font-bold">Total</span><b className="text-blue-700" data-testid="pb-total">{fmtRp(summary.total)}</b></div>
                 </div>

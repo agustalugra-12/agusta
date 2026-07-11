@@ -111,5 +111,24 @@ Layer **frontend** Fase 2 selesai 100% (30/30 task NgodingPakeAI, 2026-07-11). L
 - [x] Endpoint GET `/api/unmapped-ota-rooms` (dari `email_logs.extracted_data.tipe_kamar` yang belum dipetakan — kosong sampai email parsing sungguhan aktif)
 - [x] Frontend `PemetaanTipeKamar.jsx` disambungkan ke endpoint nyata (bukan mock lagi)
 
+### Backend — Sinkronisasi Ketersediaan
+- [x] Status saluran, riwayat stok, pengaturan, auto-sync scheduler — lihat `backend/routes/sinkronisasi_ketersediaan.py` (semua nyata, sudah live)
+
+### Backend — Integrasi Pembayaran Midtrans — SUDAH LENGKAP SEBELUMNYA (diverifikasi ulang 2026-07-11)
+- [x] SDK/env, tabel `payment_log`, Snap token, webhook handler (verifikasi signature), penanganan expired/gagal — semua sudah ada di `backend/routes/payments.py` sejak batch sebelumnya, tidak ada yang perlu ditambah
+
+### Backend — Booking Engine, Harga & Kalkulasi, Jenis Reservasi/Layanan — SUDAH LENGKAP SEBELUMNYA (diverifikasi ulang 2026-07-11)
+- [x] room_types (`rooms`), reservations (`bookings`), ketersediaan (`/api/public/availability`), hitung harga & buat reservasi (`reservation_service.create_reservation`, kalkulasi server-side asli — bukan cuma preview client), pengurangan stok (`log_availability_change`), konfirmasi via antarmuka (`SuccessView` + polling) — semua sudah nyata dari batch Fase 1/2 sebelumnya
+- [x] Endpoint baru GET `/api/jenis-reservasi` — daftar jenis layanan (Day Use/Menginap) + aturan bisnisnya (durasi, overtime, kebijakan pembatalan), satu sumber kebenaran dipakai kedua nama fitur mirip di plan — `backend/routes/jenis_layanan.py`
+
+### Backend — Permintaan Khusus Extra Bed — SELESAI, DIINTEGRASIKAN KE FORM BOOKING PUBLIK LIVE (2026-07-11)
+- [x] Field `extra_bed_qty` di `PublicBookingCreate` + tersimpan di booking, harga (+Rp 50.000 flat per bed, maks 2) dihitung server-side di `reservation_service.create_reservation`
+- [x] Field disertakan di GET booking detail (dipakai halaman konfirmasi/voucher)
+- [x] **Perubahan alur booking publik LIVE**: tamu sekarang bisa pilih Extra Bed sendiri di form `/book` (komponen `ExtraBedSelector` yang sama dipakai ulang dari halaman pratinjau, tapi kini benar-benar mengubah harga & tersimpan ke reservasi nyata)
+
+### Backend — Rekomendasi AI Check-in Day Use — SEKARANG NYATA (2026-07-11)
+- [x] Endpoint GET `/api/rekomendasi-checkin?tanggal&tipe_kamar` — hitung rekomendasi dari booking Menginap sungguhan yang check-out di tanggal itu + jeda bersih-bersih, filter lewat `check_room_available` asli (anti double-booking), bukan lagi data tiruan
+- [x] Frontend `RekomendasiCheckinDayUse.jsx` disambungkan ke endpoint ini
+
 ## Fase 3
 - [ ] Belum dibaca detail PRD-nya — cek `plan get` saat fase 2 selesai.

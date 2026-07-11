@@ -57,6 +57,8 @@ OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
 
 # ---- Constants ----
 SERVICE_FEE_PCT = 0.03  # 3% service fee diaplikasikan ke checkin & booking
+EXTRA_BED_PRICE = 50000  # per extra bed, flat (PRD: "Extra Bed Rp 50.000 berlaku untuk kedua jenis layanan")
+EXTRA_BED_MAX = 2  # maksimal per kamar (sama seperti ExtraBedSelector di frontend)
 
 # ---- Utilities ----
 def now_iso() -> str:
@@ -298,6 +300,7 @@ class PublicBookingCreate(BaseModel):
     tanggal: str  # YYYY-MM-DD
     jam_checkin: str  # HH:mm (24h)
     catatan: str = ""
+    extra_bed_qty: int = 0  # maks divalidasi di public_create_booking (EXTRA_BED_MAX)
 
 class CreateSnapTokenBody(BaseModel):
     booking_id: str

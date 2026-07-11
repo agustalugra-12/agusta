@@ -6,6 +6,9 @@ Format longgar mengikuti [Keep a Changelog](https://keepachangelog.com/).
 ## [Unreleased]
 
 ### Added
+- Backend: field `extra_bed_qty` di booking publik (`PublicBookingCreate`, `reservation_service.create_reservation`) — harga +Rp 50.000 flat per bed (maks 2), dihitung server-side. Frontend `/book` sekarang punya selector Extra Bed sungguhan (`ExtraBedSelector` dipakai ulang dari halaman pratinjau) yang mengubah harga & tersimpan ke reservasi nyata — `backend/core.py`, `backend/reservation_service.py`, `backend/routes/public.py`, `frontend/src/pages/PublicBook.jsx`, `frontend/src/pages/PermintaanKhususExtraBed.jsx`.
+- Backend: endpoint GET `/api/jenis-reservasi` — daftar jenis layanan (Day Use/Menginap) + aturan bisnisnya — `backend/routes/jenis_layanan.py`.
+- Backend: endpoint GET `/api/rekomendasi-checkin` — rekomendasi jam check-in Day Use dari data booking Menginap sungguhan + jeda bersih-bersih, filter anti double-booking — `backend/routes/jenis_layanan.py`. Frontend `RekomendasiCheckinDayUse.jsx` disambungkan (bukan data tiruan lagi).
 - Backend: endpoint status/paksa-sinkron/riwayat-stok/pengaturan untuk Sinkronisasi Ketersediaan + service penjadwalan otomatis (background asyncio loop) — `backend/routes/sinkronisasi_ketersediaan.py`, collection baru `sync_channels`/`sync_settings`, dipakai lagi `availability_logs` yang sudah ada.
 - Frontend: `SinkronisasiKetersediaan.jsx` disambungkan penuh ke endpoint nyata di atas — tidak ada lagi data tiruan.
 - Konfigurasi: aktivasi AI Email Parser — `OPENAI_API_KEY` dipasang di `pms-backend.service`.

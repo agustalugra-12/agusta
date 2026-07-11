@@ -39,10 +39,10 @@ async def create_reservation(data: Dict[str, Any], source: str = "public",
 
     data wajib berisi: room_id, nama_tamu, no_hp, email, no_identitas, kendaraan,
     jumlah_tamu, jam_mulai (datetime UTC), jam_selesai (datetime UTC), catatan, created_by.
-    data boleh berisi: tipe (default "day_use").
+    data boleh berisi: tipe (default "day_use"), extra_bed_qty (default 0).
 
     harga_override, jika diisi, wajib berisi subtotal/service_fee/total/dp_min final
-    (tidak dihitung ulang).
+    (tidak dihitung ulang) — extra bed (kalau ada) harus sudah termasuk di subtotal.
     """
     r = await db.rooms.find_one({"id": data["room_id"]})
     if not r:
@@ -54,13 +54,15 @@ async def create_reservation(data: Dict[str, Any], source: str = "public",
     selesai = data["jam_selesai"]
     await check_room_available(data["room_id"], mulai, selesai)
 
+    extra_bed_qty = max(0, min(EXTRA_BED_MAX, int(data.get("extra_bed_qty") or 0)))
+
     if harga_override is not None:
         subtotal = harga_override["subtotal"]
         service_fee = harga_override["service_fee"]
         total = harga_override["total"]
         dp_min = harga_override["dp_min"]
     else:
-        subtotal = r["tarif"]
+        subtotal = r["tarif"] + extra_bed_qty * EXTRA_BED_PRICE
         service_fee = round(subtotal * SERVICE_FEE_PCT)
         total = subtotal + service_fee
         dp_min = round(total * 0.5)
@@ -73,7 +75,7 @@ async def create_reservation(data: Dict[str, Any], source: str = "public",
         "nama_tamu": data["nama_tamu"], "no_hp": data["no_hp"],
         "email": data["email"],
         "no_identitas": data["no_identitas"], "kendaraan": data["kendaraan"],
-        "jumlah_tamu": data["jumlah_tamu"],
+        "jumlah_tamu": data["jumlah_tamu"], "extra_bed_qty": extra_bed_qty,
         "jam_mulai": mulai.isoformat(), "jam_selesai": selesai.isoformat(),
         "catatan": data["catatan"],
         "status": "booking_pending",          # status booking utama (untuk public booking)
