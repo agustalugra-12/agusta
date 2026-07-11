@@ -27,10 +27,17 @@ daftar ini ringkasan untuk manusia, bisa sedikit basi — cek CLI kalau ragu.
 - [x] Pengaturan Sinkronisasi (frekuensi + prioritas saluran) — SEKARANG NYATA, tersimpan di `sync_settings`
 - [x] Service penjadwalan sinkronisasi otomatis — background asyncio loop di `server.py`, interval baca ulang `sync_settings.frekuensi_menit` tiap siklus
 
-### Konfigurasi Webhook (WhatsApp Bot)
-- [x] Halaman utama + form endpoint & kredensial (mock)
-- [x] Uji Koneksi (mock)
+### Konfigurasi Webhook (WhatsApp Bot) — SEKARANG NYATA (2026-07-11)
+- [x] Halaman utama + form endpoint & kredensial — tersimpan di collection `webhook_config` (kredensial milik staf sendiri, provider apa pun: Fonnte/Wablas/Qontak/custom)
+- [x] Uji Koneksi — panggilan HTTP sungguhan ke `webhook_url` tersimpan (bukan simulasi), dicatat ke `wa_connection_log`
 - [x] Perhalus feedback form (validasi inline, badge dirty, batal perubahan)
+
+### Pesan WhatsApp Otomatis & Pemantauan Status — SEKARANG NYATA (2026-07-11)
+- [x] Webhook receiver publik `/api/webhook/whatsapp/incoming` — pesan masuk dijawab AI (OpenAI, konteks ketersediaan kamar real-time dari `rooms`), balasan dikirim via webhook provider yang staf konfigurasi
+- [x] Collection `wa_conversations` — satu sumber kebenaran untuk Log Percakapan, Ringkasan, dan Log Pengiriman (Pemantauan Status), sesuai entitas WHATSAPP_LOGS di PRD
+- [x] Endpoint stats, log percakapan, log pengiriman (per-arah), ringkasan kegagalan 24 jam, log koneksi, alert kegagalan beruntun, kirim ulang pesan gagal — semua dari data sungguhan (kosong/nol sampai ada trafik WhatsApp nyata, ini benar bukan bug)
+- [x] Pengaturan sinkronisasi data ke bot (toggle + frekuensi) tersimpan di `wa_sync_settings`
+- [x] Ketiga halaman (`KonfigurasiWebhook.jsx`, `PesanWhatsAppOtomatis.jsx`, `PemantauanStatusWA.jsx`) disambungkan penuh, tidak ada lagi data tiruan
 
 ### Integrasi Pembayaran Midtrans
 - [x] Halaman utama "Pembayaran" (daftar transaksi, mock) — catatan: checkout tamu sudah nyata di PublicBook.jsx, ini cuma monitoring admin

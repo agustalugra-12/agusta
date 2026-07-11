@@ -20,3 +20,5 @@ from . import otomasi_email  # noqa: F401
 from . import pemetaan_tipe_kamar  # noqa: F401
 from . import sinkronisasi_ketersediaan  # noqa: F401
 from . import jenis_layanan  # noqa: F401
+from . import konfigurasi_webhook  # noqa: F401
+from . import pesan_whatsapp  # noqa: F401

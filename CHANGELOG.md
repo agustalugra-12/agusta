@@ -6,6 +6,10 @@ Format longgar mengikuti [Keep a Changelog](https://keepachangelog.com/).
 ## [Unreleased]
 
 ### Added
+- Backend: `webhook_config` CRUD + uji koneksi sungguhan (HTTP call ke `webhook_url` staf) — `backend/routes/konfigurasi_webhook.py`.
+- Backend: webhook receiver publik `/api/webhook/whatsapp/incoming` — balasan otomatis via AI (OpenAI, konteks ketersediaan kamar real-time), kirim via provider WhatsApp yang dikonfigurasi staf — `backend/routes/pesan_whatsapp.py`, collection baru `wa_conversations`/`wa_connection_log`/`wa_sync_settings`.
+- Backend: endpoint stats, log percakapan, log pengiriman per-arah, ringkasan kegagalan, log koneksi, alert, kirim-ulang — semua dari data sungguhan.
+- Frontend: `KonfigurasiWebhook.jsx`, `PesanWhatsAppOtomatis.jsx`, `PemantauanStatusWA.jsx` disambungkan penuh ke endpoint di atas.
 - Backend: field `extra_bed_qty` di booking publik (`PublicBookingCreate`, `reservation_service.create_reservation`) — harga +Rp 50.000 flat per bed (maks 2), dihitung server-side. Frontend `/book` sekarang punya selector Extra Bed sungguhan (`ExtraBedSelector` dipakai ulang dari halaman pratinjau) yang mengubah harga & tersimpan ke reservasi nyata — `backend/core.py`, `backend/reservation_service.py`, `backend/routes/public.py`, `frontend/src/pages/PublicBook.jsx`, `frontend/src/pages/PermintaanKhususExtraBed.jsx`.
 - Backend: endpoint GET `/api/jenis-reservasi` — daftar jenis layanan (Day Use/Menginap) + aturan bisnisnya — `backend/routes/jenis_layanan.py`.
 - Backend: endpoint GET `/api/rekomendasi-checkin` — rekomendasi jam check-in Day Use dari data booking Menginap sungguhan + jeda bersih-bersih, filter anti double-booking — `backend/routes/jenis_layanan.py`. Frontend `RekomendasiCheckinDayUse.jsx` disambungkan (bukan data tiruan lagi).

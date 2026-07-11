@@ -1,31 +1,14 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Send, CheckCircle2, XCircle, Timer, AlertTriangle, MessageSquare, RefreshCw, BarChart3, History, Wifi, WifiOff } from "lucide-react";
-import { fmtDateTime } from "@/lib/apiClient";
+import api, { fmtDateTime } from "@/lib/apiClient";
 
 // Dasbor kesehatan pengiriman pesan bot WhatsApp (fokus status/infrastruktur), beda
 // dengan tab "Log Percakapan" di PesanWhatsAppOtomatis.jsx yang menampilkan ISI percakapan
 // (pesan masuk + balasan AI). Halaman ini fokus deteksi kegagalan integrasi.
-const MOCK_STATS = {
-  terkirim_hari_ini: 24,
-  gagal_hari_ini: 2,
-  tingkat_sukses: 92,
-  rata_respons_detik: 3.4,
-};
-
-const MOCK_ALERTS = [
-  { id: "1", level: "error", pesan: "3 pesan gagal terkirim ke 6281234567025 dalam 10 menit terakhir — nomor mungkin tidak aktif di WhatsApp.", waktu: "2026-07-11T08:31:00" },
-];
-
-const MOCK_DELIVERY_LOG = [
-  { id: "1", no_hp: "6281234567021", arah: "keluar", status: "Terkirim", waktu: "2026-07-11T10:05:02" },
-  { id: "2", no_hp: "6281234567022", arah: "keluar", status: "Terkirim", waktu: "2026-07-11T09:48:04" },
-  { id: "3", no_hp: "6281234567025", arah: "keluar", status: "Gagal", error: "Nomor tidak terdaftar di WhatsApp", waktu: "2026-07-11T08:31:00" },
-  { id: "4", no_hp: "6281234567023", arah: "masuk", status: "Diterima", waktu: "2026-07-11T09:20:11" },
-];
 
 const STATUS_META = {
   Terkirim: "bg-emerald-100 text-emerald-800",
@@ -33,33 +16,25 @@ const STATUS_META = {
   Gagal: "bg-red-100 text-red-800",
 };
 
-// Data tiruan (stub) — kegagalan pengiriman dikelompokkan per alasan, supaya staff bisa
-// lihat pola gangguan yang paling sering terjadi (bukan cuma daftar kejadian satu-satu).
-const MOCK_FAILURE_SUMMARY = [
-  { alasan: "Nomor tidak terdaftar di WhatsApp", jumlah: 3 },
-  { alasan: "Timeout menghubungi API penyedia", jumlah: 1 },
-];
-
-// Data tiruan (stub) — riwayat naik-turun koneksi webhook WhatsApp Bot (beda dari log
-// pengiriman per pesan) — kapan webhook terputus/tersambung kembali.
-const MOCK_CONNECTION_LOG = [
-  { id: "1", status: "connected", keterangan: "Webhook tersambung kembali otomatis", waktu: "2026-07-11T08:35:00" },
-  { id: "2", status: "disconnected", keterangan: "Webhook terputus — penyedia merespons 502", waktu: "2026-07-11T08:29:00" },
-  { id: "3", status: "connected", keterangan: "Koneksi awal berhasil", waktu: "2026-07-10T14:30:00" },
-];
-
 function DetailPesanDialog({ pesan, onClose, onKirimUlang }) {
   const [resending, setResending] = useState(false);
 
-  const kirimUlang = () => {
+  const kirimUlang = async () => {
     setResending(true);
-    // Mock: nanti diganti panggilan nyata ke API penyedia WhatsApp untuk resend.
-    setTimeout(() => {
-      onKirimUlang(pesan.id);
-      setResending(false);
-      toast.success(`Pesan ke ${pesan.no_hp} berhasil dikirim ulang`);
+    try {
+      const { data } = await api.post(`/pemantauan-status-wa/log-pengiriman/${pesan.conv_id}/kirim-ulang`);
+      if (data.ok) {
+        toast.success(`Pesan ke ${pesan.no_hp} berhasil dikirim ulang`);
+      } else {
+        toast.error(data.error || "Gagal mengirim ulang");
+      }
+      onKirimUlang();
       onClose();
-    }, 900);
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Gagal mengirim ulang");
+    } finally {
+      setResending(false);
+    }
   };
 
   return (
@@ -81,12 +56,11 @@ function DetailPesanDialog({ pesan, onClose, onKirimUlang }) {
                 <span className="font-semibold">Error:</span> {pesan.error}
               </div>
             )}
-            <p className="text-[11px] text-slate-400 pt-1">Data tiruan — belum tersambung ke penyedia WhatsApp sungguhan.</p>
           </div>
         )}
         <DialogFooter>
           <Button variant="ghost" onClick={onClose}>Tutup</Button>
-          {pesan?.status === "Gagal" && (
+          {pesan?.status === "Gagal" && pesan?.arah === "keluar" && (
             <Button data-testid="delivery-kirim-ulang" onClick={kirimUlang} disabled={resending} className="gap-1.5 bg-blue-700 hover:bg-blue-800">
               <RefreshCw className={`w-3.5 h-3.5 ${resending ? "animate-spin" : ""}`} /> {resending ? "Mengirim…" : "Kirim Ulang"}
             </Button>
@@ -98,18 +72,27 @@ function DetailPesanDialog({ pesan, onClose, onKirimUlang }) {
 }
 
 export default function PemantauanStatusWA() {
-  const [deliveryLog, setDeliveryLog] = useState(MOCK_DELIVERY_LOG);
+  const [stats, setStats] = useState({ terkirim_hari_ini: 0, gagal_hari_ini: 0, tingkat_sukses: 100, rata_respons_detik: 0 });
+  const [alerts, setAlerts] = useState([]);
+  const [deliveryLog, setDeliveryLog] = useState([]);
+  const [failureSummary, setFailureSummary] = useState([]);
+  const [connectionLog, setConnectionLog] = useState([]);
   const [selected, setSelected] = useState(null);
 
-  const handleKirimUlang = (id) => {
-    setDeliveryLog((ds) => ds.map((d) => (d.id === id ? { ...d, status: "Terkirim", error: undefined, waktu: new Date().toISOString() } : d)));
+  const load = () => {
+    api.get("/pemantauan-status-wa/stats").then((r) => setStats(r.data)).catch(() => {});
+    api.get("/pemantauan-status-wa/alerts").then((r) => setAlerts(r.data)).catch(() => {});
+    api.get("/pemantauan-status-wa/log-pengiriman").then((r) => setDeliveryLog(r.data)).catch(() => {});
+    api.get("/pemantauan-status-wa/ringkasan-kegagalan").then((r) => setFailureSummary(r.data)).catch(() => {});
+    api.get("/pemantauan-status-wa/connection-log").then((r) => setConnectionLog(r.data)).catch(() => {});
   };
+  useEffect(() => { load(); }, []);
 
   const cards = [
-    { label: "Terkirim Hari Ini", value: MOCK_STATS.terkirim_hari_ini, icon: Send, cls: "bg-blue-50 text-blue-600" },
-    { label: "Gagal Hari Ini", value: MOCK_STATS.gagal_hari_ini, icon: XCircle, cls: "bg-red-50 text-red-600" },
-    { label: "Tingkat Keberhasilan", value: `${MOCK_STATS.tingkat_sukses}%`, icon: CheckCircle2, cls: "bg-emerald-50 text-emerald-600" },
-    { label: "Rata-rata Waktu Respons", value: `${MOCK_STATS.rata_respons_detik}s`, icon: Timer, cls: "bg-amber-50 text-amber-600" },
+    { label: "Terkirim Hari Ini", value: stats.terkirim_hari_ini, icon: Send, cls: "bg-blue-50 text-blue-600" },
+    { label: "Gagal Hari Ini", value: stats.gagal_hari_ini, icon: XCircle, cls: "bg-red-50 text-red-600" },
+    { label: "Tingkat Keberhasilan", value: `${stats.tingkat_sukses}%`, icon: CheckCircle2, cls: "bg-emerald-50 text-emerald-600" },
+    { label: "Rata-rata Waktu Respons", value: `${stats.rata_respons_detik}s`, icon: Timer, cls: "bg-amber-50 text-amber-600" },
   ];
 
   return (
@@ -122,9 +105,9 @@ export default function PemantauanStatusWA() {
         </p>
       </div>
 
-      {MOCK_ALERTS.length > 0 && (
+      {alerts.length > 0 && (
         <div className="space-y-2" data-testid="pemantauan-alerts">
-          {MOCK_ALERTS.map((a) => (
+          {alerts.map((a) => (
             <Card key={a.id} className="border-red-300 bg-red-50">
               <CardContent className="p-3 flex items-start gap-2 text-sm">
                 <AlertTriangle className="w-4 h-4 text-red-600 shrink-0 mt-0.5" />
@@ -162,13 +145,13 @@ export default function PemantauanStatusWA() {
               <h3 className="text-sm font-semibold text-slate-700">Ringkasan Kegagalan</h3>
             </div>
             <div className="space-y-2" data-testid="failure-summary-list">
-              {MOCK_FAILURE_SUMMARY.map((f, i) => (
+              {failureSummary.map((f, i) => (
                 <div key={i} className="flex items-center justify-between text-sm" data-testid={`failure-summary-${i}`}>
                   <span className="text-slate-600">{f.alasan}</span>
                   <span className="font-bold text-red-600">{f.jumlah}x</span>
                 </div>
               ))}
-              {MOCK_FAILURE_SUMMARY.length === 0 && <p className="text-sm text-slate-500">Tidak ada kegagalan tercatat</p>}
+              {failureSummary.length === 0 && <p className="text-sm text-slate-500">Tidak ada kegagalan tercatat</p>}
             </div>
           </CardContent>
         </Card>
@@ -180,7 +163,7 @@ export default function PemantauanStatusWA() {
               <h3 className="text-sm font-semibold text-slate-700">Log Perubahan Status Koneksi</h3>
             </div>
             <div className="space-y-2" data-testid="connection-log-list">
-              {MOCK_CONNECTION_LOG.map((c) => (
+              {connectionLog.map((c) => (
                 <div key={c.id} className="flex items-start gap-2 text-sm" data-testid={`connection-log-${c.id}`}>
                   {c.status === "connected" ? <Wifi className="w-3.5 h-3.5 text-emerald-600 shrink-0 mt-0.5" /> : <WifiOff className="w-3.5 h-3.5 text-red-600 shrink-0 mt-0.5" />}
                   <div className="min-w-0">
@@ -189,6 +172,7 @@ export default function PemantauanStatusWA() {
                   </div>
                 </div>
               ))}
+              {connectionLog.length === 0 && <p className="text-sm text-slate-500">Belum ada riwayat koneksi</p>}
             </div>
           </CardContent>
         </Card>
@@ -228,13 +212,15 @@ export default function PemantauanStatusWA() {
                     <td className="p-3 text-slate-600">{d.error || "-"}</td>
                   </tr>
                 ))}
+                {deliveryLog.length === 0 && (
+                  <tr><td colSpan={5} className="p-6 text-center text-slate-500">Belum ada log pengiriman</td></tr>
+                )}
               </tbody>
             </table>
           </div>
         </CardContent>
       </Card>
-      <p className="text-[11px] text-slate-400">Data tiruan — belum tersambung ke penyedia WhatsApp sungguhan.</p>
-      <DetailPesanDialog pesan={selected} onClose={() => setSelected(null)} onKirimUlang={handleKirimUlang} />
+      <DetailPesanDialog pesan={selected} onClose={() => setSelected(null)} onKirimUlang={load} />
     </div>
   );
 }

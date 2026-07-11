@@ -376,6 +376,16 @@ class MappingRuleUpdate(BaseModel):
     pola: Optional[str] = None
     aktif: Optional[bool] = None
 
+class WebhookConfigUpdate(BaseModel):
+    """Dokumen tunggal di collection `webhook_config` — kredensial penyedia WhatsApp
+    pihak ketiga (Fonnte/Wablas/Qontak/custom) yang dimasukkan staf sendiri.
+    """
+    aktif: Optional[bool] = None
+    provider: Optional[str] = None
+    webhook_url: Optional[str] = None
+    api_key: Optional[str] = None
+    nomor_whatsapp: Optional[str] = None
+
 class SyncSettingsUpdate(BaseModel):
     """Dokumen tunggal di collection `sync_settings` (Pengaturan Sinkronisasi Ketersediaan)."""
     frekuensi_menit: Optional[int] = None

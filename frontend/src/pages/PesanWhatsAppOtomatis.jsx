@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { toast } from "sonner";
 import { Card, CardContent } from "@/components/ui/card";
@@ -7,7 +7,7 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { MessageSquare, Send, CheckCircle2, Bot, Inbox, Activity, Settings2, ExternalLink, Save, Search, XCircle } from "lucide-react";
-import { fmtDateTime } from "@/lib/apiClient";
+import api, { fmtDateTime } from "@/lib/apiClient";
 
 const TABS = [
   { value: "ringkasan", label: "Ringkasan", icon: Activity },
@@ -16,27 +16,20 @@ const TABS = [
   { value: "pengaturan", label: "Pengaturan", icon: Settings2 },
 ];
 
-// Data tiruan (stub) — ringkasan aktivitas bot WhatsApp hari ini.
-const MOCK_STATS = {
-  pesan_masuk_hari_ini: 18,
-  pesan_terkirim_hari_ini: 24,
-  tingkat_sukses_kirim: 96,
-  reservasi_via_wa_hari_ini: 3,
-};
-
-const MOCK_AKTIVITAS_TERBARU = [
-  { id: "1", nama: "Rina Kusuma", no_hp: "6281234567021", ringkasan: "Menanyakan ketersediaan Cottage 12-14 Juli", waktu: "2026-07-11T10:05:00" },
-  { id: "2", nama: "Ahmad Fauzi", no_hp: "6281234567022", ringkasan: "Konfirmasi reservasi RSV-1043 berhasil dibuat", waktu: "2026-07-11T09:48:00" },
-  { id: "3", nama: "081234567023", no_hp: "6281234567023", ringkasan: "Bertanya cara pembatalan booking", waktu: "2026-07-11T09:20:00" },
-  { id: "4", nama: "Sri Wahyuni", no_hp: "6281234567024", ringkasan: "Minta info harga kamar Standard weekend", waktu: "2026-07-11T08:55:00" },
-];
-
 function Ringkasan() {
+  const [stats, setStats] = useState({ pesan_masuk_hari_ini: 0, pesan_terkirim_hari_ini: 0, tingkat_sukses_kirim: 100, reservasi_via_wa_hari_ini: 0 });
+  const [aktivitas, setAktivitas] = useState([]);
+
+  useEffect(() => {
+    api.get("/pesan-whatsapp/stats").then((r) => setStats(r.data)).catch(() => {});
+    api.get("/pesan-whatsapp/percakapan").then((r) => setAktivitas(r.data.slice(0, 5))).catch(() => {});
+  }, []);
+
   const cards = [
-    { label: "Pesan Masuk Hari Ini", value: MOCK_STATS.pesan_masuk_hari_ini, icon: Inbox, cls: "bg-blue-50 text-blue-600" },
-    { label: "Pesan Terkirim Hari Ini", value: MOCK_STATS.pesan_terkirim_hari_ini, icon: Send, cls: "bg-violet-50 text-violet-600" },
-    { label: "Tingkat Sukses Kirim", value: `${MOCK_STATS.tingkat_sukses_kirim}%`, icon: CheckCircle2, cls: "bg-emerald-50 text-emerald-600" },
-    { label: "Reservasi via WhatsApp", value: MOCK_STATS.reservasi_via_wa_hari_ini, icon: Bot, cls: "bg-amber-50 text-amber-600" },
+    { label: "Pesan Masuk Hari Ini", value: stats.pesan_masuk_hari_ini, icon: Inbox, cls: "bg-blue-50 text-blue-600" },
+    { label: "Pesan Terkirim Hari Ini", value: stats.pesan_terkirim_hari_ini, icon: Send, cls: "bg-violet-50 text-violet-600" },
+    { label: "Tingkat Sukses Kirim", value: `${stats.tingkat_sukses_kirim}%`, icon: CheckCircle2, cls: "bg-emerald-50 text-emerald-600" },
+    { label: "Reservasi via WhatsApp", value: stats.reservasi_via_wa_hari_ini, icon: Bot, cls: "bg-amber-50 text-amber-600" },
   ];
   return (
     <div className="space-y-4">
@@ -61,34 +54,27 @@ function Ringkasan() {
           <div className="p-4 border-b border-slate-100">
             <h3 className="text-sm font-semibold text-slate-700">Aktivitas Terbaru</h3>
           </div>
-          {MOCK_AKTIVITAS_TERBARU.map((a) => (
+          {aktivitas.map((a) => (
             <div key={a.id} className="p-3.5 flex items-start gap-3" data-testid={`whatsapp-aktivitas-${a.id}`}>
               <div className="w-8 h-8 rounded-full bg-emerald-50 text-emerald-600 grid place-items-center shrink-0">
                 <MessageSquare className="w-4 h-4" />
               </div>
               <div className="min-w-0 flex-1">
                 <div className="text-sm font-medium">{a.nama}</div>
-                <div className="text-xs text-slate-500 truncate">{a.ringkasan}</div>
+                <div className="text-xs text-slate-500 truncate">{a.pesan_masuk}</div>
               </div>
               <div className="text-xs text-slate-400 shrink-0">{fmtDateTime(a.waktu)}</div>
             </div>
           ))}
+          {aktivitas.length === 0 && (
+            <div className="p-8 text-center text-slate-500 text-sm">Belum ada aktivitas — hubungkan webhook di halaman Konfigurasi Webhook.</div>
+          )}
         </CardContent>
       </Card>
-      <p className="text-[11px] text-slate-400">Data tiruan — belum tersambung ke bot WhatsApp sungguhan.</p>
     </div>
   );
 }
 
-// Data tiruan (stub) — mengikuti entitas WHATSAPP_LOGS di PRD (guest_phone, message,
-// ai_response, sent_at), ditambah `status_kirim` untuk Pemantauan Status (task terpisah).
-const MOCK_CONVERSATIONS = [
-  { id: "1", nama: "Rina Kusuma", no_hp: "6281234567021", pesan_masuk: "Cottage tanggal 12-14 Juli masih ada?", balasan_ai: "Cottage tersedia 2 unit untuk 12-14 Juli, Rp140.000/malam. Mau saya bantu booking?", waktu: "2026-07-11T10:05:00", status_kirim: "Terkirim" },
-  { id: "2", nama: "Ahmad Fauzi", no_hp: "6281234567022", pesan_masuk: "Konfirmasi booking RSV-1043 dong", balasan_ai: "Reservasi RSV-1043 sudah confirmed, kamar Standard No.9, check-in 12 Juli 14:00. Sampai jumpa!", waktu: "2026-07-11T09:48:00", status_kirim: "Terkirim" },
-  { id: "3", nama: "081234567023", no_hp: "6281234567023", pesan_masuk: "Cara batalin booking gimana ya", balasan_ai: "Untuk pembatalan, mohon hubungi resepsionis di nomor ini dengan menyebutkan kode booking Anda.", waktu: "2026-07-11T09:20:00", status_kirim: "Terkirim" },
-  { id: "4", nama: "Sri Wahyuni", no_hp: "6281234567024", pesan_masuk: "Harga kamar standard weekend berapa?", balasan_ai: "Kamar Standard Rp120.000/malam (hari biasa maupun weekend, harga sama). Mau saya carikan tanggalnya?", waktu: "2026-07-11T08:55:00", status_kirim: "Terkirim" },
-  { id: "5", nama: "Dedi Kurniawan", no_hp: "6281234567025", pesan_masuk: "Halo, ada promo gak buat 3 malam?", balasan_ai: null, waktu: "2026-07-11T08:30:00", status_kirim: "Gagal" },
-];
 
 const FREKUENSI_WA_OPTIONS = [
   { value: "realtime", label: "Real-time (setiap ada perubahan)" },
@@ -109,20 +95,36 @@ const DATA_SYNC_OPTIONS = [
 function PengaturanWhatsApp() {
   const [dataSync, setDataSync] = useState({ ketersediaan: true, harga: true, status_booking: true, reservasi_baru: false });
   const [frekuensi, setFrekuensi] = useState("realtime");
+  const [webhookAktif, setWebhookAktif] = useState(false);
+
+  useEffect(() => {
+    api.get("/pesan-whatsapp/pengaturan").then((r) => {
+      setDataSync(r.data.data_sync);
+      setFrekuensi(r.data.frekuensi);
+    }).catch(() => {});
+    api.get("/konfigurasi-webhook").then((r) => setWebhookAktif(!!r.data.aktif)).catch(() => {});
+  }, []);
 
   const toggleSync = (key) => setDataSync((d) => ({ ...d, [key]: !d[key] }));
-  const simpan = () => toast.success("Pengaturan sinkronisasi WhatsApp Bot disimpan");
+  const simpan = async () => {
+    try {
+      await api.put("/pesan-whatsapp/pengaturan", { data_sync: dataSync, frekuensi });
+      toast.success("Pengaturan sinkronisasi WhatsApp Bot disimpan");
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Gagal menyimpan pengaturan");
+    }
+  };
 
   return (
     <div className="space-y-4">
-      <Card className="border-slate-200">
+      <Card className={webhookAktif ? "border-emerald-200" : "border-slate-200"}>
         <CardContent className="p-4 flex items-center justify-between gap-3">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-emerald-50 text-emerald-600 grid place-items-center shrink-0">
+            <div className={`w-10 h-10 rounded-xl grid place-items-center shrink-0 ${webhookAktif ? "bg-emerald-50 text-emerald-600" : "bg-slate-100 text-slate-400"}`}>
               <CheckCircle2 className="w-5 h-5" />
             </div>
             <div>
-              <div className="font-semibold text-sm">Webhook Terhubung</div>
+              <div className="font-semibold text-sm">{webhookAktif ? "Webhook Terhubung" : "Webhook Belum Dikonfigurasi"}</div>
               <div className="text-xs text-slate-500">Kredensial &amp; endpoint diatur di halaman Konfigurasi Webhook.</div>
             </div>
           </div>
@@ -179,19 +181,23 @@ function PengaturanWhatsApp() {
       <Button data-testid="wa-simpan-pengaturan" onClick={simpan} className="gap-1.5 bg-blue-700 hover:bg-blue-800">
         <Save className="w-3.5 h-3.5" /> Simpan Pengaturan
       </Button>
-      <p className="text-[11px] text-slate-400">Data tiruan — belum tersambung ke Availability Engine/bot sungguhan.</p>
     </div>
   );
 }
 
 function LogPercakapan() {
   const [search, setSearch] = useState("");
+  const [conversations, setConversations] = useState([]);
+
+  useEffect(() => {
+    api.get("/pesan-whatsapp/percakapan").then((r) => setConversations(r.data)).catch(() => {});
+  }, []);
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
-    if (!q) return MOCK_CONVERSATIONS;
-    return MOCK_CONVERSATIONS.filter((c) => c.nama.toLowerCase().includes(q) || c.no_hp.includes(q));
-  }, [search]);
+    if (!q) return conversations;
+    return conversations.filter((c) => c.nama.toLowerCase().includes(q) || c.no_hp.includes(q));
+  }, [conversations, search]);
 
   return (
     <div className="space-y-3">
@@ -235,7 +241,6 @@ function LogPercakapan() {
           )}
         </CardContent>
       </Card>
-      <p className="text-[11px] text-slate-400">Data tiruan — belum tersambung ke bot WhatsApp sungguhan.</p>
     </div>
   );
 }

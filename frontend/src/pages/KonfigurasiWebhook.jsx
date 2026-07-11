@@ -1,32 +1,30 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { MessageCircle, Save, Eye, EyeOff, CheckCircle2, XCircle, Zap, Loader2, Undo2, AlertCircle } from "lucide-react";
-import { fmtDateTime } from "@/lib/apiClient";
+import api, { fmtDateTime } from "@/lib/apiClient";
 
 // Provider webhook WhatsApp pihak ketiga yang umum dipakai bisnis di Indonesia.
 const PROVIDER_OPTIONS = ["Fonnte", "Wablas", "Qontak", "Lainnya (Custom API)"];
 
-// Data tiruan (stub) — konfigurasi webhook WhatsApp Bot yang sudah tersimpan.
-const MOCK_CONFIG = {
-  aktif: true,
-  provider: "Fonnte",
-  webhook_url: "https://api.fonnte.com/send",
-  api_key: "fonnte_live_sk_8f2a9c7b3e4d5061a2b3c4d5e6f7",
-  nomor_whatsapp: "628123456789",
-  updated_at: "2026-07-10T14:30:00",
+const EMPTY_CONFIG = {
+  aktif: false, provider: "Fonnte", webhook_url: "", api_key: "", nomor_whatsapp: "", updated_at: null,
 };
 
 export default function KonfigurasiWebhook() {
-  const [saved, setSaved] = useState(MOCK_CONFIG);
-  const [form, setForm] = useState(MOCK_CONFIG);
+  const [saved, setSaved] = useState(EMPTY_CONFIG);
+  const [form, setForm] = useState(EMPTY_CONFIG);
   const [showKey, setShowKey] = useState(false);
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState(null); // { ok, message, tested_at }
   const [attemptedSave, setAttemptedSave] = useState(false);
+
+  useEffect(() => {
+    api.get("/konfigurasi-webhook").then((r) => { setSaved(r.data); setForm(r.data); }).catch(() => {});
+  }, []);
 
   const dirty = JSON.stringify(form) !== JSON.stringify(saved);
   const errors = {
@@ -38,16 +36,19 @@ export default function KonfigurasiWebhook() {
 
   const maskedKey = (key) => (key.length <= 8 ? "••••••••" : `${key.slice(0, 6)}${"•".repeat(Math.min(16, key.length - 10))}${key.slice(-4)}`);
 
-  const simpan = () => {
+  const simpan = async () => {
     setAttemptedSave(true);
     if (!valid) { toast.error("Lengkapi dulu field yang wajib diisi"); return; }
-    const now = new Date().toISOString();
-    const next = { ...form, updated_at: now };
-    setSaved(next);
-    setForm(next);
-    setTestResult(null);
-    setAttemptedSave(false);
-    toast.success("Konfigurasi webhook WhatsApp disimpan");
+    try {
+      const { data } = await api.put("/konfigurasi-webhook", { ...form, aktif: true });
+      setSaved(data);
+      setForm(data);
+      setTestResult(null);
+      setAttemptedSave(false);
+      toast.success("Konfigurasi webhook WhatsApp disimpan");
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Gagal menyimpan konfigurasi");
+    }
   };
 
   const batalkanPerubahan = () => {
@@ -55,20 +56,18 @@ export default function KonfigurasiWebhook() {
     setAttemptedSave(false);
   };
 
-  const ujiKoneksi = () => {
+  const ujiKoneksi = async () => {
     setTesting(true);
     setTestResult(null);
-    // Mock: nanti diganti panggilan nyata ke endpoint provider (mis. GET status/ping API).
-    setTimeout(() => {
-      const ok = Boolean(saved.webhook_url.trim() && saved.api_key.trim());
-      setTestResult({
-        ok,
-        message: ok ? "Berhasil terhubung ke penyedia — endpoint merespons normal." : "Gagal — endpoint atau API key belum diisi.",
-        tested_at: new Date().toISOString(),
-      });
+    try {
+      const { data } = await api.post("/konfigurasi-webhook/test");
+      setTestResult(data);
+      if (data.ok) toast.success("Uji koneksi berhasil"); else toast.error("Uji koneksi gagal");
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Gagal menguji koneksi");
+    } finally {
       setTesting(false);
-      if (ok) toast.success("Uji koneksi berhasil"); else toast.error("Uji koneksi gagal");
-    }, 900);
+    }
   };
 
   return (
@@ -200,7 +199,6 @@ export default function KonfigurasiWebhook() {
               </Button>
             )}
           </div>
-          <p className="text-[11px] text-slate-400">Data tiruan — belum terhubung ke penyedia WhatsApp sungguhan.</p>
         </CardContent>
       </Card>
     </div>
