@@ -129,6 +129,37 @@ async def log_availability_change(room_id: str, room_tipe: str, stock_change: in
         "booking_id": booking_id,
         "changed_at": now_iso(),
     })
+    await push_sync_event("ketersediaan", f"Stok {room_tipe} berubah ({stock_change:+d}): {reason}")
+
+
+async def push_sync_event(data_type: str, detail: str) -> None:
+    """Dorong notifikasi perubahan data Pelangi PMS ke bot WhatsApp (Sinkronisasi Data
+    PMS) — best-effort, tidak boleh menggagalkan aksi utama (booking/checkin/dst) kalau
+    provider bot sedang bermasalah. Satu kali retry otomatis; kegagalan dicatat ke
+    `wa_connection_log` supaya bisa dipantau di Pemantauan Status / Sinkronisasi Data PMS.
+    """
+    cfg = await db.webhook_config.find_one({})
+    if not cfg or not cfg.get("aktif") or not cfg.get("webhook_url") or not cfg.get("api_key"):
+        return
+    import httpx
+    payload = {"event": "pms_data_sync", "data_type": data_type, "detail": detail, "waktu": now_iso()}
+    for attempt in range(2):  # 1x percobaan awal + 1x retry
+        try:
+            async with httpx.AsyncClient(timeout=8) as http:
+                resp = await http.post(cfg["webhook_url"], headers={"Authorization": f"Bearer {cfg['api_key']}"}, json=payload)
+            if resp.status_code < 400:
+                await db.sync_data_pms_log.insert_one({
+                    "id": str(uuid.uuid4()), "data_type": data_type, "detail": detail,
+                    "ok": True, "waktu": now_iso(),
+                })
+                return
+        except Exception:
+            pass
+    await db.sync_data_pms_log.insert_one({
+        "id": str(uuid.uuid4()), "data_type": data_type,
+        "detail": f"Gagal mendorong sinkron setelah 2 percobaan: {detail}",
+        "ok": False, "waktu": now_iso(),
+    })
 
 def calc_tagihan(tarif_dasar: int, jam_checkin: datetime, jam_checkout: datetime, overtime_manual: Optional[int] = None):
     """Hitung tagihan check-out: 6 jam pertama = tarif dasar, sisanya Rp 20.000/jam (ceiling)."""
@@ -390,6 +421,22 @@ class SyncSettingsUpdate(BaseModel):
     """Dokumen tunggal di collection `sync_settings` (Pengaturan Sinkronisasi Ketersediaan)."""
     frekuensi_menit: Optional[int] = None
     prioritas: Optional[List[str]] = None
+
+class EmailSendLog(BaseModel):
+    """Dokumen di collection `email_send_log` — riwayat pengiriman voucher/bukti booking
+    ke tamu (Pengiriman Voucher Otomatis). Pengiriman sungguhan (SMTP/API) BELUM aktif
+    (butuh kredensial yang belum diberikan) — collection & endpoint sudah siap, tinggal
+    diisi begitu service pengiriman diaktifkan.
+    """
+    id: str
+    booking_id: str
+    kode_booking: str
+    nama_tamu: str
+    tujuan_email: str
+    metode: str = "Email"
+    status: str  # Terkirim | Gagal
+    error: Optional[str] = None
+    waktu: str
 
 class EmailLog(BaseModel):
     """Dokumen di collection `email_logs` — riwayat email OTA yang masuk ke Gmail dan

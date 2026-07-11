@@ -608,7 +608,7 @@ function SuccessView({ bookingId }) {
           <button
             type="button"
             data-testid="pb-unduh-voucher"
-            onClick={() => window.print()}
+            onClick={() => window.open(`${PUBLIC_API.defaults.baseURL}/public/bookings/${bk.id}/voucher.pdf`, "_blank")}
             className="print:hidden inline-flex items-center justify-center gap-2 w-full px-4 h-10 rounded-md border border-slate-300 text-slate-700 hover:bg-slate-50 text-sm font-medium"
           >
             <Download className="w-4 h-4" /> Unduh Voucher (PDF)

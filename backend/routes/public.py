@@ -1,6 +1,11 @@
 from core import *
 from reservation_service import check_room_available, create_reservation
 import httpx
+import io
+from fastapi.responses import StreamingResponse
+from reportlab.lib.pagesizes import A5
+from reportlab.lib.units import mm
+from reportlab.pdfgen import canvas
 
 @api.get("/public/rooms-catalog")
 async def public_rooms_catalog():
@@ -179,3 +184,86 @@ async def public_get_booking(bid: str):
         "subtotal", "service_fee", "total", "dp_min", "invoice_id",
     ]}
     return safe
+
+
+def _fmt_rp(n) -> str:
+    return f"Rp {int(n or 0):,}".replace(",", ".")
+
+
+def _fmt_tanggal(iso: str) -> str:
+    try:
+        d = parse_iso(iso, "waktu").astimezone(timezone(timedelta(hours=7)))
+        return d.strftime("%d %b %Y, %H:%M") + " WIB"
+    except Exception:
+        return iso
+
+
+def _generate_voucher_pdf(b: dict) -> bytes:
+    buf = io.BytesIO()
+    c = canvas.Canvas(buf, pagesize=A5)
+    w, h = A5
+    y = h - 20 * mm
+
+    c.setFont("Helvetica-Bold", 16)
+    c.drawString(15 * mm, y, "Pelangi Homestay")
+    y -= 7 * mm
+    c.setFont("Helvetica", 9)
+    c.drawString(15 * mm, y, "Voucher / Bukti Reservasi")
+    y -= 10 * mm
+
+    c.line(15 * mm, y, w - 15 * mm, y)
+    y -= 8 * mm
+
+    def baris(label, value, bold=False):
+        nonlocal y
+        c.setFont("Helvetica", 10)
+        c.drawString(15 * mm, y, label)
+        c.setFont("Helvetica-Bold" if bold else "Helvetica", 10)
+        c.drawRightString(w - 15 * mm, y, str(value))
+        y -= 7 * mm
+
+    baris("Kode Booking", b["kode"], bold=True)
+    baris("Nama Tamu", b["nama_tamu"])
+    baris("Kamar", f"{b['room_nomor']} ({b['room_tipe']})")
+    baris("Check-In", _fmt_tanggal(b["jam_mulai"]))
+    if b.get("jam_selesai"):
+        baris("Check-Out", _fmt_tanggal(b["jam_selesai"]))
+    baris("Jumlah Tamu", b.get("jumlah_tamu", 1))
+    if b.get("extra_bed_qty"):
+        baris("Extra Bed", f"x{b['extra_bed_qty']}")
+    y -= 3 * mm
+    c.line(15 * mm, y, w - 15 * mm, y)
+    y -= 8 * mm
+
+    baris("Subtotal", _fmt_rp(b.get("subtotal")))
+    baris("Service Fee", _fmt_rp(b.get("service_fee")))
+    baris("Total", _fmt_rp(b.get("total")), bold=True)
+    baris("Status Pembayaran", (b.get("payment_status") or "").upper(), bold=True)
+
+    y -= 5 * mm
+    c.setFont("Helvetica-Oblique", 8)
+    c.drawString(15 * mm, y, "Mohon tunjukkan voucher ini saat kedatangan. Terima kasih telah memilih Pelangi Homestay.")
+
+    c.showPage()
+    c.save()
+    return buf.getvalue()
+
+
+@api.get("/pengiriman-voucher/logs")
+async def list_email_send_log(user: dict = Depends(get_current_user)):
+    """Log pengiriman voucher ke tamu (staf). Kosong sampai service pengiriman email
+    sungguhan diaktifkan (butuh kredensial SMTP/API yang belum diberikan) — skema &
+    endpoint sudah siap dipakai begitu itu aktif."""
+    return await db.email_send_log.find({}, {"_id": 0}).sort("waktu", -1).to_list(200)
+
+
+@api.get("/public/bookings/{bid}/voucher.pdf")
+async def public_download_voucher_pdf(bid: str):
+    b = await db.bookings.find_one({"id": bid}, {"_id": 0})
+    if not b:
+        raise HTTPException(404, "Booking tidak ditemukan")
+    pdf_bytes = _generate_voucher_pdf(b)
+    return StreamingResponse(
+        io.BytesIO(pdf_bytes), media_type="application/pdf",
+        headers={"Content-Disposition": f'inline; filename="voucher-{b["kode"]}.pdf"'},
+    )

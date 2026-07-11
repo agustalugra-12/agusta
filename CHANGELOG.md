@@ -6,6 +6,9 @@ Format longgar mengikuti [Keep a Changelog](https://keepachangelog.com/).
 ## [Unreleased]
 
 ### Added
+- Backend: generator PDF voucher sungguhan (reportlab) — `GET /api/public/bookings/{id}/voucher.pdf`, dipakai tombol "Unduh Voucher" di halaman konfirmasi tamu (ganti dari `window.print()`) — `backend/routes/public.py`, `backend/requirements.txt`.
+- Backend: skema `EmailSendLog` + endpoint `GET /api/pengiriman-voucher/logs` — `backend/core.py`, `backend/routes/public.py`. Frontend `PengirimanVoucherOtomatis.jsx` disambungkan.
+- Backend: dashboard Sinkronisasi Data PMS -> bot WhatsApp (status aliran data, perbandingan bot/PMS, referensi reservasi, alert) + `push_sync_event` (dorong notifikasi ke webhook bot tiap perubahan stok, dengan retry) — `backend/routes/sinkronisasi_data_pms.py`, `backend/core.py`. Frontend `SinkronisasiDataPMS.jsx` disambungkan.
 - Backend: endpoint `POST /api/public/bookings/{id}/batalkan` — pembatalan mandiri tamu SEKARANG OTOMATIS PENUH (bukan lagi "ajukan permintaan"), sesuai keputusan bisnis yang dikonfirmasi user 2026-07-11. Update status, lepas kamar, hitung biaya H-3/H-1 (sama dengan kalkulasi frontend), catat `refund_amount` (refund uang tetap manual oleh staf), kirim notifikasi WA best-effort — `backend/routes/public.py`. Frontend `PublicBook.jsx` disambungkan (dialog batalkan tidak lagi cuma toast, benar-benar memanggil endpoint).
 - Backend: `webhook_config` CRUD + uji koneksi sungguhan (HTTP call ke `webhook_url` staf) — `backend/routes/konfigurasi_webhook.py`.
 - Backend: webhook receiver publik `/api/webhook/whatsapp/incoming` — balasan otomatis via AI (OpenAI, konteks ketersediaan kamar real-time), kirim via provider WhatsApp yang dikonfigurasi staf — `backend/routes/pesan_whatsapp.py`, collection baru `wa_conversations`/`wa_connection_log`/`wa_sync_settings`.

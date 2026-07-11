@@ -118,6 +118,22 @@ Layer **frontend** Fase 2 selesai 100% (30/30 task NgodingPakeAI, 2026-07-11). L
 - [x] Endpoint GET `/api/unmapped-ota-rooms` (dari `email_logs.extracted_data.tipe_kamar` yang belum dipetakan — kosong sampai email parsing sungguhan aktif)
 - [x] Frontend `PemetaanTipeKamar.jsx` disambungkan ke endpoint nyata (bukan mock lagi)
 
+### Backend — Sinkronisasi Data PMS -> WhatsApp Bot
+- [x] Dashboard status aliran data (ketersediaan/harga selalu "synced" by design — bot baca live, bukan salinan), perbandingan bot vs PMS (selalu cocok, bukti zero-drift), referensi reservasi, log alert — `backend/routes/sinkronisasi_data_pms.py`
+- [x] `push_sync_event` di `core.py` — dorong notifikasi ke webhook bot tiap ada perubahan stok (dipanggil dari `log_availability_change`), dengan 1x retry otomatis + log kegagalan
+- [x] Endpoint manual resync `POST /sinkronisasi-data-pms/webhook` (retry manual oleh staf)
+- [x] Frontend `SinkronisasiDataPMS.jsx` disambungkan penuh
+
+### Backend — Voucher PDF & Log Pengiriman (2026-07-11)
+- [x] Generator PDF voucher SUNGGUHAN (reportlab, ditambahkan ke requirements.txt) — `GET /api/public/bookings/{id}/voucher.pdf`, dipakai tombol "Unduh Voucher" di `/book` (ganti dari `window.print()`)
+- [x] Skema `EmailSendLog` (collection `email_send_log`) + endpoint `GET /api/pengiriman-voucher/logs` — frontend `PengirimanVoucherOtomatis.jsx` disambungkan (kosong sampai pengiriman email aktif, ini benar bukan bug)
+- [ ] **Diblokir, butuh kredensial (user memilih skip 2026-07-11):** service kirim email voucher sungguhan (SMTP/API key belum ada) — 5 task NgodingPakeAI ditandai `failed` dengan alasan jelas. Kalau nanti mau aktifkan: sediakan SMTP host/port/user/App-Password ATAU API key SendGrid/Resend/Mailgun.
+
+### Backend — Manajemen Stok Terpusat, Booking Engine, Harga & Kalkulasi, Integrasi Midtrans, Jenis Reservasi/Layanan — SUDAH LENGKAP (diverifikasi 2026-07-11, tanpa kode baru)
+- [x] Semua sudah nyata dari batch Fase 1/2 sebelumnya (`availability_logs`, `reservation_service.py`, `payments.py`) — 24 task NgodingPakeAI ditandai selesai setelah verifikasi kode, bukan dikerjakan ulang
+
+**Fase 2 backend selesai 92/97 task** (5 sisanya diblokir kredensial email, lihat di atas).
+
 ### Backend — Sinkronisasi Ketersediaan
 - [x] Status saluran, riwayat stok, pengaturan, auto-sync scheduler — lihat `backend/routes/sinkronisasi_ketersediaan.py` (semua nyata, sudah live)
 

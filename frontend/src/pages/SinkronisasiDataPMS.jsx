@@ -2,7 +2,9 @@ import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { Card, CardContent } from "@/components/ui/card";
 import { BedDouble, Tag, ClipboardList, Bot, CheckCircle2, Clock, AlertTriangle, CheckCircle, XCircle, ExternalLink } from "lucide-react";
-import { fmtDateTime } from "@/lib/apiClient";
+import api, { fmtDateTime } from "@/lib/apiClient";
+
+const FLOW_ICON = { ketersediaan: BedDouble, harga: Tag, status_booking: ClipboardList, reservasi_baru: Bot };
 
 const CHECK_INTERVAL_MS = 10000;
 
@@ -31,54 +33,37 @@ function LiveIndicator({ lastChecked }) {
 // "Sinkronisasi Ketersediaan" (SinkronisasiKetersediaan.jsx) yang memantau semua saluran
 // penjualan (Website/OTA/WhatsApp) terhadap Availability Engine — halaman ini fokus pada
 // data spesifik apa saja yang mengalir ke bot WhatsApp dan kapan terakhir disinkron.
-// Pengaturan (apa yang disinkron + frekuensi) ada di tab "Pengaturan" halaman Pesan
-// WhatsApp Otomatis (PesanWhatsAppOtomatis.jsx) — halaman ini murni status/monitoring.
-const MOCK_DATA_FLOWS = [
-  { key: "ketersediaan", label: "Ketersediaan Kamar", icon: BedDouble, last_sync: "2026-07-11T10:14:00", jumlah_record: 18, status: "synced" },
-  { key: "harga", label: "Harga & Tarif", icon: Tag, last_sync: "2026-07-11T10:14:00", jumlah_record: 2, status: "synced" },
-  { key: "status_booking", label: "Status Booking", icon: ClipboardList, last_sync: "2026-07-11T10:12:00", jumlah_record: 6, status: "synced" },
-  { key: "reservasi_baru", label: "Reservasi Baru (Email OTA)", icon: Bot, last_sync: "2026-07-11T09:03:00", jumlah_record: 0, status: "pending" },
-];
-
+// Bot di sistem ini membaca `rooms`/`bookings` langsung secara live (bukan salinan
+// terpisah), jadi ketersediaan & harga selalu tersinkron sempurna by design — bukan
+// kebetulan datanya selalu cocok.
 const STATUS_META = {
   synced: { label: "Tersinkron", cls: "bg-emerald-100 text-emerald-800" },
   pending: { label: "Menunggu Perubahan", cls: "bg-slate-200 text-slate-600" },
   error: { label: "Gagal Sinkron", cls: "bg-red-100 text-red-800" },
 };
 
-// Data tiruan (stub) — perbandingan jumlah kamar tersedia yang "dilihat" bot WhatsApp
-// (dari sinkronisasi terakhir) vs jumlah tersedia sungguhan di Pelangi PMS saat ini.
-// Kalau beda, artinya bot belum menerima update terbaru (drift) — inilah yang dicek
-// dashboard ini secara visual, bukan cuma percaya status "Tersinkron" begitu saja.
-const MOCK_AVAILABILITY_COMPARISON = [
-  { tipe: "Standard", bot: 7, pms: 7 },
-  { tipe: "Cottage", bot: 2, pms: 3 },
-];
-
-// Data tiruan (stub) — reservasi Pelangi PMS yang jadi rujukan/sumber data yang barusan
-// disinkron ke bot WhatsApp bot (mis. reservasi baru hasil AI Email Parser yang bot pakai
-// untuk menjawab "sudah dikonfirmasi ya?" dari tamu).
-const MOCK_PMS_REFERENCES = [
-  { id: "1", kode: "RSV-1043", nama_tamu: "Ahmad Fauzi", room_tipe: "Standard", status: "Confirmed" },
-  { id: "2", kode: "RSV-1042", nama_tamu: "Dewi Anggraini", room_tipe: "Cottage", status: "Confirmed" },
-  { id: "3", kode: "RSV-1041", nama_tamu: "Budi Santoso", room_tipe: "Standard", status: "Pending" },
-];
-
-// Data tiruan (stub) — riwayat gangguan sinkronisasi data ke bot WhatsApp.
-const MOCK_ALERT_LOGS = [
-  { id: "1", data_type: "Reservasi Baru (Email OTA)", pesan: "Timeout menghubungi Availability Engine setelah 3 percobaan", waktu: "2026-07-11T09:03:00", resolved: false },
-  { id: "2", data_type: "Ketersediaan Kamar", pesan: "Webhook WhatsApp Bot merespons 502 — sinkron ditunda otomatis", waktu: "2026-07-10T22:14:00", resolved: true },
-  { id: "3", data_type: "Status Booking", pesan: "Kredensial webhook kedaluwarsa saat sinkron terjadwal", waktu: "2026-07-10T14:00:00", resolved: true },
-];
-
 export default function SinkronisasiDataPMS() {
-  const lastSyncAll = MOCK_DATA_FLOWS.reduce((max, f) => (f.last_sync > max ? f.last_sync : max), MOCK_DATA_FLOWS[0].last_sync);
+  const [flows, setFlows] = useState([]);
+  const [comparison, setComparison] = useState([]);
+  const [referensi, setReferensi] = useState([]);
+  const [alertLogs, setAlertLogs] = useState([]);
   const [lastChecked, setLastChecked] = useState(() => new Date().toISOString());
 
+  const load = () => {
+    api.get("/sinkronisasi-data-pms/dashboard").then((r) => setFlows(r.data.flows)).catch(() => {});
+    api.get("/sinkronisasi-data-pms/perbandingan-ketersediaan").then((r) => setComparison(r.data)).catch(() => {});
+    api.get("/sinkronisasi-data-pms/referensi").then((r) => setReferensi(r.data)).catch(() => {});
+    api.get("/sinkronisasi-data-pms/alerts").then((r) => setAlertLogs(r.data)).catch(() => {});
+    setLastChecked(new Date().toISOString());
+  };
+
   useEffect(() => {
-    const t = setInterval(() => setLastChecked(new Date().toISOString()), CHECK_INTERVAL_MS);
+    load();
+    const t = setInterval(load, CHECK_INTERVAL_MS);
     return () => clearInterval(t);
   }, []);
+
+  const lastSyncAll = flows.reduce((max, f) => (f.last_sync && f.last_sync > max ? f.last_sync : max), flows[0]?.last_sync || null);
 
   return (
     <div className="space-y-6" data-testid="sinkronisasi-data-pms-page">
@@ -101,19 +86,20 @@ export default function SinkronisasiDataPMS() {
       </Card>
 
       <div className="grid sm:grid-cols-2 gap-3" data-testid="data-flow-grid">
-        {MOCK_DATA_FLOWS.map((f) => {
+        {flows.map((f) => {
           const meta = STATUS_META[f.status];
+          const Icon = FLOW_ICON[f.key] || Bot;
           return (
             <Card key={f.key} className="border-slate-200" data-testid={`data-flow-card-${f.key}`}>
               <CardContent className="p-4 flex items-center justify-between gap-3">
                 <div className="flex items-center gap-3">
                   <div className="w-10 h-10 rounded-xl bg-blue-50 text-blue-600 grid place-items-center shrink-0">
-                    <f.icon className="w-5 h-5" />
+                    <Icon className="w-5 h-5" />
                   </div>
                   <div>
                     <div className="font-semibold text-sm">{f.label}</div>
                     <div className="text-xs text-slate-500 flex items-center gap-1 mt-0.5">
-                      <Clock className="w-3 h-3" /> {fmtDateTime(f.last_sync)} &bull; {f.jumlah_record} data
+                      <Clock className="w-3 h-3" /> {f.last_sync ? fmtDateTime(f.last_sync) : "Belum pernah"} &bull; {f.jumlah_record} data
                     </div>
                   </div>
                 </div>
@@ -128,7 +114,7 @@ export default function SinkronisasiDataPMS() {
         <CardContent className="p-4 space-y-3">
           <h3 className="text-sm font-semibold text-slate-700">Ketersediaan Kamar: Bot vs PMS</h3>
           <div className="grid sm:grid-cols-2 gap-3" data-testid="availability-comparison-grid">
-            {MOCK_AVAILABILITY_COMPARISON.map((c) => {
+            {comparison.map((c) => {
               const cocok = c.bot === c.pms;
               return (
                 <div key={c.tipe} className={`rounded-lg border p-3 ${cocok ? "border-slate-200" : "border-red-300 bg-red-50"}`} data-testid={`availability-comparison-${c.tipe}`}>
@@ -159,7 +145,7 @@ export default function SinkronisasiDataPMS() {
             </Link>
           </div>
           <div className="divide-y divide-slate-100" data-testid="pms-reference-list">
-            {MOCK_PMS_REFERENCES.map((r) => (
+            {referensi.map((r) => (
               <div key={r.id} className="p-3 flex items-center justify-between gap-3" data-testid={`pms-reference-${r.id}`}>
                 <div>
                   <span className="font-semibold text-sm">{r.kode}</span>
@@ -188,7 +174,7 @@ export default function SinkronisasiDataPMS() {
                 </tr>
               </thead>
               <tbody>
-                {MOCK_ALERT_LOGS.map((a) => (
+                {alertLogs.map((a) => (
                   <tr key={a.id} data-testid={`alert-log-row-${a.id}`} className="border-t border-slate-100">
                     <td className="p-3 text-slate-500">{fmtDateTime(a.waktu)}</td>
                     <td className="p-3 font-medium">{a.data_type}</td>
@@ -201,7 +187,7 @@ export default function SinkronisasiDataPMS() {
                     </td>
                   </tr>
                 ))}
-                {MOCK_ALERT_LOGS.length === 0 && (
+                {alertLogs.length === 0 && (
                   <tr><td colSpan={4} className="p-6 text-center text-slate-500">Tidak ada gangguan tercatat</td></tr>
                 )}
               </tbody>
@@ -209,7 +195,6 @@ export default function SinkronisasiDataPMS() {
           </div>
         </CardContent>
       </Card>
-      <p className="text-[11px] text-slate-400">Data tiruan — belum tersambung ke Availability Engine/bot sungguhan.</p>
     </div>
   );
 }

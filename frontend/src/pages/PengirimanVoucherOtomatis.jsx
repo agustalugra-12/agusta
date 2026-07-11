@@ -1,19 +1,10 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { Search, X, Mail, MessageSquare, CheckCircle2, XCircle } from "lucide-react";
-import { fmtDateTime } from "@/lib/apiClient";
-
-// Data tiruan (stub) — log pengiriman voucher/bukti booking otomatis ke tamu (email atau
-// WhatsApp) setelah reservasi terkonfirmasi. Belum tersambung ke pengiriman sungguhan.
-const MOCK_VOUCHER_LOG = [
-  { id: "1", kode_booking: "RSV-1042", nama_tamu: "Dewi Anggraini", metode: "Email", status: "Terkirim", waktu: "2026-07-11T09:31:00" },
-  { id: "2", kode_booking: "RSV-1041", nama_tamu: "Budi Santoso", metode: "WhatsApp", status: "Terkirim", waktu: "2026-07-11T10:16:00" },
-  { id: "3", kode_booking: "RSV-1040", nama_tamu: "Ahmad Fauzi", metode: "Email", status: "Gagal", waktu: "2026-07-10T08:12:00", error: "Alamat email tidak valid" },
-  { id: "4", kode_booking: "RSV-1039", nama_tamu: "Sri Wahyuni", metode: "WhatsApp", status: "Terkirim", waktu: "2026-07-09T07:05:00" },
-];
+import api, { fmtDateTime } from "@/lib/apiClient";
 
 const METODE_ICON = { Email: Mail, WhatsApp: MessageSquare };
 const STATUS_META = {
@@ -24,15 +15,20 @@ const STATUS_META = {
 export default function PengirimanVoucherOtomatis() {
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState("Semua");
+  const [logs, setLogs] = useState([]);
+
+  useEffect(() => {
+    api.get("/pengiriman-voucher/logs").then((r) => setLogs(r.data)).catch(() => {});
+  }, []);
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
-    return MOCK_VOUCHER_LOG.filter((v) => {
+    return logs.filter((v) => {
       if (q && !v.kode_booking.toLowerCase().includes(q) && !v.nama_tamu.toLowerCase().includes(q)) return false;
       if (status !== "Semua" && v.status !== status) return false;
       return true;
     });
-  }, [search, status]);
+  }, [logs, search, status]);
 
   const resetFilters = () => { setSearch(""); setStatus("Semua"); };
   const hasActiveFilter = search || status !== "Semua";
@@ -110,13 +106,14 @@ export default function PengirimanVoucherOtomatis() {
                 );
               })}
               {filtered.length === 0 && (
-                <tr><td colSpan={6} className="p-6 text-center text-slate-500">Tidak ada log yang cocok dengan pencarian/filter</td></tr>
+                <tr><td colSpan={6} className="p-6 text-center text-slate-500">
+                  {logs.length === 0 ? "Belum ada voucher terkirim — pengiriman email otomatis belum diaktifkan (butuh kredensial SMTP/API)." : "Tidak ada log yang cocok dengan pencarian/filter"}
+                </td></tr>
               )}
             </tbody>
           </table>
         </CardContent>
       </Card>
-      <p className="text-[11px] text-slate-400">Data tiruan — belum tersambung ke pengiriman voucher sungguhan.</p>
     </div>
   );
 }
