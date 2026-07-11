@@ -113,7 +113,7 @@ def _hitung_kebijakan_pembatalan(b: dict) -> dict:
 
 
 @api.post("/public/bookings/{bid}/batalkan")
-async def public_batalkan_booking(bid: str, body: CancelWithFeeBody):
+async def public_batalkan_booking(bid: str, body: CancelWithFeeBody = CancelWithFeeBody()):
     """Pembatalan mandiri SUNGGUHAN oleh tamu (bukan cuma 'ajukan permintaan') — otomatis
     penuh tanpa approval staf, sesuai keputusan bisnis yang dikonfirmasi user 2026-07-11.
     Refund uang (kalau ada) tetap harus ditransfer manual oleh staf — sistem cuma

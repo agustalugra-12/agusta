@@ -431,7 +431,7 @@ function BatalkanPesananDialog({ bk, open, onOpenChange, onCancelled }) {
   const ajukan = async () => {
     setSubmitting(true);
     try {
-      const { data } = await PUBLIC_API.post(`/public/bookings/${bk.id}/batalkan`);
+      const { data } = await PUBLIC_API.post(`/public/bookings/${bk.id}/batalkan`, {});
       setHasil(data);
       setSent(true);
       const { data: updated } = await PUBLIC_API.get(`/public/bookings/${bk.id}`);
