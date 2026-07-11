@@ -26,6 +26,7 @@ app = FastAPI(title="Pelangi Homestay API")
 async def startup():
     # Indexes
     await db.users.create_index("username", unique=True)
+    await db.users.create_index("email", unique=True, sparse=True)
     await db.rooms.create_index("nomor", unique=True)
     await db.products.create_index("kode", unique=True)
     await db.checkins.create_index("jam_checkin")

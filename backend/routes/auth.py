@@ -1,13 +1,40 @@
 from core import *
 
 # ---- Auth Endpoints ----
+@api.post("/auth/register")
+async def register(body: RegisterIn):
+    """Pendaftaran akun mandiri (halaman Daftar Akun, Fase 3). Akun baru dibuat dengan
+    role 'resepsionis' dan status 'pending' — Owner harus mengaktifkannya lewat halaman
+    Pengguna sebelum bisa login, konsisten dengan model akses berbasis undangan yang sudah
+    ada (lihat POST /users)."""
+    email = body.email.strip().lower()
+    if "@" not in email or "." not in email.split("@")[-1]:
+        raise HTTPException(400, "Format email tidak valid")
+    if len(body.password) < 6:
+        raise HTTPException(400, "Password minimal 6 karakter")
+    if await db.users.find_one({"email": email}):
+        raise HTTPException(400, "Email sudah terdaftar")
+    doc = {
+        "id": str(uuid.uuid4()),
+        "nama": body.nama.strip(),
+        "username": email,
+        "email": email,
+        "password_hash": hash_password(body.password),
+        "role": "resepsionis",
+        "status": "pending",
+        "created_at": now_iso(),
+    }
+    await db.users.insert_one(doc)
+    await log_activity(doc, "register", f"Pendaftaran akun mandiri {email}")
+    return {"ok": True, "message": "Pendaftaran berhasil. Menunggu aktivasi Owner sebelum bisa masuk."}
+
 @api.post("/auth/login")
 async def login(body: LoginIn, response: Response):
     u = await db.users.find_one({"username": body.username.lower()})
     if not u or not verify_password(body.password, u.get("password_hash", "")):
         raise HTTPException(401, "Username atau password salah")
-    if u.get("status") == "nonaktif":
-        raise HTTPException(403, "Akun dinonaktifkan")
+    if u.get("status") in ("nonaktif", "pending"):
+        raise HTTPException(403, "Akun belum aktif — hubungi Owner" if u.get("status") == "pending" else "Akun dinonaktifkan")
     token = create_token(u["id"], u["username"], u["role"])
     response.set_cookie("access_token", token, httponly=True, samesite="lax", max_age=7*24*3600, path="/")
     user_data = {k: v for k, v in u.items() if k not in ("_id", "password_hash")}

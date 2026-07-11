@@ -3,6 +3,7 @@ import { BrowserRouter, Routes, Route, Navigate, useLocation } from "react-route
 import { Toaster } from "sonner";
 import { AuthProvider, useAuth } from "@/context/AuthContext";
 import Login from "@/pages/Login";
+import Register from "@/pages/Register";
 import Layout from "@/components/Layout";
 import Dashboard from "@/pages/Dashboard";
 import Ketersediaan from "@/pages/Ketersediaan";
@@ -50,6 +51,7 @@ function AppRoutes() {
   return (
     <Routes>
       <Route path="/login" element={<Login />} />
+      <Route path="/register" element={<Register />} />
       <Route path="/book" element={<PublicBook />} />
       <Route path="/book/sukses/:bookingId" element={<PublicBook successView />} />
       <Route element={<Protected><Layout /></Protected>}>

@@ -207,6 +207,15 @@ class UserCreate(BaseModel):
     password: str
     role: str  # owner | resepsionis
 
+class RegisterIn(BaseModel):
+    """Pendaftaran akun mandiri (halaman Daftar Akun, Fase 3) — beda dari UserCreate
+    (dibuat Owner lewat halaman Pengguna, berbasis username). Akun hasil daftar mandiri
+    diidentifikasi lewat email, role default 'resepsionis', status 'pending' sampai
+    diaktifkan Owner lewat halaman Pengguna."""
+    nama: str
+    email: str
+    password: str
+
 class UserUpdate(BaseModel):
     nama: Optional[str] = None
     password: Optional[str] = None

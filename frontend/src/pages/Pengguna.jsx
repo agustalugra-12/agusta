@@ -64,7 +64,7 @@ export default function Pengguna() {
                   <td className="p-3 font-semibold">{u.nama}</td>
                   <td className="p-3 font-mono text-xs">{u.username}</td>
                   <td className="p-3 capitalize">{u.role}</td>
-                  <td className="p-3"><span className={`text-xs px-2 py-0.5 rounded ${u.status === "aktif" ? "bg-emerald-100 text-emerald-700" : "bg-slate-100 text-slate-600"}`}>{u.status}</span></td>
+                  <td className="p-3"><span className={`text-xs px-2 py-0.5 rounded ${u.status === "aktif" ? "bg-emerald-100 text-emerald-700" : u.status === "pending" ? "bg-amber-100 text-amber-700" : "bg-slate-100 text-slate-600"}`}>{u.status === "pending" ? "menunggu aktivasi" : u.status}</span></td>
                   <td className="p-3 text-right">
                     <Button size="sm" variant="ghost" onClick={() => openEdit(u)}><Pencil className="w-4 h-4" /></Button>
                     {u.id !== me.id && <Button size="sm" variant="ghost" onClick={() => del(u)}><Trash2 className="w-4 h-4 text-red-500" /></Button>}
@@ -96,6 +96,7 @@ export default function Pengguna() {
                 <select value={form.status || "aktif"} onChange={(e) => setForm(f => ({ ...f, status: e.target.value }))} className="w-full h-10 rounded-md border border-slate-300 px-3 bg-white">
                   <option value="aktif">Aktif</option>
                   <option value="nonaktif">Nonaktif</option>
+                  {form.status === "pending" && <option value="pending">Menunggu Aktivasi</option>}
                 </select>
               </div>
             )}
