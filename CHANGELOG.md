@@ -6,6 +6,7 @@ Format longgar mengikuti [Keep a Changelog](https://keepachangelog.com/).
 ## [Unreleased]
 
 ### Added
+- Backend: endpoint `POST /api/public/bookings/{id}/batalkan` — pembatalan mandiri tamu SEKARANG OTOMATIS PENUH (bukan lagi "ajukan permintaan"), sesuai keputusan bisnis yang dikonfirmasi user 2026-07-11. Update status, lepas kamar, hitung biaya H-3/H-1 (sama dengan kalkulasi frontend), catat `refund_amount` (refund uang tetap manual oleh staf), kirim notifikasi WA best-effort — `backend/routes/public.py`. Frontend `PublicBook.jsx` disambungkan (dialog batalkan tidak lagi cuma toast, benar-benar memanggil endpoint).
 - Backend: `webhook_config` CRUD + uji koneksi sungguhan (HTTP call ke `webhook_url` staf) — `backend/routes/konfigurasi_webhook.py`.
 - Backend: webhook receiver publik `/api/webhook/whatsapp/incoming` — balasan otomatis via AI (OpenAI, konteks ketersediaan kamar real-time), kirim via provider WhatsApp yang dikonfigurasi staf — `backend/routes/pesan_whatsapp.py`, collection baru `wa_conversations`/`wa_connection_log`/`wa_sync_settings`.
 - Backend: endpoint stats, log percakapan, log pengiriman per-arah, ringkasan kegagalan, log koneksi, alert, kirim-ulang — semua dari data sungguhan.

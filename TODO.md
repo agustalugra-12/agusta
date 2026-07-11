@@ -96,11 +96,11 @@ daftar ini ringkasan untuk manusia, bisa sedikit basi — cek CLI kalau ragu.
 ### Rekomendasi AI Check-in Day Use
 - [x] Halaman "Rekomendasi Check-in" — saran jam check-in Day Use berdasarkan jam check-out Menginap malam sebelumnya + jeda bersih-bersih 1 jam, auto-update saat tanggal/tipe kamar berubah, alternatif kamar lain, skenario "penuh" (mock)
 
-### Kebijakan Pembatalan Mandiri
-- [x] Tombol "Batalkan Pesanan" di PublicBook.jsx (nyata, bukan mock) — hitung kebijakan/biaya real, aksi = ajukan permintaan (bukan instan)
+### Kebijakan Pembatalan Mandiri — SELESAI, SEKARANG SELF-SERVICE PENUH (2026-07-11)
+- [x] Tombol "Batalkan Pesanan" di PublicBook.jsx (nyata) — hitung kebijakan/biaya real
 - [x] Timer mundur H-1 (real, ticking) di dialog batalkan
-- [ ] Sisa task fitur ini (cek `task next`)
-- [ ] **Backend (perlu keputusan bisnis kalau mau full self-service):** endpoint pembatalan mandiri sungguhan (bukan cuma "ajukan permintaan") — perlu tentukan siapa yang approve, apakah otomatis refund, dst.
+- [x] **Keputusan bisnis dikonfirmasi user (2026-07-11): pembatalan mandiri OTOMATIS PENUH, tanpa approval staf.** Endpoint `POST /api/public/bookings/{id}/batalkan` langsung update status jadi `cancelled` + lepas kamar (log_availability_change) + hitung biaya (sama persis dengan formula H-3/H-1 di frontend). Refund uang (kalau ada) TETAP manual oleh staf — sistem cuma menghitung & mencatat `refund_amount`, tidak transfer sungguhan.
+- [x] Notifikasi konfirmasi pembatalan ke tamu via WhatsApp (best-effort, pakai webhook yang sama dengan bot — kalau staf belum konfigurasi webhook, dilewati saja tanpa mengganggu pembatalan)
 
 ### Pengiriman Voucher Otomatis
 - [x] Halaman admin log pengiriman voucher (mock)

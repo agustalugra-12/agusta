@@ -422,13 +422,25 @@ function CountdownBebasBiaya({ bk }) {
   );
 }
 
-function BatalkanPesananDialog({ bk, open, onOpenChange }) {
+function BatalkanPesananDialog({ bk, open, onOpenChange, onCancelled }) {
   const [sent, setSent] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [hasil, setHasil] = useState(null);
   const policy = calcCancelPolicy(bk);
 
-  const ajukan = () => {
-    setSent(true);
-    toast.success("Permintaan pembatalan dicatat");
+  const ajukan = async () => {
+    setSubmitting(true);
+    try {
+      const { data } = await PUBLIC_API.post(`/public/bookings/${bk.id}/batalkan`);
+      setHasil(data);
+      setSent(true);
+      const { data: updated } = await PUBLIC_API.get(`/public/bookings/${bk.id}`);
+      onCancelled?.(updated);
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Gagal membatalkan pesanan");
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   return (
@@ -463,7 +475,9 @@ function BatalkanPesananDialog({ bk, open, onOpenChange }) {
         ) : (
           <div className="space-y-2 text-sm text-left" data-testid="batalkan-terkirim">
             <p className="text-emerald-700 bg-emerald-50 border border-emerald-200 rounded p-3">
-              Permintaan pembatalan untuk booking <b>{bk.kode}</b> sudah dicatat. Tim kami akan menghubungi Anda melalui WhatsApp untuk konfirmasi &amp; proses lebih lanjut.
+              Booking <b>{bk.kode}</b> sudah dibatalkan.
+              {hasil?.cancel_fee > 0 ? ` Biaya pembatalan ${fmtRp(hasil.cancel_fee)}.` : " Tidak ada biaya pembatalan."}
+              {hasil?.refund_amount > 0 && ` Refund ${fmtRp(hasil.refund_amount)} akan diproses tim kami secara manual.`}
             </p>
           </div>
         )}
@@ -471,7 +485,9 @@ function BatalkanPesananDialog({ bk, open, onOpenChange }) {
           {!sent ? (
             <>
               <Button variant="ghost" onClick={() => onOpenChange(false)}>Tutup</Button>
-              <Button data-testid="batalkan-ajukan" onClick={ajukan} className="bg-red-600 hover:bg-red-700">Ajukan Pembatalan</Button>
+              <Button data-testid="batalkan-ajukan" onClick={ajukan} disabled={submitting} className="bg-red-600 hover:bg-red-700">
+                {submitting ? "Membatalkan…" : "Batalkan Pesanan"}
+              </Button>
             </>
           ) : (
             <Button data-testid="batalkan-selesai" onClick={() => onOpenChange(false)} className="bg-blue-700 hover:bg-blue-800">Tutup</Button>
@@ -625,7 +641,7 @@ function SuccessView({ bookingId }) {
           <Link to="/book" className="print:hidden block text-sm text-blue-700 hover:underline">Buat booking lain</Link>
         </CardContent>
       </Card>
-      <BatalkanPesananDialog bk={bk} open={cancelOpen} onOpenChange={setCancelOpen} />
+      <BatalkanPesananDialog bk={bk} open={cancelOpen} onOpenChange={setCancelOpen} onCancelled={setBk} />
     </div>
   );
 }
