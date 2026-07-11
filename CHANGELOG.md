@@ -6,6 +6,8 @@ Format longgar mengikuti [Keep a Changelog](https://keepachangelog.com/).
 ## [Unreleased]
 
 ### Added
+- Backend: endpoint status/paksa-sinkron/riwayat-stok/pengaturan untuk Sinkronisasi Ketersediaan + service penjadwalan otomatis (background asyncio loop) — `backend/routes/sinkronisasi_ketersediaan.py`, collection baru `sync_channels`/`sync_settings`, dipakai lagi `availability_logs` yang sudah ada.
+- Frontend: `SinkronisasiKetersediaan.jsx` disambungkan penuh ke endpoint nyata di atas — tidak ada lagi data tiruan.
 - Konfigurasi: aktivasi AI Email Parser — `OPENAI_API_KEY` dipasang di `pms-backend.service`.
 - Backend: service pengambilan email Gmail (`POST /api/otomasi-email/gmail/fetch`) dengan refresh token otomatis — `backend/routes/otomasi_email.py`.
 - Backend: AI Email Parser sungguhan pakai OpenAI (gpt-4o-mini) untuk ekstrak data reservasi dari isi email OTA — `backend/routes/otomasi_email.py`.

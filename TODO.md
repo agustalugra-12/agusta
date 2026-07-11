@@ -21,10 +21,11 @@ daftar ini ringkasan untuk manusia, bisa sedikit basi — cek CLI kalau ragu.
 - [x] "Uji Aturan Pemetaan" sengaja TETAP client-side (regex jalan di browser) — endpoint backend terpisah tidak perlu, tidak ada state yang disimpan, cuma nambah round-trip percuma
 
 ### Sinkronisasi Ketersediaan
-- [x] Halaman utama + tab Status Sinkronisasi (mock)
-- [x] Indikator status koneksi real-time (live, polling 10s)
-- [x] Riwayat Perubahan Stok (mock, + filter tanggal/tipe kamar)
-- [x] Pengaturan Sinkronisasi (frekuensi + prioritas saluran, mock)
+- [x] Halaman utama + tab Status Sinkronisasi — SEKARANG NYATA (2026-07-11): status per saluran dihitung dari data sungguhan (PMS/Website selalu tersambung karena aplikasi ini sendiri, Gmail dari `integrations`, WhatsApp dari `webhook_config` yang belum dibangun jadi default belum tersambung)
+- [x] Indikator status koneksi real-time (live, polling 10s ke endpoint nyata)
+- [x] Riwayat Perubahan Stok — SEKARANG NYATA, baca `availability_logs` (Fase 1) + filter tanggal/tipe kamar server-side, `sumber` di-derive dari `bookings.source`
+- [x] Pengaturan Sinkronisasi (frekuensi + prioritas saluran) — SEKARANG NYATA, tersimpan di `sync_settings`
+- [x] Service penjadwalan sinkronisasi otomatis — background asyncio loop di `server.py`, interval baca ulang `sync_settings.frekuensi_menit` tiap siklus
 
 ### Konfigurasi Webhook (WhatsApp Bot)
 - [x] Halaman utama + form endpoint & kredensial (mock)

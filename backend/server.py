@@ -10,6 +10,7 @@ Business logic lives in:
 """
 import os
 import uuid
+import asyncio
 import logging
 
 from fastapi import FastAPI
@@ -17,6 +18,7 @@ from starlette.middleware.cors import CORSMiddleware
 
 from core import api, client, db, now_iso, hash_password, verify_password
 import routes  # noqa: F401  — importing registers all endpoints on `api`
+from routes.sinkronisasi_ketersediaan import background_sync_loop
 
 app = FastAPI(title="Pelangi Homestay API")
 
@@ -109,6 +111,10 @@ async def startup():
             "stok_minimal": 5 if kat != "laundry" else 0, "aktif": True,
             "created_at": now_iso(),
         } for (k, n, kat, h, s) in starter])
+
+    # Penjadwalan sinkronisasi otomatis (Sinkronisasi Ketersediaan) — jalan di background
+    # selama proses uvicorn ini hidup, interval mengikuti `sync_settings.frekuensi_menit`.
+    asyncio.create_task(background_sync_loop())
 
 
 @app.on_event("shutdown")

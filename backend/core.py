@@ -373,6 +373,11 @@ class MappingRuleUpdate(BaseModel):
     pola: Optional[str] = None
     aktif: Optional[bool] = None
 
+class SyncSettingsUpdate(BaseModel):
+    """Dokumen tunggal di collection `sync_settings` (Pengaturan Sinkronisasi Ketersediaan)."""
+    frekuensi_menit: Optional[int] = None
+    prioritas: Optional[List[str]] = None
+
 class EmailLog(BaseModel):
     """Dokumen di collection `email_logs` — riwayat email OTA yang masuk ke Gmail dan
     diproses (atau gagal diproses) oleh AI Email Parser. Entitas EMAIL_LOGS di PRD

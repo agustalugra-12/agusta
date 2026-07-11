@@ -6,7 +6,7 @@ import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { RefreshCw, Wifi, WifiOff, AlertTriangle, CheckCircle2, History, Settings2, X, ArrowUp, ArrowDown, Save } from "lucide-react";
-import { fmtDateTime } from "@/lib/apiClient";
+import api, { fmtDateTime } from "@/lib/apiClient";
 
 const ROOM_TYPE_FILTER_OPTIONS = ["Semua", "Standard", "Cottage"];
 const FREKUENSI_OPTIONS = [
@@ -22,33 +22,11 @@ const TABS = [
   { value: "pengaturan", label: "Pengaturan", icon: Settings2 },
 ];
 
-// Data tiruan (stub) — status koneksi tiap saluran penjualan ke Availability Engine.
-// Pelangi PMS adalah Single Source of Truth (lihat PRD); saluran lain "menarik" data
-// darinya, bukan sebaliknya.
-const MOCK_CHANNELS = [
-  { id: "pms", nama: "Pelangi PMS", peran: "Sumber Kebenaran Tunggal", status: "connected", last_sync: "2026-07-11T09:58:00" },
-  { id: "website", nama: "Website Booking Engine", peran: "Saluran Penjualan", status: "connected", last_sync: "2026-07-11T09:58:00" },
-  { id: "gmail", nama: "Email OTA (Gmail)", peran: "Sumber Reservasi OTA", status: "connected", last_sync: "2026-07-11T09:55:00" },
-  { id: "whatsapp", nama: "WhatsApp Bot", peran: "Saluran Penjualan", status: "error", last_sync: "2026-07-11T08:10:00" },
-];
-
 const STATUS_META = {
   connected: { label: "Tersambung", cls: "bg-emerald-100 text-emerald-800", icon: CheckCircle2, dot: "bg-emerald-500" },
   error: { label: "Gangguan Sinkron", cls: "bg-red-100 text-red-800", icon: AlertTriangle, dot: "bg-red-500" },
   disconnected: { label: "Terputus", cls: "bg-slate-200 text-slate-600", icon: WifiOff, dot: "bg-slate-400" },
 };
-
-// Data tiruan (stub) — mengikuti entitas AVAILABILITY_LOGS di PRD (id, pms_room_id,
-// stock_change, reason, changed_at), ditambah `sumber` untuk menandai saluran pemicu
-// perubahan (relevan di Fase 2 karena banyak saluran menulis ke Availability Engine yang sama).
-const MOCK_STOCK_HISTORY = [
-  { id: "1", room_nomor: "5", room_tipe: "Standard", stock_change: -1, reason: "Booking baru dari Traveloka", sumber: "Email OTA", changed_at: "2026-07-11T09:55:00" },
-  { id: "2", room_nomor: "14", room_tipe: "Cottage", stock_change: -1, reason: "Booking baru dari Website", sumber: "Website", changed_at: "2026-07-11T09:40:00" },
-  { id: "3", room_nomor: "5", room_tipe: "Standard", stock_change: 1, reason: "Reservasi dibatalkan tamu", sumber: "WhatsApp Bot", changed_at: "2026-07-11T08:20:00" },
-  { id: "4", room_nomor: "2", room_tipe: "Standard", stock_change: -1, reason: "Check-in langsung", sumber: "Pelangi PMS", changed_at: "2026-07-11T07:05:00" },
-  { id: "5", room_nomor: "16", room_tipe: "Cottage", stock_change: 1, reason: "Check-out", sumber: "Pelangi PMS", changed_at: "2026-07-10T12:00:00" },
-  { id: "6", room_nomor: "9", room_tipe: "Standard", stock_change: -1, reason: "Booking baru dari Agoda", sumber: "Email OTA", changed_at: "2026-07-10T10:30:00" },
-];
 
 const SUMBER_BADGE = {
   "Pelangi PMS": "bg-blue-100 text-blue-800",
@@ -57,20 +35,21 @@ const SUMBER_BADGE = {
   "WhatsApp Bot": "bg-emerald-100 text-emerald-800",
 };
 
-function RiwayatPerubahanStok({ history }) {
+function RiwayatPerubahanStok() {
   const [dari, setDari] = useState("");
   const [sampai, setSampai] = useState("");
   const [tipeKamar, setTipeKamar] = useState("Semua");
+  const [filtered, setFiltered] = useState([]);
 
-  const filtered = useMemo(() => {
-    return history.filter((h) => {
-      if (tipeKamar !== "Semua" && h.room_tipe !== tipeKamar) return false;
-      const t = new Date(h.changed_at);
-      if (dari && t < new Date(`${dari}T00:00:00`)) return false;
-      if (sampai && t > new Date(`${sampai}T23:59:59.999`)) return false;
-      return true;
-    });
-  }, [history, dari, sampai, tipeKamar]);
+  useEffect(() => {
+    const params = {};
+    if (dari) params.dari = dari;
+    if (sampai) params.sampai = sampai;
+    if (tipeKamar !== "Semua") params.tipe_kamar = tipeKamar;
+    api.get("/sinkronisasi-ketersediaan/riwayat-stok", { params })
+      .then((r) => setFiltered(r.data))
+      .catch(() => setFiltered([]));
+  }, [dari, sampai, tipeKamar]);
 
   const resetFilters = () => { setDari(""); setSampai(""); setTipeKamar("Semua"); };
   const hasActiveFilter = dari || sampai || tipeKamar !== "Semua";
@@ -145,14 +124,17 @@ function RiwayatPerubahanStok({ history }) {
   );
 }
 
-// Prioritas dipakai Availability Engine saat dua saluran melaporkan perubahan stok yang
-// bentrok pada waktu hampir bersamaan — saluran berprioritas lebih tinggi yang menang.
-// Pelangi PMS selalu #1 (Single Source of Truth di PRD) sehingga tidak bisa direorder.
-const MOCK_PRIORITAS = ["Pelangi PMS", "Email OTA", "Website", "WhatsApp Bot"];
-
 function PengaturanSinkronisasi() {
   const [frekuensi, setFrekuensi] = useState(5);
-  const [prioritas, setPrioritas] = useState(MOCK_PRIORITAS);
+  const [prioritas, setPrioritas] = useState(["Pelangi PMS", "Email OTA", "Website", "WhatsApp Bot"]);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    api.get("/sinkronisasi-ketersediaan/pengaturan").then((r) => {
+      setFrekuensi(r.data.frekuensi_menit);
+      setPrioritas(r.data.prioritas);
+    }).catch(() => {});
+  }, []);
 
   const pindah = (idx, arah) => {
     const target = idx + arah;
@@ -164,8 +146,16 @@ function PengaturanSinkronisasi() {
     });
   };
 
-  const simpan = () => {
-    toast.success(`Pengaturan disimpan: sinkron tiap ${frekuensi} menit, prioritas ${prioritas.join(" > ")}`);
+  const simpan = async () => {
+    setSaving(true);
+    try {
+      await api.put("/sinkronisasi-ketersediaan/pengaturan", { frekuensi_menit: frekuensi, prioritas });
+      toast.success(`Pengaturan disimpan: sinkron tiap ${frekuensi} menit, prioritas ${prioritas.join(" > ")}`);
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Gagal menyimpan pengaturan");
+    } finally {
+      setSaving(false);
+    }
   };
 
   return (
@@ -222,19 +212,17 @@ function PengaturanSinkronisasi() {
         </CardContent>
       </Card>
 
-      <Button data-testid="simpan-pengaturan" onClick={simpan} className="gap-1.5 bg-blue-700 hover:bg-blue-800">
-        <Save className="w-3.5 h-3.5" /> Simpan Pengaturan
+      <Button data-testid="simpan-pengaturan" onClick={simpan} disabled={saving} className="gap-1.5 bg-blue-700 hover:bg-blue-800">
+        <Save className="w-3.5 h-3.5" /> {saving ? "Menyimpan…" : "Simpan Pengaturan"}
       </Button>
-      <p className="text-[11px] text-slate-400">Data tiruan — belum tersambung ke Availability Engine sungguhan.</p>
     </div>
   );
 }
 
 const CHECK_INTERVAL_MS = 10000;
 
-// Indikator "live": titik berdenyut + jam berjalan sejak pengecekan terakhir. Jam benar-benar
-// berjalan (setInterval per detik) supaya terasa real-time meski siklus cek di baliknya (dari
-// StatusSinkronisasi) masih data tiruan.
+// Indikator "live": titik berdenyut + jam berjalan sejak pengecekan terakhir di klien
+// (jam ini murni UI, dihitung ulang tiap detik; data statusnya sendiri sungguhan dari server).
 function LiveIndicator({ lastChecked }) {
   const [, setTick] = useState(0);
   useEffect(() => {
@@ -254,29 +242,44 @@ function LiveIndicator({ lastChecked }) {
 }
 
 function StatusSinkronisasi() {
-  const [channels, setChannels] = useState(MOCK_CHANNELS);
+  const [channels, setChannels] = useState([]);
   const [syncing, setSyncing] = useState(false);
   const [lastChecked, setLastChecked] = useState(() => new Date().toISOString());
 
-  // Simulasi pemantauan berkala (polling) — mengikuti pola setInterval sederhana yang
-  // sudah dipakai Dashboard.jsx, belum WebSocket karena tidak ada infrastrukturnya di backend.
+  const load = () => {
+    api.get("/sinkronisasi-ketersediaan/status").then((r) => {
+      setChannels(r.data.channels);
+      setLastChecked(new Date().toISOString());
+    }).catch(() => {});
+  };
+
   useEffect(() => {
-    const t = setInterval(() => setLastChecked(new Date().toISOString()), CHECK_INTERVAL_MS);
+    load();
+    // Polling berkala — pencerminan status dari server (server sendiri juga auto-refresh
+    // di background tiap `frekuensi_menit`, ini cuma supaya UI ikut kebaruan tanpa reload).
+    const t = setInterval(load, CHECK_INTERVAL_MS);
     return () => clearInterval(t);
   }, []);
 
   const bermasalah = channels.filter((c) => c.status !== "connected");
 
-  const paksaSinkron = () => {
+  const paksaSinkron = async () => {
     setSyncing(true);
-    // Mock: nanti diganti panggilan nyata ke Availability Engine backend.
-    setTimeout(() => {
-      const now = new Date().toISOString();
-      setChannels((cs) => cs.map((c) => ({ ...c, status: "connected", last_sync: now })));
-      setLastChecked(now);
+    try {
+      const { data } = await api.post("/sinkronisasi-ketersediaan/paksa-sinkron");
+      setChannels(data.channels);
+      setLastChecked(new Date().toISOString());
+      const masihBermasalah = data.channels.filter((c) => c.status !== "connected");
+      if (masihBermasalah.length) {
+        toast.warning(`Sinkronisasi selesai — ${masihBermasalah.length} saluran masih belum tersambung`);
+      } else {
+        toast.success("Sinkronisasi manual selesai — semua saluran tersambung");
+      }
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Gagal memaksa sinkronisasi");
+    } finally {
       setSyncing(false);
-      toast.success("Sinkronisasi manual selesai — semua saluran tersambung");
-    }, 900);
+    }
   };
 
   return (
@@ -303,7 +306,7 @@ function StatusSinkronisasi() {
           const meta = STATUS_META[c.status];
           const Icon = meta.icon;
           return (
-            <Card key={c.id} className="border-slate-200" data-testid={`channel-card-${c.id}`}>
+            <Card key={c.key} className="border-slate-200" data-testid={`channel-card-${c.key}`}>
               <CardContent className="p-4 flex items-center justify-between gap-3">
                 <div className="flex items-center gap-3">
                   <span className={`w-2 h-2 rounded-full ${meta.dot} ${c.status === "connected" ? "animate-pulse" : ""}`} />
@@ -321,7 +324,6 @@ function StatusSinkronisasi() {
           );
         })}
       </div>
-      <p className="text-[11px] text-slate-400">Data tiruan — belum tersambung ke Availability Engine sungguhan.</p>
     </div>
   );
 }
@@ -350,7 +352,7 @@ export default function SinkronisasiKetersediaan() {
           <StatusSinkronisasi />
         </TabsContent>
         <TabsContent value="riwayat" className="mt-4">
-          <RiwayatPerubahanStok history={MOCK_STOCK_HISTORY} />
+          <RiwayatPerubahanStok />
         </TabsContent>
         <TabsContent value="pengaturan" className="mt-4">
           <PengaturanSinkronisasi />
