@@ -8,6 +8,14 @@ daftar ini ringkasan untuk manusia, bisa sedikit basi — cek CLI kalau ragu.
 - [x] Dasbor Ketersediaan
 - [x] Daftar Reservasi
 
+## Fase 3 — Manajemen Sistem Internal
+### Autentikasi & Pengelolaan Akun (2026-07-11)
+- [x] Halaman login — SUDAH NYATA sejak awal (bukan mock), tersambung `/api/auth/login`
+- [x] Halaman pendaftaran (sign-up publik) — **DITUNDA atas keputusan user**: sistem ini staf-internal (akun dikelola Owner lewat `/pengguna`). Ada rencana multi-tenant ke depan (hotel lain daftar sendiri, kustom kamar/harga, data terpisah dari Pelangi PMS) tapi tetap ditandai "jangan dikerjakan dulu" di `memory/GESEKAN.md` — fokus HotelSync AI dulu.
+- [x] Halaman dasbor utama — SUDAH NYATA sejak Fase 1 (`Dashboard.jsx` di `/`)
+- [x] Halaman kelola pengguna admin — SUDAH NYATA sejak awal (`Pengguna.jsx` di `/pengguna`, owner-only, CRUD staf sungguhan)
+- [x] Halaman profil pengguna + form ubah profil/password — BARU (`frontend/src/pages/Profil.jsx`, route `/profil`, diakses dari klik nama di sidebar). Backend `PUT /api/auth/me` (beda dari `PUT /users/{id}` yang owner-only): user ubah nama/password sendiri, wajib verifikasi password lama — `backend/routes/auth.py`, `backend/core.py` (`MeUpdate`).
+
 ## Fase 2 — AI Reservation Automation & Booking Engine
 ### Otomasi Email & Pemesanan — SELESAI (backend + frontend nyata, 2026-07-11)
 - [x] Shell halaman + tab navigasi

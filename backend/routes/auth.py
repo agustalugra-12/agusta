@@ -24,6 +24,25 @@ async def logout(response: Response, user: dict = Depends(get_current_user)):
 async def me(user: dict = Depends(get_current_user)):
     return user
 
+@api.put("/auth/me")
+async def update_me(body: MeUpdate, user: dict = Depends(get_current_user)):
+    """Update profil sendiri (halaman Profil): nama, dan/atau password (wajib
+    verifikasi password lama). Beda dari PUT /users/{id} yang owner-only dan
+    bisa ubah role/status siapa saja tanpa password lama."""
+    updates: Dict[str, Any] = {}
+    if body.nama is not None and body.nama.strip():
+        updates["nama"] = body.nama.strip()
+    if body.password_baru:
+        u = await db.users.find_one({"id": user["id"]})
+        if not body.password_lama or not verify_password(body.password_lama, u.get("password_hash", "")):
+            raise HTTPException(400, "Password lama tidak sesuai")
+        updates["password_hash"] = hash_password(body.password_baru)
+    if updates:
+        await db.users.update_one({"id": user["id"]}, {"$set": updates})
+        await log_activity(user, "update_profile", "Update profil sendiri" + (" (ganti password)" if "password_hash" in updates else ""))
+    fresh = await db.users.find_one({"id": user["id"]}, {"_id": 0, "password_hash": 0})
+    return fresh
+
 # ---- Users (Owner only) ----
 @api.get("/users")
 async def list_users(user: dict = Depends(require_owner)):

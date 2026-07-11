@@ -6,6 +6,7 @@ Format longgar mengikuti [Keep a Changelog](https://keepachangelog.com/).
 ## [Unreleased]
 
 ### Added
+- Frontend/Backend: halaman "Profil Saya" (`/profil`, `frontend/src/pages/Profil.jsx`) — lihat info akun + ubah nama/password sendiri, diakses dari klik nama di sidebar (`Layout.jsx`). Backend `PUT /api/auth/me` — self-service update, beda dari `PUT /users/{id}` (owner-only, bisa ubah siapa saja tanpa password lama); wajib verifikasi password lama untuk ganti password — `backend/routes/auth.py`, `backend/core.py` (`MeUpdate`).
 - Backend: pengiriman voucher email sungguhan via Brevo — `backend/email_service.py` (baru), dipicu otomatis begitu booking lunas (webhook Midtrans di `backend/routes/payments.py`, atau konfirmasi transfer manual staf di `backend/routes/bookings.py`), plus endpoint kirim ulang manual `POST /api/pengiriman-voucher/kirim-ulang/{booking_id}` — `backend/routes/public.py`. Setiap percobaan kirim (sukses/gagal) dicatat ke `email_send_log`. Kredensial `BREVO_API_KEY`/`BREVO_FROM_EMAIL`/`BREVO_FROM_NAME` dipasang di `pms-backend.service` — `backend/core.py`.
 - Backend: generator PDF voucher sungguhan (reportlab) — `GET /api/public/bookings/{id}/voucher.pdf`, dipakai tombol "Unduh Voucher" di halaman konfirmasi tamu (ganti dari `window.print()`) — `backend/routes/public.py`, `backend/requirements.txt`.
 - Backend: skema `EmailSendLog` + endpoint `GET /api/pengiriman-voucher/logs` — `backend/core.py`, `backend/routes/public.py`. Frontend `PengirimanVoucherOtomatis.jsx` disambungkan.

@@ -213,6 +213,13 @@ class UserUpdate(BaseModel):
     role: Optional[str] = None
     status: Optional[str] = None  # aktif | nonaktif
 
+class MeUpdate(BaseModel):
+    """Update profil sendiri (halaman Profil) — beda dari UserUpdate (admin-only):
+    tidak boleh ganti role/status diri sendiri, wajib password lama untuk ganti password baru."""
+    nama: Optional[str] = None
+    password_lama: Optional[str] = None
+    password_baru: Optional[str] = None
+
 class RoomCreate(BaseModel):
     nomor: str
     tipe: str  # Standard | Cottage

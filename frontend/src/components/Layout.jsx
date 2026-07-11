@@ -81,7 +81,7 @@ export default function Layout() {
           ))}
         </nav>
         <div className="border-t border-slate-100 p-4">
-          <div className="flex items-center gap-3 mb-3">
+          <Link to="/profil" data-testid="nav-profil" className="flex items-center gap-3 mb-3 rounded-xl -mx-1 px-1 py-1 hover:bg-slate-100 transition-colors">
             <div className="w-10 h-10 rounded-full bg-slate-100 grid place-items-center font-bold text-slate-700">
               {(user?.nama || "U")[0]}
             </div>
@@ -89,7 +89,7 @@ export default function Layout() {
               <div className="text-sm font-semibold truncate">{user?.nama}</div>
               <div className="text-xs text-slate-500 capitalize">{user?.role}</div>
             </div>
-          </div>
+          </Link>
           <Button data-testid="logout-btn" onClick={doLogout} variant="outline" className="w-full justify-start gap-2">
             <LogOut className="w-4 h-4" /> Keluar
           </Button>
@@ -119,10 +119,10 @@ export default function Layout() {
         <div className="lg:hidden fixed inset-0 z-50 flex">
           <div className="absolute inset-0 bg-black/40" onClick={() => setOpen(false)} />
           <div className="relative bg-white w-72 h-full flex flex-col">
-            <div className="px-5 py-5 border-b border-slate-100">
+            <Link to="/profil" data-testid="nav-profil-mobile" onClick={() => setOpen(false)} className="px-5 py-5 border-b border-slate-100 block hover:bg-slate-50">
               <div className="text-sm font-semibold">{user?.nama}</div>
               <div className="text-xs text-slate-500 capitalize">{user?.role}</div>
-            </div>
+            </Link>
             <nav className="flex-1 px-3 py-3 space-y-1 overflow-y-auto">
               {items.map((it) => (
                 <NavLink
