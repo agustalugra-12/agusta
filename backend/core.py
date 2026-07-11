@@ -52,6 +52,9 @@ GOOGLE_CLIENT_ID = os.environ.get("GOOGLE_CLIENT_ID", "")
 GOOGLE_CLIENT_SECRET = os.environ.get("GOOGLE_CLIENT_SECRET", "")
 GOOGLE_OAUTH_REDIRECT_URI = os.environ.get("GOOGLE_OAUTH_REDIRECT_URI", "")
 
+# ---- OpenAI (Otomasi Email — AI Email Parser) ----
+OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
+
 # ---- Constants ----
 SERVICE_FEE_PCT = 0.03  # 3% service fee diaplikasikan ke checkin & booking
 
@@ -352,6 +355,23 @@ class RoomMappingUpdate(BaseModel):
     ota_nama: Optional[str] = None
     pms_tipe: Optional[str] = None
     sumber: Optional[str] = None
+
+class MappingRuleCreate(BaseModel):
+    """Dokumen di collection `mapping_rules` — pola/kata kunci per sumber OTA yang dipakai
+    staf untuk mengecek (lewat 'Uji Aturan') bagaimana tiap field bisa ditemukan di badan
+    email. Bersifat referensi/dokumentasi staf; AI Email Parser sungguhan (OpenAI) tidak
+    butuh regex ini untuk ekstraksi — ia membaca isi email langsung.
+    """
+    sumber: str
+    field: str  # salah satu FIELD_OPTIONS di frontend: no_reservasi, nama_tamu, dst
+    pola: str  # pola regex/kata kunci
+    aktif: bool = True
+
+class MappingRuleUpdate(BaseModel):
+    sumber: Optional[str] = None
+    field: Optional[str] = None
+    pola: Optional[str] = None
+    aktif: Optional[bool] = None
 
 class EmailLog(BaseModel):
     """Dokumen di collection `email_logs` — riwayat email OTA yang masuk ke Gmail dan

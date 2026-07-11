@@ -9,17 +9,16 @@ daftar ini ringkasan untuk manusia, bisa sedikit basi — cek CLI kalau ragu.
 - [x] Daftar Reservasi
 
 ## Fase 2 — AI Reservation Automation & Booking Engine
-### Otomasi Email & Pemesanan
-- [x] Shell halaman + tab navigasi (mock)
-- [x] Detail log email (mock)
-- [ ] Sisa tab "Log Email Masuk" (jika ada task lanjutan dari `task next`)
-- [x] Aturan Pemetaan AI (mock)
-- [x] Form uji aturan pemetaan (mock, regex fungsional)
-- [x] Proses Manual Email (mock)
-- [x] Backend: koneksi Gmail OAuth (endpoint jadi)
-- [ ] Aktivasi: kredensial Google OAuth **sudah diterima dari user (2026-07-11)** tapi belum dipasang — user minta tunda restart service. Saat siap: edit unit `pms-backend.service` (tambah GOOGLE_CLIENT_ID/SECRET, GOOGLE_OAUTH_REDIRECT_URI, FRONTEND_URL), `daemon-reload`, restart. Minta user kirim ulang kredensial saat itu (tidak disimpan di repo).
-- [ ] Backend: baca email Gmail asli + AI parser (perlu API key AI — cek kredensial sebelum mulai)
-- [ ] Backend: sambungkan frontend (Koneksi Gmail, Log Email) ke endpoint asli
+### Otomasi Email & Pemesanan — SELESAI (backend + frontend nyata, 2026-07-11)
+- [x] Shell halaman + tab navigasi
+- [x] Backend: koneksi Gmail OAuth (endpoint) + aktivasi kredensial (GOOGLE_CLIENT_ID/SECRET terpasang, service direstart)
+- [x] Skema `EmailLog`/`EmailExtractedData` (collection `email_logs`)
+- [x] Service pengambilan email Gmail (`gmail/fetch`, refresh token otomatis, deteksi sumber OTA dari domain pengirim)
+- [x] Service AI Email Parser sungguhan pakai OpenAI (`OPENAI_API_KEY` diterima & dipasang dari user 2026-07-11) — ekstrak data reservasi dari isi email, model gpt-4o-mini
+- [x] Reservation Automation: begitu AI berhasil parse, reservasi OTOMATIS dibuat di Pelangi PMS (source="ota", tipe="menginap") — dikonfirmasi ke user: mode **otomatis penuh**, bukan approval manual. Anti double-booking: kalau tipe kamar OTA belum dipetakan atau tidak ada kamar kosong di rentang tanggalnya, log tetap `Manual_Required` dengan alasan jelas (tidak memaksakan buat reservasi)
+- [x] Endpoint GET `/logs` (+ filter status), CRUD `/mapping-rules`, POST `/logs/{id}/proses-manual` (proses manual staf juga lanjut ke Reservation Automation yang sama)
+- [x] Frontend disambungkan penuh ke endpoint nyata: Koneksi Gmail (status/connect/disconnect/fetch, redirect OAuth), Log Email Masuk, Aturan Pemetaan AI, Proses Manual — tidak ada lagi data tiruan di halaman ini
+- [x] "Uji Aturan Pemetaan" sengaja TETAP client-side (regex jalan di browser) — endpoint backend terpisah tidak perlu, tidak ada state yang disimpan, cuma nambah round-trip percuma
 
 ### Sinkronisasi Ketersediaan
 - [x] Halaman utama + tab Status Sinkronisasi (mock)

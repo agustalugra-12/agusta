@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -7,11 +7,11 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
-import { Mail, Inbox, Wand2, FileWarning, CheckCircle2, Unlink, AlertTriangle, Plus, Pencil, Trash2, FlaskConical } from "lucide-react";
-import { fmtDateTime, fmtRp } from "@/lib/apiClient";
+import { Mail, Inbox, Wand2, FileWarning, CheckCircle2, Unlink, AlertTriangle, Plus, Pencil, Trash2, FlaskConical, RefreshCw, Loader2 } from "lucide-react";
+import api, { fmtDateTime, fmtRp } from "@/lib/apiClient";
 
 // Field hasil ekstraksi yang bisa dipetakan — sinkron dengan bentuk `extracted_data`
-// di tab Log Email Masuk (lihat MOCK_EMAIL_LOGS di bawah).
+// yang dikembalikan GET /api/otomasi-email/logs (skema EmailExtractedData di backend).
 const FIELD_OPTIONS = [
   { value: "no_reservasi", label: "Nomor Reservasi" },
   { value: "nama_tamu", label: "Nama Tamu" },
@@ -26,61 +26,6 @@ const fieldLabel = (v) => FIELD_OPTIONS.find((f) => f.value === v)?.label || v;
 const SUMBER_OPTIONS = ["Agoda", "Traveloka", "Booking.com", "Lainnya"];
 const ROOM_TYPE_OPTIONS = ["Standard", "Cottage"];
 const PAYMENT_STATUS_OPTIONS = ["Lunas", "DP", "Belum Bayar", "Dibatalkan"];
-
-// Data tiruan (stub) — aturan yang menentukan bagaimana AI Email Parser menemukan tiap
-// field di badan email tiap sumber OTA (mis. pola regex/kata kunci penanda).
-const MOCK_MAPPING_RULES = [
-  { id: "1", sumber: "Agoda", field: "no_reservasi", pola: "Booking ID: #AGD-\\d+", aktif: true },
-  { id: "2", sumber: "Agoda", field: "nama_tamu", pola: "Guest name: (.+)", aktif: true },
-  { id: "3", sumber: "Traveloka", field: "no_reservasi", pola: "Booking Code: (BKN-\\d+)", aktif: true },
-  { id: "4", sumber: "Traveloka", field: "harga", pola: "Total Payment: Rp ([\\d.,]+)", aktif: true },
-  { id: "5", sumber: "Booking.com", field: "no_reservasi", pola: "Reservation number (\\d+)", aktif: false },
-];
-
-// Data tiruan (stub) — log email OTA yang sudah diproses AI Email Parser. `extracted_data`
-// mengikuti entitas EMAIL_LOGS di PRD (JSON hasil ekstraksi AI); kosong untuk email yang
-// gagal/perlu proses manual, digantikan `alasan`.
-const MOCK_EMAIL_LOGS = [
-  {
-    id: "1", subjek: "Konfirmasi Reservasi #AGD-88213", pengirim: "noreply@agoda.com", sumber: "Agoda",
-    status: "Parsed_Success", processed_at: "2026-07-10T08:12:00", gmail_message_id: "18f2a9c7b3e4d501",
-    extracted_data: {
-      no_reservasi: "AGD-88213", nama_tamu: "Ahmad Fauzi", tipe_kamar: "Standard",
-      check_in: "2026-07-12T14:00:00", check_out: "2026-07-14T12:00:00",
-      jumlah_tamu: 2, harga: 240000, status_pembayaran: "Lunas",
-    },
-  },
-  {
-    id: "2", subjek: "Booking Baru - Traveloka BKN-4471", pengirim: "no-reply@traveloka.com", sumber: "Traveloka",
-    status: "Parsed_Success", processed_at: "2026-07-10T09:03:00", gmail_message_id: "18f2a8b1c9d3e402",
-    extracted_data: {
-      no_reservasi: "BKN-4471", nama_tamu: "Rina Kusuma", tipe_kamar: "Standard",
-      check_in: "2026-07-13T14:00:00", check_out: "2026-07-15T12:00:00",
-      jumlah_tamu: 2, harga: 240000, status_pembayaran: "Lunas",
-    },
-  },
-  {
-    id: "3", subjek: "New reservation confirmed - Booking.com", pengirim: "noreply@booking.com", sumber: "Booking.com",
-    status: "Manual_Required", processed_at: "2026-07-10T10:41:00", gmail_message_id: "18f2a6d4a1b2c303",
-    extracted_data: null,
-    alasan: "Format email Booking.com ini belum dikenali parser AI (template baru) — perlu dipetakan manual di tab \"Proses Manual\".",
-  },
-  {
-    id: "4", subjek: "Pembatalan Pesanan #AGD-88190", pengirim: "noreply@agoda.com", sumber: "Agoda",
-    status: "Parsed_Success", processed_at: "2026-07-09T21:15:00", gmail_message_id: "18f29f0e5c6d7204",
-    extracted_data: {
-      no_reservasi: "AGD-88190", nama_tamu: "Sri Wahyuni", tipe_kamar: "Cottage",
-      check_in: "2026-07-10T14:00:00", check_out: "2026-07-11T12:00:00",
-      jumlah_tamu: 3, harga: 130000, status_pembayaran: "Dibatalkan",
-    },
-  },
-  {
-    id: "5", subjek: "Fwd: Detail Reservasi (format tidak dikenal)", pengirim: "reservasi.staff@gmail.com", sumber: "Lainnya",
-    status: "Failed", processed_at: "2026-07-09T18:30:00", gmail_message_id: "18f29c2b4e5f6105",
-    extracted_data: null,
-    alasan: "Isi email tidak mengandung pola reservasi OTA yang dikenali (kemungkinan email diteruskan manual, bukan notifikasi asli OTA).",
-  },
-];
 
 const EMAIL_STATUS_BADGE = {
   Parsed_Success: { label: "Berhasil Diproses", cls: "bg-emerald-100 text-emerald-800" },
@@ -97,23 +42,60 @@ const TABS = [
 ];
 
 // Status koneksi Gmail — data tiruan. OAuth (Client ID/Secret) menyusul di task backend terpisah.
-function KoneksiGmail() {
+function KoneksiGmail({ onFetched }) {
   const [connected, setConnected] = useState(false);
   const [email, setEmail] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [fetching, setFetching] = useState(false);
+
+  const loadStatus = () => {
+    api.get("/otomasi-email/gmail/status").then((r) => {
+      setConnected(r.data.connected);
+      setEmail(r.data.email || "");
+    }).catch(() => {}).finally(() => setLoading(false));
+  };
+
+  useEffect(() => {
+    loadStatus();
+    // Redirect balik dari Google (lihat gmail_callback di backend): ?gmail=connected|error
+    const params = new URLSearchParams(window.location.search);
+    const gmail = params.get("gmail");
+    if (gmail === "connected") toast.success("Gmail berhasil terhubung");
+    else if (gmail === "error") toast.error(`Gagal menghubungkan Gmail (${params.get("reason") || "unknown"})`);
+    if (gmail) window.history.replaceState({}, "", window.location.pathname);
+  }, []);
 
   const connect = () => {
-    // Mock: nanti diganti alur OAuth Google (redirect ke consent screen).
-    setConnected(true);
-    setEmail("reservasi@pelangihomestay.com");
-    toast.success("Gmail terhubung (mock) — reservasi@pelangihomestay.com");
+    api.get("/otomasi-email/gmail/connect").then((r) => {
+      window.location.href = r.data.auth_url; // navigasi penuh — Google butuh browser asli, bukan fetch
+    }).catch((e) => toast.error(e?.response?.data?.detail || "Gagal memulai koneksi Gmail"));
   };
 
-  const disconnect = () => {
+  const disconnect = async () => {
     if (!window.confirm("Putuskan koneksi Gmail? Otomasi email OTA akan berhenti sampai dihubungkan lagi.")) return;
-    setConnected(false);
-    setEmail("");
-    toast.success("Koneksi Gmail diputuskan");
+    try {
+      await api.post("/otomasi-email/gmail/disconnect");
+      toast.success("Koneksi Gmail diputuskan");
+      loadStatus();
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Gagal memutuskan koneksi Gmail");
+    }
   };
+
+  const cekEmailBaru = async () => {
+    setFetching(true);
+    try {
+      const { data } = await api.post("/otomasi-email/gmail/fetch");
+      toast.success(`${data.fetched} email baru diambil & diproses`);
+      onFetched?.();
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Gagal mengambil email baru");
+    } finally {
+      setFetching(false);
+    }
+  };
+
+  if (loading) return <Card className="border-slate-200"><CardContent className="p-6 text-sm text-slate-500">Memuat status koneksi…</CardContent></Card>;
 
   return (
     <Card className="border-slate-200">
@@ -137,15 +119,22 @@ function KoneksiGmail() {
             </div>
           </div>
         </div>
-        {connected ? (
-          <Button data-testid="gmail-disconnect" variant="outline" onClick={disconnect} className="gap-1.5 text-red-600 border-red-300 hover:bg-red-50">
-            <Unlink className="w-3.5 h-3.5" /> Putuskan
-          </Button>
-        ) : (
-          <Button data-testid="gmail-connect" onClick={connect} className="gap-1.5 bg-blue-700 hover:bg-blue-800">
-            <Mail className="w-3.5 h-3.5" /> Hubungkan Gmail
-          </Button>
-        )}
+        <div className="flex gap-2">
+          {connected && (
+            <Button data-testid="gmail-fetch" variant="outline" onClick={cekEmailBaru} disabled={fetching} className="gap-1.5">
+              {fetching ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />} {fetching ? "Mengecek…" : "Cek Email Baru"}
+            </Button>
+          )}
+          {connected ? (
+            <Button data-testid="gmail-disconnect" variant="outline" onClick={disconnect} className="gap-1.5 text-red-600 border-red-300 hover:bg-red-50">
+              <Unlink className="w-3.5 h-3.5" /> Putuskan
+            </Button>
+          ) : (
+            <Button data-testid="gmail-connect" onClick={connect} className="gap-1.5 bg-blue-700 hover:bg-blue-800">
+              <Mail className="w-3.5 h-3.5" /> Hubungkan Gmail
+            </Button>
+          )}
+        </div>
       </CardContent>
     </Card>
   );
@@ -193,7 +182,6 @@ function LogEmailDetailDialog({ log, onClose }) {
                 <p className="text-amber-800">{log.alasan || "AI tidak berhasil mengekstrak data reservasi dari email ini."}</p>
               </div>
             )}
-            <p className="text-[11px] text-slate-400 pt-1">Data tiruan — belum tersambung ke Gmail sungguhan.</p>
           </div>
         )}
       </DialogContent>
@@ -353,33 +341,50 @@ function UjiAturan({ rules }) {
 }
 
 function AturanPemetaanAI() {
-  const [rules, setRules] = useState(MOCK_MAPPING_RULES);
+  const [rules, setRules] = useState([]);
   const [formOpen, setFormOpen] = useState(false);
   const [editing, setEditing] = useState(null); // rule yang sedang diubah, null = tambah baru
+
+  const load = () => { api.get("/otomasi-email/mapping-rules").then((r) => setRules(r.data)).catch(() => {}); };
+  useEffect(() => { load(); }, []);
 
   const openAdd = () => { setEditing(null); setFormOpen(true); };
   const openEdit = (rule) => { setEditing(rule); setFormOpen(true); };
 
-  const saveRule = (form) => {
-    if (editing) {
-      setRules((rs) => rs.map((r) => (r.id === editing.id ? { ...editing, ...form } : r)));
-      toast.success(`Aturan ${fieldLabel(form.field)} (${form.sumber}) diperbarui`);
-    } else {
-      const newRule = { id: crypto.randomUUID(), aktif: true, ...form };
-      setRules((rs) => [...rs, newRule]);
-      toast.success(`Aturan baru untuk ${form.sumber} ditambahkan`);
+  const saveRule = async (form) => {
+    try {
+      if (editing) {
+        await api.put(`/otomasi-email/mapping-rules/${editing.id}`, form);
+        toast.success(`Aturan ${fieldLabel(form.field)} (${form.sumber}) diperbarui`);
+      } else {
+        await api.post("/otomasi-email/mapping-rules", form);
+        toast.success(`Aturan baru untuk ${form.sumber} ditambahkan`);
+      }
+      load();
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Gagal menyimpan aturan");
     }
   };
 
-  const toggleAktif = (rule) => {
-    setRules((rs) => rs.map((r) => (r.id === rule.id ? { ...r, aktif: !r.aktif } : r)));
-    toast.success(`Aturan ${fieldLabel(rule.field)} (${rule.sumber}) ${rule.aktif ? "dinonaktifkan" : "diaktifkan"}`);
+  const toggleAktif = async (rule) => {
+    try {
+      await api.put(`/otomasi-email/mapping-rules/${rule.id}`, { aktif: !rule.aktif });
+      toast.success(`Aturan ${fieldLabel(rule.field)} (${rule.sumber}) ${rule.aktif ? "dinonaktifkan" : "diaktifkan"}`);
+      load();
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Gagal mengubah status aturan");
+    }
   };
 
-  const deleteRule = (rule) => {
+  const deleteRule = async (rule) => {
     if (!window.confirm(`Hapus aturan "${fieldLabel(rule.field)}" untuk sumber ${rule.sumber}?`)) return;
-    setRules((rs) => rs.filter((r) => r.id !== rule.id));
-    toast.success("Aturan dihapus");
+    try {
+      await api.delete(`/otomasi-email/mapping-rules/${rule.id}`);
+      toast.success("Aturan dihapus");
+      load();
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Gagal menghapus aturan");
+    }
   };
 
   return (
@@ -592,9 +597,10 @@ function ProsesManualEmail({ logs, onResolve }) {
   const [selected, setSelected] = useState(null);
   const perluManual = logs.filter((l) => l.status === "Manual_Required" || l.status === "Failed");
 
-  const handleSave = (extractedData) => {
-    onResolve(selected.id, extractedData);
-    toast.success(`Reservasi dibuat manual dari email "${selected.subjek}"`);
+  const handleSave = async (extractedData) => {
+    const subjek = selected.subjek;
+    await onResolve(selected.id, extractedData);
+    toast.success(`Reservasi dibuat manual dari email "${subjek}"`);
     setSelected(null);
   };
 
@@ -635,12 +641,18 @@ function ProsesManualEmail({ logs, onResolve }) {
 }
 
 export default function OtomasiEmail() {
-  const [logs, setLogs] = useState(MOCK_EMAIL_LOGS);
+  const [logs, setLogs] = useState([]);
 
-  const resolveManual = (logId, extractedData) => {
-    setLogs((ls) => ls.map((l) => (l.id === logId
-      ? { ...l, status: "Parsed_Success", extracted_data: extractedData, alasan: undefined }
-      : l)));
+  const loadLogs = () => { api.get("/otomasi-email/logs").then((r) => setLogs(r.data)).catch(() => {}); };
+  useEffect(() => { loadLogs(); }, []);
+
+  const resolveManual = async (logId, extractedData) => {
+    try {
+      await api.post(`/otomasi-email/logs/${logId}/proses-manual`, extractedData);
+      loadLogs();
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Gagal memproses manual");
+    }
   };
 
   return (
@@ -663,7 +675,7 @@ export default function OtomasiEmail() {
         </TabsList>
 
         <TabsContent value="koneksi" className="mt-4">
-          <KoneksiGmail />
+          <KoneksiGmail onFetched={loadLogs} />
         </TabsContent>
         <TabsContent value="log" className="mt-4">
           <LogEmail logs={logs} />

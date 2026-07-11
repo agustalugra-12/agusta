@@ -6,6 +6,12 @@ Format longgar mengikuti [Keep a Changelog](https://keepachangelog.com/).
 ## [Unreleased]
 
 ### Added
+- Konfigurasi: aktivasi AI Email Parser — `OPENAI_API_KEY` dipasang di `pms-backend.service`.
+- Backend: service pengambilan email Gmail (`POST /api/otomasi-email/gmail/fetch`) dengan refresh token otomatis — `backend/routes/otomasi_email.py`.
+- Backend: AI Email Parser sungguhan pakai OpenAI (gpt-4o-mini) untuk ekstrak data reservasi dari isi email OTA — `backend/routes/otomasi_email.py`.
+- Backend: Reservation Automation — reservasi otomatis dibuat di Pelangi PMS begitu email berhasil di-parse AI (anti double-booking: fallback ke Manual_Required kalau tipe kamar belum dipetakan atau kamar penuh) — `backend/routes/otomasi_email.py` (`buat_reservasi_otomatis`), pakai `reservation_service.create_reservation` yang sudah ada.
+- Backend: endpoint GET `/api/otomasi-email/logs` (+ filter `status`), CRUD `/api/otomasi-email/mapping-rules`, POST `/api/otomasi-email/logs/{id}/proses-manual`.
+- Frontend: `OtomasiEmail.jsx` disambungkan penuh ke endpoint nyata (Koneksi Gmail, Log Email Masuk, Aturan Pemetaan AI, Proses Manual) — tidak ada lagi data tiruan.
 - Backend: skema `EmailLog`/`EmailExtractedData` (collection `email_logs`) — `backend/core.py`.
 - Backend: model `RoomMappingCreate`/`RoomMappingUpdate` + endpoint CRUD `/api/mappings`, GET `/api/pms-room-types`, POST `/api/pms-room-types/sync`, GET `/api/unmapped-ota-rooms` — `backend/routes/pemetaan_tipe_kamar.py`, collection baru `room_mappings`.
 - Frontend: `PemetaanTipeKamar.jsx` disambungkan ke endpoint nyata di atas (bukan data tiruan lagi).
