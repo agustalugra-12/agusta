@@ -126,8 +126,14 @@ Layer **frontend** Fase 2 selesai 100% (30/30 task NgodingPakeAI, 2026-07-11). L
 
 ### Backend — Voucher PDF & Log Pengiriman (2026-07-11)
 - [x] Generator PDF voucher SUNGGUHAN (reportlab, ditambahkan ke requirements.txt) — `GET /api/public/bookings/{id}/voucher.pdf`, dipakai tombol "Unduh Voucher" di `/book` (ganti dari `window.print()`)
-- [x] Skema `EmailSendLog` (collection `email_send_log`) + endpoint `GET /api/pengiriman-voucher/logs` — frontend `PengirimanVoucherOtomatis.jsx` disambungkan (kosong sampai pengiriman email aktif, ini benar bukan bug)
-- [ ] **Diblokir, butuh kredensial (user memilih skip 2026-07-11):** service kirim email voucher sungguhan (SMTP/API key belum ada) — 5 task NgodingPakeAI ditandai `failed` dengan alasan jelas. Kalau nanti mau aktifkan: sediakan SMTP host/port/user/App-Password ATAU API key SendGrid/Resend/Mailgun.
+- [x] Skema `EmailSendLog` (collection `email_send_log`) + endpoint `GET /api/pengiriman-voucher/logs` — frontend `PengirimanVoucherOtomatis.jsx` disambungkan
+
+### Backend — Pengiriman Voucher Email SUNGGUHAN via Brevo (2026-07-11)
+- [x] Service kirim email (`backend/email_service.py`, `send_voucher_email` + `generate_voucher_pdf` dipindah kesini dari `public.py` supaya dipakai lintas route) — Brevo transactional API, kredensial `BREVO_API_KEY`/`BREVO_FROM_EMAIL`/`BREVO_FROM_NAME` user 2026-07-11, dipasang di `pms-backend.service`. Setiap percobaan (sukses/gagal) selalu dicatat ke `email_send_log`.
+- [x] Catatan infra: VPS ini default keluar lewat IPv6 tapi Brevo authorised-IP baru mengizinkan IPv4 — dipaksa `local_address="0.0.0.0"` di httpx supaya tidak tergantung whitelist IPv6.
+- [x] Trigger otomatis kirim voucher saat booking jadi lunas — webhook Midtrans (`payments.py`, sekali saja per booking, bukan tiap retry webhook) DAN konfirmasi transfer manual oleh staf (`bookings.py` `mark-paid-manual`)
+- [x] Endpoint kirim ulang manual staf — `POST /api/pengiriman-voucher/kirim-ulang/{booking_id}`
+- [x] Tes end-to-end: email sungguhan terkirim & diterima (verifikasi manual oleh user), log tes dibersihkan dari DB setelahnya
 
 ### Backend — Manajemen Stok Terpusat, Booking Engine, Harga & Kalkulasi, Integrasi Midtrans, Jenis Reservasi/Layanan — SUDAH LENGKAP (diverifikasi 2026-07-11, tanpa kode baru)
 - [x] Semua sudah nyata dari batch Fase 1/2 sebelumnya (`availability_logs`, `reservation_service.py`, `payments.py`) — 24 task NgodingPakeAI ditandai selesai setelah verifikasi kode, bukan dikerjakan ulang

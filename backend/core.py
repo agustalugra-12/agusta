@@ -55,6 +55,11 @@ GOOGLE_OAUTH_REDIRECT_URI = os.environ.get("GOOGLE_OAUTH_REDIRECT_URI", "")
 # ---- OpenAI (Otomasi Email — AI Email Parser) ----
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
 
+# ---- Brevo (Pengiriman Voucher Otomatis — email transaksional) ----
+BREVO_API_KEY = os.environ.get("BREVO_API_KEY", "")
+BREVO_FROM_EMAIL = os.environ.get("BREVO_FROM_EMAIL", "")
+BREVO_FROM_NAME = os.environ.get("BREVO_FROM_NAME", "Pelangi Homestay")
+
 # ---- Constants ----
 SERVICE_FEE_PCT = 0.03  # 3% service fee diaplikasikan ke checkin & booking
 EXTRA_BED_PRICE = 50000  # per extra bed, flat (PRD: "Extra Bed Rp 50.000 berlaku untuk kedua jenis layanan")

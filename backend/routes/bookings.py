@@ -1,5 +1,6 @@
 from core import *
 from reservation_service import check_room_available
+from email_service import generate_voucher_pdf, send_voucher_email
 
 @api.post("/bookings")
 async def create_booking(body: BookingCreate, user: dict = Depends(get_current_user)):
@@ -234,6 +235,16 @@ async def mark_paid_manual(bid: str, body: ManualMarkPaidBody, user: dict = Depe
     await log_activity(user, "manual_paid",
                        f"Konfirmasi manual booking {b['kode']} kamar {b.get('room_nomor','')}: Rp{nominal:,} via {body.metode}".replace(",", "."),
                        entity=b.get("room_nomor", ""))
+    # kirim voucher otomatis begitu pembayaran manual dikonfirmasi lunas
+    if b.get("payment_status") != "paid":
+        try:
+            b_paid = {**b, "status": "booking_paid", "payment_status": "paid"}
+            pdf_bytes = generate_voucher_pdf(b_paid)
+            await send_voucher_email(b_paid, pdf_bytes)
+        except Exception as e:
+            logging.getLogger("bookings").warning(
+                f"Gagal kirim voucher otomatis (manual paid) booking {b['kode']}: {e}"
+            )
     return {"ok": True, "booking_kode": b["kode"], "amount": nominal, "status": "booking_paid"}
 
 @api.post("/bookings/{bid}/no-show")

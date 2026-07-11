@@ -1,4 +1,5 @@
 from core import *
+from email_service import generate_voucher_pdf, send_voucher_email
 
 @api.get("/payments/midtrans/config")
 async def get_midtrans_config():
@@ -144,6 +145,16 @@ async def midtrans_notification(request: Request):
                 "detail": f"Booking {b['kode']} - {transaction_status} ({payment_type or 'n/a'}) Rp{gross_amount}",
                 "entity": b.get("room_nomor", ""), "timestamp": now,
             })
+            # kirim voucher otomatis begitu pembayaran sukses (sekali saja, bukan tiap retry webhook)
+            if new_payment == "paid" and b.get("payment_status") != "paid":
+                try:
+                    b_paid = {**b, "status": new_status, "payment_status": new_payment}
+                    pdf_bytes = generate_voucher_pdf(b_paid)
+                    await send_voucher_email(b_paid, pdf_bytes)
+                except Exception as e:
+                    logging.getLogger("payments").warning(
+                        f"Gagal kirim voucher otomatis booking {b['kode']}: {e}"
+                    )
     return {"ok": True}
 
 @api.get("/payments/midtrans/status/{order_id}")

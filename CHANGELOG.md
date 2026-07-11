@@ -6,6 +6,7 @@ Format longgar mengikuti [Keep a Changelog](https://keepachangelog.com/).
 ## [Unreleased]
 
 ### Added
+- Backend: pengiriman voucher email sungguhan via Brevo — `backend/email_service.py` (baru), dipicu otomatis begitu booking lunas (webhook Midtrans di `backend/routes/payments.py`, atau konfirmasi transfer manual staf di `backend/routes/bookings.py`), plus endpoint kirim ulang manual `POST /api/pengiriman-voucher/kirim-ulang/{booking_id}` — `backend/routes/public.py`. Setiap percobaan kirim (sukses/gagal) dicatat ke `email_send_log`. Kredensial `BREVO_API_KEY`/`BREVO_FROM_EMAIL`/`BREVO_FROM_NAME` dipasang di `pms-backend.service` — `backend/core.py`.
 - Backend: generator PDF voucher sungguhan (reportlab) — `GET /api/public/bookings/{id}/voucher.pdf`, dipakai tombol "Unduh Voucher" di halaman konfirmasi tamu (ganti dari `window.print()`) — `backend/routes/public.py`, `backend/requirements.txt`.
 - Backend: skema `EmailSendLog` + endpoint `GET /api/pengiriman-voucher/logs` — `backend/core.py`, `backend/routes/public.py`. Frontend `PengirimanVoucherOtomatis.jsx` disambungkan.
 - Backend: dashboard Sinkronisasi Data PMS -> bot WhatsApp (status aliran data, perbandingan bot/PMS, referensi reservasi, alert) + `push_sync_event` (dorong notifikasi ke webhook bot tiap perubahan stok, dengan retry) — `backend/routes/sinkronisasi_data_pms.py`, `backend/core.py`. Frontend `SinkronisasiDataPMS.jsx` disambungkan.
