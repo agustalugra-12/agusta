@@ -165,6 +165,112 @@ async def get_payment_status(order_id: str):
         raise HTTPException(404, "Payment log tidak ditemukan")
     return log
 
+VALID_PAYMENT_STATUSES = {"settlement", "pending", "expire", "deny", "cancel", "refund"}
+
+@api.put("/payments/log/{log_id}/status")
+async def update_payment_status_manual(log_id: str, body: PaymentStatusUpdateBody,
+                                        user: dict = Depends(get_current_user)):
+    """Ubah status transaksi payment_log secara manual oleh staf (halaman Pembayaran) —
+    mis. staf mengecek bukti transfer langsung, atau mengoreksi status yang salah.
+    Beda dari webhook Midtrans (otomatis, signature-verified): ini aksi manual staf,
+    jadi status booking terkait ikut disesuaikan dengan pemetaan yang sama dipakai webhook."""
+    if body.status not in VALID_PAYMENT_STATUSES:
+        raise HTTPException(400, f"Status harus salah satu dari: {', '.join(sorted(VALID_PAYMENT_STATUSES))}")
+    log = await db.payment_log.find_one({"id": log_id})
+    if not log:
+        raise HTTPException(404, "Transaksi tidak ditemukan")
+    if log.get("transaction_status") == body.status:
+        return {"ok": True, "order_id": log.get("order_id"), "transaction_status": body.status, "unchanged": True}
+
+    now = now_iso()
+    await db.payment_log.update_one({"id": log_id}, {"$set": {
+        "transaction_status": body.status, "updated_at": now,
+        "manual_status_by": user["nama"], "manual_status_reason": body.alasan,
+    }})
+
+    booking_id = log.get("booking_id")
+    if booking_id:
+        b = await db.bookings.find_one({"id": booking_id})
+        if b:
+            new_status = b.get("status")
+            new_payment = b.get("payment_status", "pending")
+            if body.status == "settlement":
+                new_status, new_payment = "booking_paid", "paid"
+            elif body.status == "pending":
+                new_payment = "pending"
+            elif body.status in ("expire", "cancel", "deny"):
+                new_status = "cancelled"
+                new_payment = "expired" if body.status == "expire" else "failed"
+            elif body.status == "refund":
+                new_payment = "refunded"
+            was_paid = b.get("payment_status") == "paid"
+            await db.bookings.update_one({"id": booking_id}, {"$set": {
+                "status": new_status, "payment_status": new_payment,
+                "paid_at": now if new_payment == "paid" else b.get("paid_at"),
+                "updated_at": now,
+            }})
+            if new_payment == "paid" and not was_paid:
+                try:
+                    b_paid = {**b, "status": new_status, "payment_status": new_payment}
+                    pdf_bytes = generate_voucher_pdf(b_paid)
+                    await send_voucher_email(b_paid, pdf_bytes)
+                except Exception as e:
+                    logging.getLogger("payments").warning(
+                        f"Gagal kirim voucher otomatis (ubah status manual) booking {b['kode']}: {e}"
+                    )
+    await log_activity(user, "update_payment_status_manual",
+                       f"Ubah status transaksi {log.get('order_id')} → {body.status}" +
+                       (f" ({body.alasan})" if body.alasan else ""))
+    return {"ok": True, "order_id": log.get("order_id"), "transaction_status": body.status}
+
+@api.get("/payments/log/by-booking/{booking_kode}")
+async def get_payment_log_by_booking(booking_kode: str, user: dict = Depends(get_current_user)):
+    """Riwayat semua percobaan pembayaran (payment_log) untuk satu reservasi — dipakai
+    panel 'Riwayat Pembayaran' di halaman Pembayaran (mis. DP dulu baru pelunasan, atau
+    sempat expired lalu dibuatkan tagihan baru)."""
+    logs = await db.payment_log.find(
+        {"booking_kode": booking_kode},
+        {"_id": 0, "midtrans_response": 0, "notification_payload": 0},
+    ).sort("created_at", 1).to_list(200)
+    return logs
+
+def _status_bayar(b: dict) -> str:
+    """Derive status bayar 3-keadaan (PRD: Belum Bayar/DP/Lunas) dari payment_status booking.
+    `amount_due` di skema booking sekarang ini isinya kumulatif nominal yang sudah confirmed
+    terkumpul (diisi saat create-snap-token, ditambah tiap collect-balance) — bukan "belum
+    dibayar" seperti nama fieldnya menyesatkan.
+    """
+    if b.get("payment_status") != "paid":
+        return "belum_bayar"
+    total = int(b.get("total") or 0)
+    terkumpul = int(b.get("amount_due") or 0)
+    return "lunas" if total > 0 and terkumpul >= total else "dp"
+
+@api.get("/payments/bookings-status")
+async def list_bookings_status_bayar(status_bayar: Optional[str] = None, search: Optional[str] = None,
+                                      user: dict = Depends(get_current_user)):
+    """Daftar reservasi dengan status bayar terderivasi (Belum Bayar/DP/Lunas) — dipakai
+    fitur 'Status Bayar' halaman Pembayaran. `status_bayar` filter: belum_bayar|dp|lunas.
+    """
+    if status_bayar and status_bayar not in ("belum_bayar", "dp", "lunas"):
+        raise HTTPException(400, "status_bayar harus belum_bayar, dp, atau lunas")
+    q: Dict[str, Any] = {}
+    if search:
+        q["$or"] = [
+            {"nama_tamu": {"$regex": search, "$options": "i"}},
+            {"kode": {"$regex": search, "$options": "i"}},
+        ]
+    fields = {"_id": 0, "id": 1, "kode": 1, "nama_tamu": 1, "room_nomor": 1, "room_tipe": 1,
+              "tipe": 1, "status": 1, "payment_status": 1, "payment_option": 1, "total": 1,
+              "amount_due": 1, "dp_min": 1, "created_at": 1, "paid_at": 1}
+    items = await db.bookings.find(q, fields).sort("created_at", -1).to_list(1000)
+    for b in items:
+        b["status_bayar"] = _status_bayar(b)
+        b["sisa_tagihan"] = max(0, int(b.get("total") or 0) - int(b.get("amount_due") or 0))
+    if status_bayar:
+        items = [b for b in items if b["status_bayar"] == status_bayar]
+    return items
+
 @api.get("/public/bank-accounts")
 async def public_bank_accounts():
     """Daftar rekening bank untuk transfer manual (tampil di halaman publik /book)."""

@@ -111,6 +111,9 @@ async def require_owner(user: dict = Depends(get_current_user)) -> dict:
     return user
 
 async def log_activity(user: dict, action: str, detail: str = "", entity: str = ""):
+    """AuditLogger — dipanggil di semua route yang mengubah data (stok kamar, reservasi,
+    pengguna, dst). Tiap panggilan menulis satu dokumen `AuditLog` ke collection `audit_log`.
+    """
     await db.audit_log.insert_one({
         "id": str(uuid.uuid4()),
         "user_id": user.get("id"),
@@ -373,6 +376,13 @@ class CollectBalanceBody(BaseModel):
     nominal: int
     metode: str = "cash"  # cash / qris
 
+class PaymentStatusUpdateBody(BaseModel):
+    """Body untuk ubah status pembayaran manual (halaman Pembayaran, Fase 3) — staf koreksi
+    status transaksi payment_log secara manual (mis. bukti transfer dicek manual, atau
+    salah catat). Beda dari webhook Midtrans (otomatis) — perubahan ini dicatat sumbernya."""
+    status: str  # settlement | pending | expire | deny | cancel | refund
+    alasan: Optional[str] = ""
+
 class AvailabilityLog(BaseModel):
     """Dokumen di collection `availability_logs` — riwayat pergerakan ketersediaan kamar
     (Dasbor Ketersediaan). Dicatat setiap kali kamar berpindah status tersedia <-> terisi.
@@ -384,6 +394,21 @@ class AvailabilityLog(BaseModel):
     reason: str  # mis: booking_dibuat, booking_dibatalkan, checkin, checkout
     booking_id: Optional[str] = None
     changed_at: str
+
+class AuditLog(BaseModel):
+    """Dokumen di collection `audit_log` (Log Aktivitas / Audit Trail) — rekam jejak siapa
+    mengubah apa dan kapan. Ditulis oleh `log_activity()` di setiap route yang mengubah data
+    (stok kamar/rooms, reservasi/bookings, pengguna, dst — lihat pemanggilnya di seluruh
+    `backend/routes/*.py`). MongoDB schemaless, jadi tidak ada migrasi terpisah; model ini
+    murni dokumentasi bentuk dokumennya, dibaca lewat `GET /api/audit-log`.
+    """
+    id: str
+    user_id: Optional[str] = None
+    username: Optional[str] = None
+    action: str  # mis: create_booking, cancel_booking, change_room_status, update_user
+    entity: str = ""  # mis: nomor kamar atau kode booking terkait
+    detail: str = ""
+    timestamp: str
 
 class EmailExtractedData(BaseModel):
     """Bentuk `extracted_data` — hasil ekstraksi AI Email Parser dari satu email OTA.

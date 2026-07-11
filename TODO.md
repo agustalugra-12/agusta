@@ -27,6 +27,21 @@ daftar ini ringkasan untuk manusia, bisa sedikit basi — cek CLI kalau ragu.
 - [x] Sinkronisasi harga ke saluran — pakai ulang `push_sync_event` (webhook bot WhatsApp) yang sama dengan sinkronisasi ketersediaan, dipanggil tiap update harga massal.
 - [x] Frontend `KalenderHarga.jsx` disambungkan penuh (bukan mock lagi).
 
+### Integrasi Pembayaran — backend LENGKAP (2026-07-11)
+- [x] `GET /api/payments/log/by-booking/{booking_kode}` — riwayat semua percobaan pembayaran (payment_log) per reservasi, dipakai panel "Riwayat Pembayaran" di `Pembayaran.jsx` (sudah disambungkan, bukan mock lagi untuk panel ini).
+- [x] `PUT /api/payments/log/{log_id}/status` — koreksi status transaksi manual oleh staf (mis. cek bukti transfer manual), ikut update `status`/`payment_status` booking terkait dengan pemetaan sama seperti webhook Midtrans, kirim voucher otomatis kalau jadi lunas — disambungkan ke tombol "Ubah Status" di `Pembayaran.jsx`.
+- [x] `GET /api/payments/bookings-status` — daftar reservasi dengan status bayar terderivasi (`belum_bayar`/`dp`/`lunas` dari `payment_status`+`amount_due` vs `total`), filter `status_bayar`/`search` — `backend/routes/payments.py`. Belum disambungkan ke UI (tabel utama `Pembayaran.jsx` masih data tiruan, endpoint list payment_log belum ada — tugas menyusul kalau muncul di plan).
+- [x] Fix bug: field `metode` sempat "kecuri" dari `CollectBalanceBody` gara-gara class baru ke-insert di tengah — dibetulkan di `backend/core.py`.
+
+### Log Aktivitas (Audit Trail) — SUDAH LENGKAP (diverifikasi 2026-07-11, hampir tanpa kode baru)
+- [x] Skema `AuditLog` didokumentasikan di `backend/core.py` (Mongo schemaless, tidak ada migrasi terpisah) — koleksi `audit_log` sudah dipakai luas sejak awal proyek.
+- [x] Service AuditLogger — `log_activity()` di `backend/core.py`, dipanggil 50+ tempat lintas modul.
+- [x] Integrasi ke modul stok kamar — `backend/routes/rooms.py` (create/update/delete/ubah status/housekeeping/pindah kamar) sudah lengkap.
+- [x] Integrasi ke modul reservasi — `backend/routes/bookings.py`, `backend/routes/checkins.py`, `backend/reservation_service.py` (termasuk booking publik & pembatalan mandiri tamu) sudah lengkap.
+- [x] `GET /api/audit-log` (`backend/routes/misc.py`) — sudah nyata & sudah disambungkan penuh ke frontend `Audit.jsx` (`/audit`, filter aksi + cari client-side) sejak batch sebelumnya.
+
+**Fase 3 selesai 100% (7/7 task NgodingPakeAI tersisa) — `task next` mengembalikan `done: true`.**
+
 ## Fase 2 — AI Reservation Automation & Booking Engine
 ### Otomasi Email & Pemesanan — SELESAI (backend + frontend nyata, 2026-07-11)
 - [x] Shell halaman + tab navigasi
@@ -178,5 +193,4 @@ Layer **frontend** Fase 2 selesai 100% (30/30 task NgodingPakeAI, 2026-07-11). L
 - [x] Endpoint GET `/api/rekomendasi-checkin?tanggal&tipe_kamar` — hitung rekomendasi dari booking Menginap sungguhan yang check-out di tanggal itu + jeda bersih-bersih, filter lewat `check_room_available` asli (anti double-booking), bukan lagi data tiruan
 - [x] Frontend `RekomendasiCheckinDayUse.jsx` disambungkan ke endpoint ini
 
-## Fase 3
-- [ ] Belum dibaca detail PRD-nya — cek `plan get` saat fase 2 selesai.
+Fase 3 detail: lihat section "Fase 3 — Manajemen Sistem Internal" di atas — sudah selesai 100%.

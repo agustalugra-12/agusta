@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
 import { Card, CardContent } from "@/components/ui/card";
@@ -7,7 +7,7 @@ import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Search, X, CreditCard, Plus, Copy, ExternalLink } from "lucide-react";
-import { fmtDateTime, fmtRp } from "@/lib/apiClient";
+import api, { fmtDateTime, fmtRp } from "@/lib/apiClient";
 
 // Data tiruan (stub) — booking yang belum lunas dan perlu ditagih staf (mis. reservasi
 // yang masuk lewat telepon/WA, bukan lewat form publik yang sudah otomatis pakai Snap).
@@ -40,6 +40,7 @@ const STATUS_META = {
 };
 
 const STATUS_OPTIONS = ["Semua", "settlement", "pending", "expire", "deny", "cancel", "refund"];
+const UBAH_STATUS_OPTIONS = ["settlement", "pending", "expire", "deny", "cancel", "refund"];
 
 // Dialog "Buat Tagihan Baru" — simulasi alur Midtrans Snap dari sisi staf (bukan tamu):
 // pilih booking yang belum lunas + metode bayar (DP50/Lunas), hasilnya link pembayaran
@@ -157,6 +158,36 @@ export default function Pembayaran() {
   const [status, setStatus] = useState("Semua");
   const [selected, setSelected] = useState(null);
   const [tagihanOpen, setTagihanOpen] = useState(false);
+  const [ubahStatus, setUbahStatus] = useState("");
+  const [savingStatus, setSavingStatus] = useState(false);
+  const [riwayat, setRiwayat] = useState([]);
+  const [riwayatLoading, setRiwayatLoading] = useState(false);
+
+  useEffect(() => {
+    if (!selected?.booking_kode) { setRiwayat([]); return; }
+    let cancelled = false;
+    setRiwayatLoading(true);
+    api.get(`/payments/log/by-booking/${selected.booking_kode}`)
+      .then(({ data }) => { if (!cancelled) setRiwayat(data); })
+      .catch(() => { if (!cancelled) setRiwayat([]); })
+      .finally(() => { if (!cancelled) setRiwayatLoading(false); });
+    return () => { cancelled = true; };
+  }, [selected?.booking_kode]);
+
+  const simpanUbahStatus = async () => {
+    if (!selected || !ubahStatus || ubahStatus === selected.transaction_status) return;
+    setSavingStatus(true);
+    try {
+      await api.put(`/payments/log/${selected.id}/status`, { status: ubahStatus });
+      setTransactions((ts) => ts.map((t) => (t.id === selected.id ? { ...t, transaction_status: ubahStatus } : t)));
+      setSelected((s) => ({ ...s, transaction_status: ubahStatus }));
+      toast.success(`Status ${selected.order_id} diubah ke "${STATUS_META[ubahStatus]?.label || ubahStatus}"`);
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Gagal mengubah status transaksi");
+    } finally {
+      setSavingStatus(false);
+    }
+  };
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -239,7 +270,7 @@ export default function Pembayaran() {
                   <tr
                     key={t.id}
                     data-testid={`pembayaran-row-${t.id}`}
-                    onClick={() => setSelected(t)}
+                    onClick={() => { setSelected(t); setUbahStatus(t.transaction_status); }}
                     className="border-t border-slate-100 cursor-pointer hover:bg-slate-50"
                   >
                     <td className="p-3 font-mono text-xs">{t.order_id}</td>
@@ -283,7 +314,56 @@ export default function Pembayaran() {
               <div className="bg-slate-50 border border-slate-200 rounded p-2 mt-2">
                 <div className="flex justify-between"><span className="font-bold">Nominal</span><b className="text-blue-700">{fmtRp(selected.gross_amount)}</b></div>
               </div>
-              <p className="text-[11px] text-slate-400 pt-1">Data tiruan — belum tersambung ke daftar transaksi Midtrans sungguhan.</p>
+
+              <div className="border-t border-slate-100 pt-3 mt-1">
+                <Label htmlFor="ubah-status">Ubah Status (manual, staf)</Label>
+                <div className="flex gap-2 mt-1.5">
+                  <select
+                    id="ubah-status"
+                    data-testid="pembayaran-ubah-status"
+                    value={ubahStatus}
+                    onChange={(e) => setUbahStatus(e.target.value)}
+                    className="flex-1 h-10 rounded-md border border-slate-300 px-3 bg-white text-sm"
+                  >
+                    {UBAH_STATUS_OPTIONS.map((s) => <option key={s} value={s}>{STATUS_META[s]?.label || s}</option>)}
+                  </select>
+                  <Button
+                    data-testid="pembayaran-simpan-status"
+                    size="sm"
+                    disabled={ubahStatus === selected.transaction_status || savingStatus}
+                    onClick={simpanUbahStatus}
+                    className="bg-blue-700 hover:bg-blue-800 shrink-0"
+                  >
+                    {savingStatus ? "Menyimpan…" : "Simpan"}
+                  </Button>
+                </div>
+              </div>
+
+              <div className="border-t border-slate-100 pt-3">
+                <p className="text-sm font-semibold text-slate-600 mb-2">Riwayat Pembayaran</p>
+                {riwayatLoading ? (
+                  <p className="text-xs text-slate-400">Memuat riwayat…</p>
+                ) : (
+                  <ul className="space-y-2" data-testid="pembayaran-riwayat">
+                    {(riwayat.length ? riwayat : [selected]).map((h, i) => (
+                      <li key={h.id || i} className="flex items-start gap-2 text-xs">
+                        <span className={`shrink-0 mt-0.5 inline-flex px-1.5 py-0.5 rounded font-medium ${(STATUS_META[h.transaction_status] || {}).cls || "bg-slate-100 text-slate-600"}`}>
+                          {(STATUS_META[h.transaction_status] || {}).label || h.transaction_status}
+                        </span>
+                        <div className="min-w-0">
+                          <div className="text-slate-700 font-mono">{h.order_id}{h.payment_type ? <> — <span className="uppercase">{h.payment_type}</span></> : null} · {fmtRp(h.gross_amount)}</div>
+                          {h.manual_status_by && (
+                            <div className="text-slate-500">Diubah manual oleh {h.manual_status_by}{h.manual_status_reason ? `: ${h.manual_status_reason}` : ""}</div>
+                          )}
+                          <div className="text-slate-400">{fmtDateTime(h.created_at)}</div>
+                        </div>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+
+              <p className="text-[11px] text-slate-400 pt-1">Daftar transaksi masih data tiruan — riwayat pembayaran &amp; ubah status sudah tersambung ke backend nyata.</p>
             </div>
           )}
         </DialogContent>
