@@ -19,6 +19,8 @@ import Laporan from "@/pages/Laporan";
 import Service from "@/pages/Service";
 import Pengguna from "@/pages/Pengguna";
 import Profil from "@/pages/Profil";
+import KalenderHarga from "@/pages/KalenderHarga";
+import LaporanAnalitik from "@/pages/LaporanAnalitik";
 import Audit from "@/pages/Audit";
 import Bookings from "@/pages/Bookings";
 import DaftarReservasi from "@/pages/DaftarReservasi";
@@ -69,6 +71,8 @@ function AppRoutes() {
         <Route path="/laporan" element={<Laporan />} />
         <Route path="/pengguna" element={<Protected ownerOnly><Pengguna /></Protected>} />
         <Route path="/profil" element={<Profil />} />
+        <Route path="/kalender-harga" element={<KalenderHarga />} />
+        <Route path="/laporan-analitik" element={<LaporanAnalitik />} />
         <Route path="/audit" element={<Audit />} />
         <Route path="/bookings" element={<Bookings />} />
         <Route path="/reservasi" element={<DaftarReservasi />} />

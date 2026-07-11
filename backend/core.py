@@ -474,3 +474,22 @@ class EmailLog(BaseModel):
     extracted_data: Optional[EmailExtractedData] = None
     alasan: Optional[str] = None  # diisi kalau status Failed/Manual_Required
     processed_at: str
+
+class RateOverride(BaseModel):
+    """Dokumen di collection `rates` (Fase 3 - Manajemen Harga/Rates, halaman Kalender Harga).
+    Satu dokumen = override harga satu tipe kamar pada satu tanggal (kunci unik room_type+tanggal).
+    Tanggal tanpa dokumen di sini memakai tarif dasar `rooms.tarif` (per tipe kamar)."""
+    id: str
+    room_type: str
+    tanggal: str  # YYYY-MM-DD
+    harga: int
+    updated_at: str
+    updated_by: str
+
+class RateBulkUpdateBody(BaseModel):
+    """Body untuk Update Harga Massal (halaman Kalender Harga): terapkan satu harga ke
+    rentang tanggal [dari, sampai] untuk satu tipe kamar, atau 'Semua' tipe sekaligus."""
+    room_type: str  # nama tipe kamar, atau "Semua"
+    dari: str  # YYYY-MM-DD
+    sampai: str  # YYYY-MM-DD
+    harga: int

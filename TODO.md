@@ -9,12 +9,23 @@ daftar ini ringkasan untuk manusia, bisa sedikit basi — cek CLI kalau ragu.
 - [x] Daftar Reservasi
 
 ## Fase 3 — Manajemen Sistem Internal
-### Autentikasi & Pengelolaan Akun (2026-07-11)
+### Autentikasi & Pengelolaan Akun — backend LENGKAP (2026-07-11)
 - [x] Halaman login — SUDAH NYATA sejak awal (bukan mock), tersambung `/api/auth/login`
-- [x] Halaman pendaftaran (sign-up publik) — **DITUNDA atas keputusan user**: sistem ini staf-internal (akun dikelola Owner lewat `/pengguna`). Ada rencana multi-tenant ke depan (hotel lain daftar sendiri, kustom kamar/harga, data terpisah dari Pelangi PMS) tapi tetap ditandai "jangan dikerjakan dulu" di `memory/GESEKAN.md` — fokus HotelSync AI dulu.
+- [x] Halaman pendaftaran (sign-up publik) — **SEKARANG DIKERJAKAN** (keputusan sebelumnya untuk menunda dibatalkan atas instruksi user 2026-07-11): `POST /api/auth/register`, akun baru role resepsionis + status `pending`, Owner aktifkan lewat `/pengguna`. Frontend `Register.jsx` di `/register`, tautan dari Login.
 - [x] Halaman dasbor utama — SUDAH NYATA sejak Fase 1 (`Dashboard.jsx` di `/`)
 - [x] Halaman kelola pengguna admin — SUDAH NYATA sejak awal (`Pengguna.jsx` di `/pengguna`, owner-only, CRUD staf sungguhan)
 - [x] Halaman profil pengguna + form ubah profil/password — BARU (`frontend/src/pages/Profil.jsx`, route `/profil`, diakses dari klik nama di sidebar). Backend `PUT /api/auth/me` (beda dari `PUT /users/{id}` yang owner-only): user ubah nama/password sendiri, wajib verifikasi password lama — `backend/routes/auth.py`, `backend/core.py` (`MeUpdate`).
+- [x] Backend — login/logout/middleware/lihat profil/ubah profil/ubah kata sandi/hapus akun (admin)/daftar pengguna (admin): semua SUDAH NYATA dari batch sebelumnya, diverifikasi ulang end-to-end (curl) 2026-07-11, tidak ada kode baru selain register di atas.
+
+### Laporan & Analitik — backend LENGKAP (2026-07-11)
+- [x] Endpoint pendapatan harian, performa saluran (OTA/Website/WhatsApp), tren okupansi — data nyata dari `bookings`/`checkins`, beda dari `/reports/*` (P&L walk-in Fase 1) — `backend/routes/laporan_analitik.py`. Index `bookings.(payment_status,paid_at)` + `bookings.source`.
+- [x] Frontend `LaporanAnalitik.jsx` disambungkan penuh (bukan mock lagi). Kosong/nol sampai ada booking online/OTA/WhatsApp yang lunas — ini benar, bukan bug.
+
+### Manajemen Harga (Rates) — backend LENGKAP (2026-07-11)
+- [x] Collection `rates` (override harga per tanggal per tipe kamar, index unik `room_type+tanggal`), tarif dasar tetap satu sumber kebenaran di `rooms.tarif`.
+- [x] `GET /api/rates/kalender`, `GET /api/rates/tipe-kamar`, `POST /api/rates/update-massal` — `backend/routes/rates.py`.
+- [x] Sinkronisasi harga ke saluran — pakai ulang `push_sync_event` (webhook bot WhatsApp) yang sama dengan sinkronisasi ketersediaan, dipanggil tiap update harga massal.
+- [x] Frontend `KalenderHarga.jsx` disambungkan penuh (bukan mock lagi).
 
 ## Fase 2 — AI Reservation Automation & Booking Engine
 ### Otomasi Email & Pemesanan — SELESAI (backend + frontend nyata, 2026-07-11)

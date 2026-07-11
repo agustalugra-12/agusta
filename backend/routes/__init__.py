@@ -23,3 +23,5 @@ from . import jenis_layanan  # noqa: F401
 from . import konfigurasi_webhook  # noqa: F401
 from . import pesan_whatsapp  # noqa: F401
 from . import sinkronisasi_data_pms  # noqa: F401
+from . import laporan_analitik  # noqa: F401
+from . import rates  # noqa: F401
