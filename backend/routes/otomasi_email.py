@@ -127,12 +127,16 @@ GMAIL_MESSAGES_ENDPOINT = "https://gmail.googleapis.com/gmail/v1/users/me/messag
 # Domain pengirim -> sumber OTA, dipakai untuk menandai `sumber` di email_logs saat
 # fetch (deteksi kasar dari alamat email, bukan AI — cukup untuk tahap pengambilan email;
 # ekstraksi detail reservasi tetap tugas AI Email Parser di task backend terpisah).
+#
+# Keputusan bisnis user (2026-07-12): PMS ini HANYA fokus baca email reservasi dari
+# bookings-indonesia@reddoorz.com di inbox agus.lugra@gmail.com — bukan lagi Agoda/
+# Traveloka/Booking.com generik seperti sebelumnya (itu sebabnya booking RedDoorz
+# nyata yang masuk sebelumnya tidak pernah kesync: query Gmail lama tidak pernah
+# mencari domain reddoorz.com sama sekali).
 SENDER_DOMAIN_SUMBER = {
-    "agoda.com": "Agoda",
-    "traveloka.com": "Traveloka",
-    "booking.com": "Booking.com",
+    "reddoorz.com": "RedDoorz",
 }
-OTA_QUERY = "from:(" + " OR ".join(SENDER_DOMAIN_SUMBER.keys()) + ")"
+OTA_QUERY = "from:bookings-indonesia@reddoorz.com"
 
 
 def _tebak_sumber(pengirim: str) -> str:
@@ -199,7 +203,8 @@ def _extract_plain_body(payload: dict) -> str:
 
 
 PARSE_SYSTEM_PROMPT = """Kamu adalah AI Email Parser untuk sistem reservasi hotel Pelangi PMS.
-Tugasmu: klasifikasi jenis notifikasi lalu ekstrak data dari isi email OTA (Agoda, Traveloka, Booking.com, dst).
+Tugasmu: klasifikasi jenis notifikasi lalu ekstrak data dari isi email reservasi OTA RedDoorz
+(pengirim bookings-indonesia@reddoorz.com).
 Balas HANYA dengan JSON valid, tanpa teks lain.
 
 Jika email BUKAN notifikasi reservasi (bukan booking baru/modifikasi/pembatalan) atau
@@ -347,7 +352,10 @@ async def batalkan_reservasi_otomatis(log_id: str, data: dict, sumber: str, subj
         "detail": f'Batalkan otomatis {booking["kode"]} (no. OTA {no_reservasi}) dari email modifikasi/pembatalan "{subjek}"',
         "entity": booking.get("room_nomor", ""), "timestamp": now,
     })
-    await db.email_logs.update_one({"id": log_id}, {"$set": {"reservation_id": booking["id"], "aksi": "reservasi_dibatalkan"}})
+    await db.email_logs.update_one({"id": log_id}, {"$set": {
+        "status": "Parsed_Success", "alasan": None,
+        "reservation_id": booking["id"], "aksi": "reservasi_dibatalkan",
+    }})
 
 
 async def fetch_gmail_emails(max_results: int = 20) -> int:

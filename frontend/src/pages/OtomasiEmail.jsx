@@ -23,7 +23,7 @@ const FIELD_OPTIONS = [
 ];
 const fieldLabel = (v) => FIELD_OPTIONS.find((f) => f.value === v)?.label || v;
 
-const SUMBER_OPTIONS = ["Agoda", "Traveloka", "Booking.com", "Lainnya"];
+const SUMBER_OPTIONS = ["RedDoorz", "Lainnya"];
 const ROOM_TYPE_OPTIONS = ["Standard", "Cottage"];
 const PAYMENT_STATUS_OPTIONS = ["Lunas", "DP", "Belum Bayar", "Dibatalkan"];
 

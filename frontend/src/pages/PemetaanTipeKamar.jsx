@@ -9,13 +9,11 @@ import { ArrowRight, Search, X, Pencil, Trash2, Plus, Download, Loader2, CheckCi
 import api, { fmtDateTime } from "@/lib/apiClient";
 
 const SUMBER_BADGE = {
-  Agoda: "bg-violet-100 text-violet-800",
-  Traveloka: "bg-blue-100 text-blue-800",
-  "Booking.com": "bg-amber-100 text-amber-800",
+  RedDoorz: "bg-rose-100 text-rose-800",
 };
 
 const ROOM_TYPE_OPTIONS = ["Standard", "Cottage"];
-const SUMBER_FORM_OPTIONS = ["Agoda", "Traveloka", "Booking.com"];
+const SUMBER_FORM_OPTIONS = ["RedDoorz"];
 const PMS_TIPE_OPTIONS = ["Semua", ...ROOM_TYPE_OPTIONS];
 const SUMBER_OPTIONS = ["Semua", ...SUMBER_FORM_OPTIONS];
 
