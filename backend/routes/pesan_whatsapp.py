@@ -3,6 +3,7 @@ import asyncio
 import httpx
 from openai import OpenAI
 from fastapi.responses import PlainTextResponse
+from routes.public import public_availability
 
 _openai_client = OpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
 
@@ -185,6 +186,92 @@ async def balesotomatis_pengetahuan(token: str):
         raise HTTPException(404, "Token webhook tidak valid")
     teks = await _ringkasan_ketersediaan_untuk_ai()
     return PlainTextResponse(teks)
+
+
+def _ambil_ai_input(payload: Dict[str, Any], key: str) -> Optional[str]:
+    """AI Trigger BalesOtomatis belum ada dokumentasi kontrak payload resmi (How-to Guide
+    mereka cuma generik API/webhook, bukan skema AI Trigger spesifik) — jaga-jaga baca key
+    di top-level body ATAU di dalam salah satu wrapper umum yang biasa dipakai platform
+    serupa, supaya tidak bergantung pada satu asumsi struktur yang belum terkonfirmasi."""
+    if payload.get(key):
+        return payload.get(key)
+    for wrapper in ("data", "inputs", "ai_inputs", "variables", "payload"):
+        nested = payload.get(wrapper)
+        if isinstance(nested, dict) and nested.get(key):
+            return nested.get(key)
+    return None
+
+
+async def _cocokkan_tipe_kamar(nilai: Optional[str]) -> Optional[str]:
+    """AI mengekstrak tipe kamar dari bahasa bebas tamu (mis. 'cottage', 'kamar standard'),
+    jadi dicocokkan longgar (substring, case-insensitive) ke tipe asli di `db.rooms`
+    daripada exact-match yang gampang meleset."""
+    if not nilai:
+        return None
+    semua_tipe = await db.rooms.distinct("tipe")
+    nilai_lower = nilai.strip().lower()
+    for t in semua_tipe:
+        if nilai_lower in t.lower() or t.lower() in nilai_lower:
+            return t
+    return None
+
+
+def _parse_tanggal_input(nilai: Optional[str]) -> str:
+    if nilai:
+        try:
+            datetime.fromisoformat(nilai)
+            return nilai
+        except Exception:
+            pass
+    return datetime.now().strftime("%Y-%m-%d")
+
+
+@api.post("/webhook/whatsapp/balesotomatis/{token}/cek-ketersediaan")
+async def balesotomatis_cek_ketersediaan(token: str, request: Request):
+    """AI Trigger BalesOtomatis (beda dari Knowledge Base statis di endpoint `pengetahuan`
+    di atas) — dipanggil AI mereka secara real-time saat tamu bertanya ketersediaan/harga
+    kamar, dengan AI Inputs `tipe_kamar` & `tanggal_checkin` yang diekstrak dari isi chat.
+    Ini mengatasi keterbatasan `pengetahuan` yang cuma snapshot statis: di sini data
+    ketersediaan dihitung live per tanggal yang ditanyakan, pakai logika yang sama dengan
+    halaman publik (`public_availability`, termasuk fix hari checkout tidak dianggap
+    booked).
+
+    Sama seperti `whatsapp_incoming_balesotomatis`, skema respons yang BalesOtomatis
+    expect dari AI Trigger belum terkonfirmasi dari dokumentasi resmi (How-to Guide
+    mereka cuma generik) — balasan dikembalikan di beberapa nama field sekaligus
+    (reply/message/balasan/text/response/output). BELUM DIVERIFIKASI LIVE apakah salah
+    satu field ini benar-benar dipakai AI mereka untuk membalas tamu.
+    """
+    cfg = await db.webhook_config.find_one({}, {"_id": 0})
+    if not cfg or not cfg.get("webhook_token") or cfg["webhook_token"] != token:
+        raise HTTPException(404, "Token webhook tidak valid")
+
+    try:
+        payload = await request.json()
+    except Exception:
+        payload = {}
+
+    tipe = await _cocokkan_tipe_kamar(_ambil_ai_input(payload, "tipe_kamar"))
+    tanggal = _parse_tanggal_input(_ambil_ai_input(payload, "tanggal_checkin"))
+
+    hasil = await public_availability(tanggal=tanggal, tipe=tipe)
+    rooms = hasil["rooms"]
+
+    if rooms:
+        per_tipe: Dict[str, Dict[str, Any]] = {}
+        for r in rooms:
+            t = per_tipe.setdefault(r["tipe"], {"tarif": r["tarif"], "jumlah": 0})
+            t["jumlah"] += 1
+        baris = [
+            f"{t}: {v['jumlah']} kamar tersedia, tarif Rp{v['tarif']:,}".replace(",", ".")
+            for t, v in per_tipe.items()
+        ]
+        teks = f"Ketersediaan kamar tanggal {tanggal}:\n" + "\n".join(baris)
+    else:
+        keterangan_tipe = f" tipe {tipe}" if tipe else ""
+        teks = f"Mohon maaf, tidak ada kamar{keterangan_tipe} yang tersedia pada tanggal {tanggal}."
+
+    return {"ok": True, "reply": teks, "message": teks, "balasan": teks, "text": teks, "response": teks, "output": teks}
 
 
 @api.get("/pesan-whatsapp/percakapan")
