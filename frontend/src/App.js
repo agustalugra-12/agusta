@@ -52,6 +52,7 @@ function AppRoutes() {
       <Route path="/login" element={<Login />} />
       <Route path="/register" element={<Register />} />
       <Route path="/book" element={<PublicBook />} />
+      <Route path="/book/sukses" element={<PublicBook successView />} />
       <Route path="/book/sukses/:bookingId" element={<PublicBook successView />} />
       <Route element={<Protected><Layout /></Protected>}>
         <Route path="/" element={<Dashboard />} />

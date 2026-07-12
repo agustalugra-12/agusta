@@ -25,6 +25,10 @@ const EXTRA_BED_MAX = 2;
 // Sama dengan BREAKFAST_PRICE di backend/core.py — hanya berlaku untuk booking menginap.
 const BREAKFAST_PRICE = 25000;
 const CS_WHATSAPP = "0895356644644";
+// Disimpan begitu booking dibuat, dipakai SuccessView sebagai fallback kalau URL /book/sukses
+// diakses tanpa :bookingId (mis. Midtrans Finish Redirect URL di dashboard mereka bersifat statis
+// per-akun, tidak selalu bisa disisipi ID per transaksi untuk semua metode pembayaran).
+const LAST_BOOKING_ID_KEY = "pelangi_last_booking_id";
 const ALAMAT_HOMESTAY = "Jl. Kebun Raya Bedugul, Desa Candikuning, Kec. Baturiti, Tabanan - Bali";
 const addDays = (dateStr, n) => {
   const d = new Date(`${dateStr}T00:00:00`);
@@ -156,6 +160,7 @@ function BookingForm() {
         tipe: bookingTipe,
         ...(bookingTipe === "menginap" ? { tanggal_checkout: checkoutDate, dengan_sarapan: denganSarapan } : {}),
       });
+      localStorage.setItem(LAST_BOOKING_ID_KEY, bk.id);
       // 2. Buat Snap token
       const { data: tx } = await PUBLIC_API.post("/payments/midtrans/create-snap-token", {
         booking_id: bk.id, payment_option: paymentOption,
@@ -615,11 +620,23 @@ function BatalkanPesananDialog({ bk, open, onOpenChange, onCancelled }) {
   );
 }
 
-function SuccessView({ bookingId }) {
+function SuccessView({ bookingId: bookingIdFromUrl }) {
+  const nav = useNavigate();
+  // Fallback kalau URL diakses tanpa :bookingId (mis. Midtrans Finish Redirect URL statis di
+  // dashboard mereka untuk sebagian metode pembayaran tidak selalu bisa disisipi ID transaksi) —
+  // pakai booking terakhir yang tersimpan di perangkat ini saat checkout, lalu betulkan URL-nya.
+  const [bookingId] = useState(() => bookingIdFromUrl || localStorage.getItem(LAST_BOOKING_ID_KEY));
   const [bk, setBk] = useState(null);
+  const [notFound, setNotFound] = useState(false);
   const [banks, setBanks] = useState(null);
   const [cancelOpen, setCancelOpen] = useState(false);
+
   useEffect(() => {
+    if (!bookingIdFromUrl && bookingId) nav(`/book/sukses/${bookingId}`, { replace: true });
+  }, [bookingIdFromUrl, bookingId, nav]);
+
+  useEffect(() => {
+    if (!bookingId) { setNotFound(true); return; }
     let stop = false;
     const fetch = () => PUBLIC_API.get(`/public/bookings/${bookingId}`).then((r) => {
       if (stop) return;
@@ -628,13 +645,41 @@ function SuccessView({ bookingId }) {
       const b = r.data;
       const isTerminal = b.payment_status === "paid" || (b.status === "cancelled" && (b.payment_status === "expired" || b.payment_status === "failed"));
       if (isTerminal) { stop = true; clearInterval(t); }
-    }).catch(() => {});
+    }).catch(() => { if (!stop) setNotFound(true); });
     fetch();
     PUBLIC_API.get(`/public/bank-accounts`).then(r => setBanks(r.data)).catch(() => {});
     // poll status setiap 5 detik untuk auto-refresh pembayaran
     const t = setInterval(fetch, 5000);
     return () => { stop = true; clearInterval(t); };
   }, [bookingId]);
+
+  if (notFound) {
+    return (
+      <div className="min-h-screen grid place-items-center p-4 bg-gradient-to-b from-amber-50 via-white to-blue-50">
+        <Card className="max-w-md w-full border-amber-200">
+          <CardContent className="p-6 sm:p-8 text-center space-y-4">
+            <div className="w-16 h-16 mx-auto rounded-full bg-amber-100 grid place-items-center">
+              <XCircle className="w-9 h-9 text-amber-600" />
+            </div>
+            <div>
+              <h2 className="text-xl font-extrabold">Detail Booking Tidak Ditemukan</h2>
+              <p className="text-slate-600 text-sm mt-1">
+                Link ini tidak menyertakan nomor booking yang valid. Cek email/WhatsApp konfirmasi Anda untuk link booking yang benar, atau hubungi CS kami.
+              </p>
+            </div>
+            <a
+              href={waLink(CS_WHATSAPP, "Halo, saya butuh bantuan terkait status booking saya.")}
+              target="_blank" rel="noreferrer"
+              className="inline-flex items-center justify-center gap-2 w-full px-4 h-10 rounded-md bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-bold"
+            >
+              Hubungi CS via WhatsApp
+            </a>
+            <Link to="/book" className="block text-sm text-blue-700 hover:underline">Buat booking baru</Link>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
 
   if (!bk) return <div className="min-h-screen grid place-items-center text-slate-500">Memuat...</div>;
   const isPaid = bk.payment_status === "paid";
