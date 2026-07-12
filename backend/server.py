@@ -19,6 +19,7 @@ from starlette.middleware.cors import CORSMiddleware
 from core import api, client, db, now_iso, hash_password, verify_password
 import routes  # noqa: F401  — importing registers all endpoints on `api`
 from routes.sinkronisasi_ketersediaan import background_sync_loop
+from routes.otomasi_email import background_gmail_fetch_loop
 
 app = FastAPI(title="Pelangi Homestay API")
 
@@ -38,6 +39,7 @@ async def startup():
     await db.bookings.create_index("jam_mulai")
     await db.bookings.create_index([("payment_status", 1), ("paid_at", 1)])
     await db.bookings.create_index("source")
+    await db.bookings.create_index("ota_reservation_no", sparse=True)
     await db.rates.create_index([("room_type", 1), ("tanggal", 1)], unique=True)
     await db.availability_logs.create_index("room_id")
     await db.availability_logs.create_index("changed_at")
@@ -119,6 +121,10 @@ async def startup():
     # Penjadwalan sinkronisasi otomatis (Sinkronisasi Ketersediaan) — jalan di background
     # selama proses uvicorn ini hidup, interval mengikuti `sync_settings.frekuensi_menit`.
     asyncio.create_task(background_sync_loop())
+
+    # Auto-fetch email Gmail OTA berkala (keputusan bisnis user 2026-07-12: reservasi baru
+    # dibuat & modifikasi/pembatalan diproses otomatis tanpa staf klik "Cek Email Baru").
+    asyncio.create_task(background_gmail_fetch_loop())
 
 
 @app.on_event("shutdown")

@@ -117,6 +117,9 @@ function KoneksiGmail({ onFetched }) {
                 "Hubungkan akun Gmail untuk membaca email reservasi OTA secara otomatis."
               )}
             </div>
+            {connected && (
+              <div className="text-xs text-slate-400 mt-0.5">Email baru dicek otomatis tiap 1 menit — tombol di samping cuma untuk cek manual sekarang juga.</div>
+            )}
           </div>
         </div>
         <div className="flex gap-2">
@@ -162,7 +165,22 @@ function LogEmailDetailDialog({ log, onClose }) {
               <div><span className="text-slate-500">Gmail Message ID:</span> <span className="font-mono text-xs">{log.gmail_message_id}</span></div>
             )}
 
-            {log.extracted_data ? (
+            {log.jenis === "modifikasi" || log.jenis === "pembatalan" ? (
+              <div className="bg-slate-50 border border-slate-200 rounded-lg p-3 mt-2 space-y-1.5">
+                <p className="text-xs font-semibold uppercase tracking-wide text-slate-500 mb-1">
+                  Notifikasi {log.jenis === "modifikasi" ? "Modifikasi" : "Pembatalan"} Reservasi
+                </p>
+                <div><span className="text-slate-500">No. Reservasi OTA:</span> <b>{log.extracted_data?.no_reservasi}</b></div>
+                {log.extracted_data?.nama_tamu && <div><span className="text-slate-500">Nama Tamu:</span> {log.extracted_data.nama_tamu}</div>}
+                <div className="pt-1.5 mt-1 border-t border-slate-200">
+                  {log.aksi === "reservasi_dibatalkan" ? (
+                    <p className="text-emerald-700 font-medium">✓ Reservasi PMS terkait sudah dibatalkan otomatis, kamar sudah dilepas kembali.</p>
+                  ) : (
+                    <p className="text-amber-700">{log.alasan || "Belum bisa dicocokkan dengan reservasi manapun di PMS — cek manual."}</p>
+                  )}
+                </div>
+              </div>
+            ) : log.extracted_data ? (
               <div className="bg-slate-50 border border-slate-200 rounded-lg p-3 mt-2 space-y-1.5">
                 <p className="text-xs font-semibold uppercase tracking-wide text-slate-500 mb-1">Data Hasil Ekstraksi AI</p>
                 <div><span className="text-slate-500">No. Reservasi:</span> <b>{log.extracted_data.no_reservasi}</b></div>

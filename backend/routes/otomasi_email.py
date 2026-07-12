@@ -4,6 +4,7 @@ from urllib.parse import urlencode
 import asyncio
 import base64
 import json
+import logging
 import httpx
 from fastapi.responses import RedirectResponse
 from openai import OpenAI
@@ -198,14 +199,15 @@ def _extract_plain_body(payload: dict) -> str:
 
 
 PARSE_SYSTEM_PROMPT = """Kamu adalah AI Email Parser untuk sistem reservasi hotel Pelangi PMS.
-Tugasmu: ekstrak data reservasi dari isi email notifikasi OTA (Agoda, Traveloka, Booking.com, dst).
+Tugasmu: klasifikasi jenis notifikasi lalu ekstrak data dari isi email OTA (Agoda, Traveloka, Booking.com, dst).
 Balas HANYA dengan JSON valid, tanpa teks lain.
 
-Jika email BUKAN notifikasi reservasi atau informasinya tidak cukup untuk diekstrak, balas:
+Jika email BUKAN notifikasi reservasi (bukan booking baru/modifikasi/pembatalan) atau
+informasinya tidak cukup untuk diekstrak, balas:
 {"is_reservation": false, "alasan": "<alasan singkat kenapa gagal/kurang, dalam Bahasa Indonesia>"}
 
-Jika berhasil, balas:
-{"is_reservation": true, "data": {
+Jika email notifikasi RESERVASI BARU, balas:
+{"is_reservation": true, "jenis": "baru", "data": {
   "no_reservasi": "<string>",
   "nama_tamu": "<string>",
   "tipe_kamar": "<string, nama tipe kamar apa adanya sesuai istilah di email>",
@@ -214,6 +216,14 @@ Jika berhasil, balas:
   "jumlah_tamu": <integer>,
   "harga": <integer, total harga dalam Rupiah tanpa simbol/pemisah ribuan>,
   "status_pembayaran": "<salah satu persis: Lunas | Belum Bayar | Dibatalkan>"
+}}
+
+Jika email notifikasi MODIFIKASI (perubahan tanggal/kamar/detail atas reservasi yang SUDAH
+ADA sebelumnya) atau PEMBATALAN reservasi yang sudah ada, balas — cukup data seperlunya untuk
+mencocokkan reservasi lama, JANGAN karang ulang detail kamar/tanggal baru:
+{"is_reservation": true, "jenis": "<persis "modifikasi" atau "pembatalan">", "data": {
+  "no_reservasi": "<string, WAJIB — nomor reservasi OTA yang dimodifikasi/dibatalkan>",
+  "nama_tamu": "<string, kalau disebutkan, boleh kosong>"
 }}
 """
 
@@ -289,9 +299,55 @@ async def buat_reservasi_otomatis(log_id: str, data: dict, sumber: str, subjek: 
         source="ota",
         harga_override={"subtotal": total, "service_fee": 0, "total": total, "dp_min": 0},
     )
+    update_fields = {"ota_reservation_no": data.get("no_reservasi")}
     if data.get("status_pembayaran") == "Lunas":
-        await db.bookings.update_one({"id": booking["id"]}, {"$set": {"payment_status": "paid", "status": "aktif"}})
-    await db.email_logs.update_one({"id": log_id}, {"$set": {"reservation_id": booking["id"]}})
+        update_fields.update({"payment_status": "paid", "status": "aktif"})
+    await db.bookings.update_one({"id": booking["id"]}, {"$set": update_fields})
+    await db.email_logs.update_one({"id": log_id}, {"$set": {"reservation_id": booking["id"], "aksi": "reservasi_baru_dibuat"}})
+
+
+async def batalkan_reservasi_otomatis(log_id: str, data: dict, sumber: str, subjek: str) -> None:
+    """Reservation Automation untuk email MODIFIKASI/PEMBATALAN (keputusan bisnis user
+    2026-07-12): OTA mengirim notifikasi modifikasi/pembatalan terpisah dari notifikasi
+    reservasi baru — daripada menebak detail baru (berisiko salah), reservasi PMS yang cocok
+    (dicari dari `ota_reservation_no` yang disimpan saat reservasi baru dibuat) langsung
+    DIBATALKAN otomatis, sama persis kedua jenis notifikasi ini. Kalau OTA mengirim reservasi
+    baru pengganti (dengan no. reservasi baru), itu akan masuk lagi lewat buat_reservasi_otomatis
+    seperti biasa. Kalau reservasi lama tidak ditemukan, log Manual_Required — tidak menebak.
+    """
+    no_reservasi = data.get("no_reservasi")
+    if not no_reservasi:
+        await db.email_logs.update_one({"id": log_id}, {"$set": {
+            "status": "Manual_Required",
+            "alasan": "Email modifikasi/pembatalan tidak menyebutkan nomor reservasi OTA — tidak bisa dicocokkan otomatis, cek manual.",
+        }})
+        return
+
+    booking = await db.bookings.find_one({
+        "ota_reservation_no": no_reservasi,
+        "status": {"$in": ["aktif", "booking_pending", "booking_paid"]},
+    })
+    if not booking:
+        await db.email_logs.update_one({"id": log_id}, {"$set": {
+            "status": "Manual_Required",
+            "alasan": f'Tidak ditemukan reservasi PMS aktif dengan no. OTA "{no_reservasi}" untuk dibatalkan — kemungkinan sudah dibatalkan/selesai sebelumnya, atau reservasi awalnya belum pernah berhasil dibuat otomatis. Cek manual.',
+        }})
+        return
+
+    now = now_iso()
+    await db.bookings.update_one({"id": booking["id"]}, {"$set": {
+        "status": "cancelled", "cancelled_at": now, "cancelled_by": "ai_email_parser",
+        "cancel_reason": f'Dibatalkan otomatis: email {data.get("jenis", "modifikasi/pembatalan")} OTA "{subjek}" ({sumber}, no. {no_reservasi})',
+        "cancel_fee": 0, "refund_amount": 0,
+    }})
+    await log_availability_change(booking["room_id"], booking.get("room_tipe", ""), 1, "booking_dibatalkan_otomatis_ota", booking_id=booking["id"])
+    await db.audit_log.insert_one({
+        "id": str(uuid.uuid4()), "user_id": None, "username": "ai_email_parser",
+        "action": "cancel_ota_auto",
+        "detail": f'Batalkan otomatis {booking["kode"]} (no. OTA {no_reservasi}) dari email modifikasi/pembatalan "{subjek}"',
+        "entity": booking.get("room_nomor", ""), "timestamp": now,
+    })
+    await db.email_logs.update_one({"id": log_id}, {"$set": {"reservation_id": booking["id"], "aksi": "reservasi_dibatalkan"}})
 
 
 async def fetch_gmail_emails(max_results: int = 20) -> int:
@@ -324,11 +380,12 @@ async def fetch_gmail_emails(max_results: int = 20) -> int:
             pengirim = hdrs.get("From", "")
             isi_email = _extract_plain_body(msg.get("payload", {})) or msg.get("snippet", "")
 
-            status, extracted_data, alasan = "Failed", None, "Error tidak diketahui saat parsing AI"
+            status, extracted_data, alasan, jenis = "Failed", None, "Error tidak diketahui saat parsing AI", None
             try:
                 hasil = await parse_email_with_ai(subjek, pengirim, isi_email)
                 if hasil.get("is_reservation"):
                     extracted_data = hasil["data"]
+                    jenis = hasil.get("jenis") or "baru"
                     status, alasan = "Parsed_Success", None
                 else:
                     status = "Manual_Required"
@@ -344,6 +401,7 @@ async def fetch_gmail_emails(max_results: int = 20) -> int:
                 "pengirim": pengirim,
                 "sumber": sumber,
                 "status": status,
+                "jenis": jenis,
                 "extracted_data": extracted_data,
                 "alasan": alasan,
                 "processed_at": now_iso(),
@@ -352,10 +410,14 @@ async def fetch_gmail_emails(max_results: int = 20) -> int:
             disimpan += 1
 
             if status == "Parsed_Success":
-                # Reservation Automation (PRD): langsung buat reservasi di PMS, tanpa
-                # menunggu staf — bisa mengubah status doc ini balik ke Manual_Required
-                # kalau ternyata tipe kamar belum dipetakan atau kamar penuh (anti double-booking).
-                await buat_reservasi_otomatis(doc["id"], extracted_data, sumber, subjek)
+                # Reservation Automation (PRD + keputusan bisnis 2026-07-12): reservasi baru
+                # langsung dibuat, modifikasi/pembatalan langsung membatalkan reservasi lama
+                # yang cocok — semua tanpa menunggu staf. Bisa mengubah status doc ini balik ke
+                # Manual_Required kalau ada yang tidak bisa dicocokkan otomatis (lihat masing2 fungsi).
+                if jenis == "baru":
+                    await buat_reservasi_otomatis(doc["id"], extracted_data, sumber, subjek)
+                else:
+                    await batalkan_reservasi_otomatis(doc["id"], {**extracted_data, "jenis": jenis}, sumber, subjek)
     return disimpan
 
 
@@ -364,6 +426,25 @@ async def gmail_fetch(user: dict = Depends(require_owner)):
     jumlah = await fetch_gmail_emails()
     await log_activity(user, "gmail_fetch", f"Ambil {jumlah} email baru dari Gmail")
     return {"fetched": jumlah}
+
+
+GMAIL_AUTO_FETCH_INTERVAL_SECONDS = 60  # cek email OTA baru tiap 1 menit, tanpa staf klik manual
+
+
+async def background_gmail_fetch_loop():
+    """Auto-fetch Gmail berkala (keputusan bisnis user 2026-07-12: reservasi OTA harus
+    otomatis penuh tanpa staf klik "Cek Email Baru"). Hanya jalan kalau Gmail sudah
+    terhubung; kegagalan (token expired, Gmail API down, dst) di-log tapi tidak menghentikan
+    loop — dicoba lagi di siklus berikutnya, sama seperti background_sync_loop ketersediaan.
+    """
+    while True:
+        try:
+            conn = await db.integrations.find_one({"provider": "gmail"})
+            if conn:
+                await fetch_gmail_emails()
+        except Exception as e:
+            logging.getLogger("uvicorn.error").warning(f"Gmail auto-fetch gagal: {e}")
+        await asyncio.sleep(GMAIL_AUTO_FETCH_INTERVAL_SECONDS)
 
 
 @api.get("/otomasi-email/logs")

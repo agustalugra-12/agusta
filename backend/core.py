@@ -503,7 +503,10 @@ class EmailLog(BaseModel):
     pengirim: str
     sumber: str  # Agoda | Traveloka | Booking.com | Lainnya, dst — hasil deteksi domain pengirim
     status: str  # Parsed_Success | Failed | Manual_Required
+    jenis: Optional[str] = None  # baru | modifikasi | pembatalan — klasifikasi AI, None kalau is_reservation false
     extracted_data: Optional[EmailExtractedData] = None
+    reservation_id: Optional[str] = None  # booking PMS yang dibuat/dibatalkan otomatis dari email ini
+    aksi: Optional[str] = None  # reservasi_baru_dibuat | reservasi_dibatalkan — hasil Reservation Automation
     alasan: Optional[str] = None  # diisi kalau status Failed/Manual_Required
     processed_at: str
 
