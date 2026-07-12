@@ -75,6 +75,14 @@ def generate_voucher_pdf(b: dict) -> bytes:
     baris("Subtotal", _fmt_rp(b.get("subtotal")))
     baris("Service Fee", _fmt_rp(b.get("service_fee")))
     baris("Total", _fmt_rp(b.get("total")), bold=True)
+    # `amount_due` = nominal kumulatif yang sudah confirmed terkumpul (diisi saat create-snap-token,
+    # ditambah tiap collect-balance staf) — sama seperti dipakai `_status_bayar`/`sisa_tagihan` di
+    # routes/payments.py, bukan cuma DP awal kalau sudah ada pelunasan susulan.
+    total = int(b.get("total") or 0)
+    sudah_dibayar = int(b.get("amount_due") or 0)
+    sisa_bayar = max(0, total - sudah_dibayar)
+    baris("Sudah Dibayar (DP)", _fmt_rp(sudah_dibayar))
+    baris("Sisa Bayar", _fmt_rp(sisa_bayar), bold=sisa_bayar > 0)
     baris("Status Pembayaran", (b.get("payment_status") or "").upper(), bold=True)
 
     y -= 5 * mm

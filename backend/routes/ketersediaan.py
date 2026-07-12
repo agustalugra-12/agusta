@@ -7,6 +7,23 @@ ACTIVE_BOOKING_STATUSES = ["aktif", "booking_paid", "booking_pending"]
 LOW_STOCK_THRESHOLD_PCT = 20
 
 
+def _occupies_date(start: datetime, end: datetime, day) -> bool:
+    """Tanggal kalender `day` dianggap terisi oleh booking [start, end) kalau ada di rentang
+    [checkin_date, checkout_date) — hari CHECK-OUT TIDAK dihitung terisi (tamu sudah checkout
+    sebelum hari itu dianggap kosong lagi untuk kalender ketersediaan), KECUALI booking day-use
+    yang check-in/check-out di hari yang sama (harus tetap terhitung terisi hari itu).
+
+    Bug ditemukan 2026-07-12: sebelumnya dipakai overlap TIMESTAMP mentah (b_end >= day_start),
+    yang membuat hari check-out booking menginap selalu ikut terhitung terisi (mis. checkin
+    tanggal 20/checkout tanggal 21 tampil terisi di tanggal 20 DAN 21, padahal cuma 1 malam
+    yang seharusnya terisi di tanggal 20 saja).
+    """
+    start_date, end_date = start.date(), end.date()
+    if start_date == end_date:
+        return day == start_date
+    return start_date <= day < end_date
+
+
 async def _room_status_breakdown():
     """Ambil status kamar sekali, dipakai bareng oleh ringkasan/status-tipe/notifikasi/live
     supaya polling berkala tidak query db.rooms berkali-kali per request.
@@ -85,8 +102,7 @@ async def kalender_bulanan(
     n_days = (month_end - month_start).days
     for i in range(n_days):
         day_start = month_start + timedelta(days=i)
-        day_end = day_start + timedelta(days=1)
-        occupied_rooms = {room_id for room_id, b_start, b_end in parsed if b_start < day_end and b_end >= day_start}
+        occupied_rooms = {room_id for room_id, b_start, b_end in parsed if _occupies_date(b_start, b_end, day_start.date())}
         terisi = len(occupied_rooms)
         tersedia = max(0, total_rooms - terisi)
         okupansi_pct = round((terisi / total_rooms) * 100) if total_rooms else 0
@@ -123,7 +139,7 @@ async def ketersediaan_hari(
     }, {"_id": 0, "room_id": 1, "jam_mulai": 1, "jam_selesai": 1}).to_list(2000)
     occupied_room_ids = {
         b["room_id"] for b in bookings
-        if b.get("jam_selesai") and parse_iso(b["jam_mulai"], "jam_mulai") < day_end and parse_iso(b["jam_selesai"], "jam_selesai") >= day_start
+        if b.get("jam_selesai") and _occupies_date(parse_iso(b["jam_mulai"], "jam_mulai"), parse_iso(b["jam_selesai"], "jam_selesai"), day_start.date())
     }
 
     by_tipe: Dict[str, Dict[str, int]] = {}
