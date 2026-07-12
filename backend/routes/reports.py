@@ -269,10 +269,20 @@ async def report_summary(user: dict = Depends(get_current_user)):
 @api.get("/reports/daily")
 async def report_daily(from_date: str = Query(...), to_date: str = Query(...),
                        user: dict = Depends(get_current_user)):
-    """Return per-day revenue between dates (inclusive). Dates: YYYY-MM-DD."""
+    """Return per-day revenue between dates (inclusive). Dates: YYYY-MM-DD.
+    "kamar" mencakup walk-in (checkins, dibucket per jam_checkout) DAN booking
+    online/OTA/WhatsApp yang sudah lunas (bookings, dibucket per paid_at — tanggal uang
+    benar-benar masuk, konsisten dengan /laporan-analitik/pendapatan). Tidak ada duplikasi
+    dengan checkins karena booking online/OTA/WA tidak pernah menghasilkan dokumen checkins
+    terpisah di sistem ini (dua alur guest-arrival yang independen)."""
     start = from_date
     end = to_date + "T23:59:59"
     ci = await db.checkins.find({"jam_checkout": {"$gte": start, "$lte": end}, "status": "selesai"}, {"_id": 0}).to_list(5000)
+    bk = await db.bookings.find({
+        "source": {"$in": ["ota", "online", "whatsapp"]},
+        "payment_status": "paid",
+        "paid_at": {"$gte": start, "$lte": end},
+    }, {"_id": 0, "total": 1, "paid_at": 1}).to_list(5000)
     ks = await db.kasir.find({"timestamp": {"$gte": start, "$lte": end}}, {"_id": 0}).to_list(5000)
     ex = await db.expenses.find({"tanggal": {"$gte": start, "$lte": end}}, {"_id": 0}).to_list(5000)
     sv = await db.services.find({"tanggal": {"$gte": start, "$lte": end}}, {"_id": 0}).to_list(5000)
@@ -284,6 +294,10 @@ async def report_daily(from_date: str = Query(...), to_date: str = Query(...),
         d = bucket(c["jam_checkout"])
         by_day.setdefault(d, _init())
         by_day[d]["kamar"] += c.get("total", 0)
+    for b in bk:
+        d = bucket(b["paid_at"])
+        by_day.setdefault(d, _init())
+        by_day[d]["kamar"] += int(b.get("total") or 0)
     for k in ks:
         d = bucket(k["timestamp"])
         by_day.setdefault(d, _init())
@@ -312,23 +326,42 @@ async def report_daily(from_date: str = Query(...), to_date: str = Query(...),
 @api.get("/reports/rooms")
 async def report_rooms(from_date: str = Query(...), to_date: str = Query(...),
                        user: dict = Depends(get_current_user)):
+    """Transaksi kamar walk-in (checkins) DIGABUNG booking online/OTA/WhatsApp yang sudah
+    lunas (bookings, dibucket per paid_at) — sebelumnya cuma checkins, bikin RedDoorz/booking
+    online tidak pernah terhitung di "Total Transaksi" & pendapatan kamar. Tidak ada duplikasi
+    dengan checkins (dua alur guest-arrival independen, lihat report_daily)."""
     start = from_date
     end = to_date + "T23:59:59"
     items = await db.checkins.find(
         {"jam_checkout": {"$gte": start, "$lte": end}, "status": "selesai"},
         {"_id": 0}
-    ).sort("jam_checkout", -1).to_list(5000)
+    ).to_list(5000)
+    bk = await db.bookings.find({
+        "source": {"$in": ["ota", "online", "whatsapp"]},
+        "payment_status": "paid",
+        "paid_at": {"$gte": start, "$lte": end},
+    }, {"_id": 0}).to_list(5000)
+    booking_items = [{
+        "id": b["id"], "trx_no": b.get("kode"),
+        "nama_tamu": b.get("nama_tamu"), "room_nomor": b.get("room_nomor"), "room_tipe": b.get("room_tipe"),
+        "jam_checkin": b.get("jam_mulai"), "jam_checkout": b.get("jam_selesai"),
+        "jumlah_tamu": b.get("jumlah_tamu", 1),
+        "tarif_dasar": b.get("subtotal", 0), "biaya_tambahan": 0, "total": b.get("total", 0),
+        "petugas_checkout": b.get("created_by") or b.get("source"),
+        "source": b.get("source"),
+    } for b in bk]
+    all_items = sorted(items + booking_items, key=lambda x: x.get("jam_checkout") or "", reverse=True)
     summary = {
         "tanggal_dari": from_date, "tanggal_sampai": to_date,
-        "total_transaksi": len(items),
-        "total_tamu": sum(int(c.get("jumlah_tamu", 1)) for c in items),
-        "kamar_terpakai": len({c["room_nomor"] for c in items}),
-        "pendapatan_standard": sum(c.get("total", 0) for c in items if c.get("room_tipe") == "Standard"),
-        "pendapatan_cottage": sum(c.get("total", 0) for c in items if c.get("room_tipe") == "Cottage"),
-        "total_overtime": sum(c.get("biaya_tambahan", 0) for c in items),
-        "total_pendapatan": sum(c.get("total", 0) for c in items),
+        "total_transaksi": len(all_items),
+        "total_tamu": sum(int(c.get("jumlah_tamu", 1)) for c in all_items),
+        "kamar_terpakai": len({c["room_nomor"] for c in all_items}),
+        "pendapatan_standard": sum(c.get("total", 0) for c in all_items if c.get("room_tipe") == "Standard"),
+        "pendapatan_cottage": sum(c.get("total", 0) for c in all_items if c.get("room_tipe") == "Cottage"),
+        "total_overtime": sum(c.get("biaya_tambahan", 0) for c in all_items),
+        "total_pendapatan": sum(c.get("total", 0) for c in all_items),
     }
-    return {"summary": summary, "items": items}
+    return {"summary": summary, "items": all_items}
 
 @api.get("/reports/kasir-detail")
 async def report_kasir_detail(from_date: str = Query(...), to_date: str = Query(...),
