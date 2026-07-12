@@ -7,7 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
-import { Mail, Inbox, Wand2, FileWarning, CheckCircle2, Unlink, AlertTriangle, Plus, Pencil, Trash2, FlaskConical, RefreshCw, Loader2 } from "lucide-react";
+import { Mail, Inbox, Wand2, FileWarning, CheckCircle2, Unlink, AlertTriangle, Plus, Pencil, Trash2, FlaskConical, RefreshCw, Loader2, CalendarClock, Ban } from "lucide-react";
 import api, { fmtDateTime, fmtRp } from "@/lib/apiClient";
 
 // Field hasil ekstraksi yang bisa dipetakan — sinkron dengan bentuk `extracted_data`
@@ -31,12 +31,15 @@ const EMAIL_STATUS_BADGE = {
   Parsed_Success: { label: "Berhasil Diproses", cls: "bg-emerald-100 text-emerald-800" },
   Manual_Required: { label: "Perlu Diproses Manual", cls: "bg-amber-100 text-amber-800" },
   Failed: { label: "Gagal", cls: "bg-red-100 text-red-800" },
+  Perlu_Review_Modifikasi: { label: "Perlu Tinjau Modifikasi", cls: "bg-sky-100 text-sky-800" },
+  Sudah_Diproses: { label: "Sudah Diproses", cls: "bg-slate-100 text-slate-600" },
 };
 
 // Tab halaman Otomasi Email & Pemesanan (Fase 2).
 const TABS = [
   { value: "koneksi", label: "Hubungkan Gmail", icon: Mail },
   { value: "log", label: "Log Email Masuk", icon: Inbox },
+  { value: "modifikasi", label: "Modifikasi OTA", icon: CalendarClock },
   { value: "aturan", label: "Aturan Pemetaan AI", icon: Wand2 },
   { value: "manual", label: "Proses Manual", icon: FileWarning },
 ];
@@ -174,7 +177,13 @@ function LogEmailDetailDialog({ log, onClose }) {
                 {log.extracted_data?.nama_tamu && <div><span className="text-slate-500">Nama Tamu:</span> {log.extracted_data.nama_tamu}</div>}
                 <div className="pt-1.5 mt-1 border-t border-slate-200">
                   {log.aksi === "reservasi_dibatalkan" ? (
-                    <p className="text-emerald-700 font-medium">✓ Reservasi PMS terkait sudah dibatalkan otomatis, kamar sudah dilepas kembali.</p>
+                    <p className="text-emerald-700 font-medium">✓ Reservasi PMS terkait sudah dibatalkan, kamar sudah dilepas kembali.</p>
+                  ) : log.aksi === "reservasi_direschedule" ? (
+                    <p className="text-emerald-700 font-medium">✓ Reservasi PMS terkait sudah di-reschedule ke jadwal baru.</p>
+                  ) : log.aksi === "menunggu_review_modifikasi" ? (
+                    <p className="text-sky-700 font-medium">⏳ Menunggu staf tinjau — cek tab "Modifikasi OTA" untuk konfirmasi reschedule atau batalkan.</p>
+                  ) : log.aksi === "modifikasi_duplikat" ? (
+                    <p className="text-slate-500">{log.alasan}</p>
                   ) : (
                     <p className="text-amber-700">{log.alasan || "Belum bisa dicocokkan dengan reservasi manapun di PMS — cek manual."}</p>
                   )}
@@ -658,11 +667,125 @@ function ProsesManualEmail({ logs, onResolve }) {
   );
 }
 
+// Konversi ISO datetime <-> value input datetime-local (WIB, sesuai zona lokal browser staf).
+const isoToLocalInput = (iso) => {
+  if (!iso) return "";
+  const d = new Date(iso);
+  d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
+  return d.toISOString().slice(0, 16);
+};
+
+function RescheduleModifikasiDialog({ booking, onClose, onSave }) {
+  const [form, setForm] = useState({ jam_mulai: "", jam_selesai: "" });
+  useEffect(() => {
+    if (booking) setForm({ jam_mulai: isoToLocalInput(booking.jam_mulai), jam_selesai: isoToLocalInput(booking.jam_selesai) });
+  }, [booking]);
+  const valid = form.jam_mulai && form.jam_selesai;
+
+  return (
+    <Dialog open={!!booking} onOpenChange={(o) => { if (!o) onClose(); }}>
+      <DialogContent>
+        <DialogHeader><DialogTitle data-testid="resched-modif-title">Reschedule {booking?.kode}</DialogTitle></DialogHeader>
+        <div className="space-y-3 text-sm">
+          <p className="text-xs text-slate-500">Isi jadwal baru sesuai isi email modifikasi RedDoorz (harga tidak berubah, cuma jadwal).</p>
+          <div><Label>Check-In Baru</Label><Input data-testid="resched-modif-mulai" type="datetime-local" value={form.jam_mulai} onChange={(e) => setForm((f) => ({ ...f, jam_mulai: e.target.value }))} className="mt-1.5" /></div>
+          <div><Label>Check-Out Baru</Label><Input data-testid="resched-modif-selesai" type="datetime-local" value={form.jam_selesai} onChange={(e) => setForm((f) => ({ ...f, jam_selesai: e.target.value }))} className="mt-1.5" /></div>
+        </div>
+        <DialogFooter>
+          <Button variant="ghost" onClick={onClose}>Batal</Button>
+          <Button
+            data-testid="resched-modif-save"
+            disabled={!valid}
+            className="bg-blue-700 hover:bg-blue-800"
+            onClick={() => onSave({
+              jam_mulai: new Date(form.jam_mulai).toISOString(),
+              jam_selesai: new Date(form.jam_selesai).toISOString(),
+            })}
+          >
+            Simpan Jadwal Baru
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function ModifikasiPerluReview({ items, onReschedule, onBatalkan }) {
+  const [reschedTarget, setReschedTarget] = useState(null);
+
+  const batalkan = (b) => {
+    if (!window.confirm(`Batalkan reservasi ${b.kode} (${b.nama_tamu})? Pastikan sudah baca isi email modifikasi aslinya dulu.`)) return;
+    onBatalkan(b.id);
+  };
+
+  if (items.length === 0) {
+    return (
+      <Card className="border-slate-200">
+        <CardContent className="p-8 text-center text-slate-500">
+          <p className="text-sm">Tidak ada reservasi yang menunggu tinjauan modifikasi saat ini.</p>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  return (
+    <div className="space-y-3" data-testid="modifikasi-review-list">
+      <p className="text-xs text-slate-500">
+        Sistem otomatis membandingkan tanggal check-in/check-out baru di email modifikasi RedDoorz dengan jadwal lama — sama persis dianggap pembatalan, beda dianggap reschedule. Item di bawah ini muncul karena AI tidak berhasil menemukan tanggal baru yang jelas, atau jadwal barunya bentrok kamar lain — cek isi email asli di Gmail lalu konfirmasi manual.
+      </p>
+      {items.map((b) => (
+        <Card key={b.id} className="border-sky-200" data-testid={`modifikasi-item-${b.id}`}>
+          <CardContent className="p-4 space-y-3">
+            <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3">
+              <div className="flex items-start gap-3">
+                <div className="w-9 h-9 rounded-lg bg-sky-50 text-sky-600 grid place-items-center shrink-0"><CalendarClock className="w-4 h-4" /></div>
+                <div>
+                  <div className="font-semibold">{b.kode} &middot; {b.nama_tamu}</div>
+                  <div className="text-xs text-slate-500">Kamar {b.room_nomor} ({b.room_tipe}) &bull; no. OTA {b.ota_reservation_no}</div>
+                  <div className="text-xs text-slate-600 mt-1">
+                    Jadwal saat ini: <b>{fmtDateTime(b.jam_mulai)}</b> &rarr; <b>{fmtDateTime(b.jam_selesai)}</b>
+                  </div>
+                </div>
+              </div>
+              <div className="flex gap-2 shrink-0">
+                <Button data-testid={`modifikasi-reschedule-${b.id}`} size="sm" onClick={() => setReschedTarget(b)} className="gap-1.5 bg-blue-700 hover:bg-blue-800">
+                  <CalendarClock className="w-3.5 h-3.5" /> Reschedule
+                </Button>
+                <Button data-testid={`modifikasi-batalkan-${b.id}`} size="sm" variant="outline" onClick={() => batalkan(b)} className="gap-1.5 text-red-600 border-red-300 hover:bg-red-50">
+                  <Ban className="w-3.5 h-3.5" /> Batalkan
+                </Button>
+              </div>
+            </div>
+            {(b.modifikasi_emails || []).length > 0 && (
+              <div className="bg-slate-50 border border-slate-200 rounded-lg p-3 space-y-1.5">
+                <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">Email Modifikasi Terkait ({b.modifikasi_emails.length})</p>
+                {b.modifikasi_emails.map((log) => (
+                  <div key={log.id} className="text-xs text-slate-600 flex justify-between gap-2">
+                    <span className="truncate">{log.subjek}</span>
+                    <span className="text-slate-400 shrink-0">{fmtDateTime(log.processed_at)}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      ))}
+      <RescheduleModifikasiDialog
+        booking={reschedTarget}
+        onClose={() => setReschedTarget(null)}
+        onSave={async (payload) => { await onReschedule(reschedTarget.id, payload); setReschedTarget(null); }}
+      />
+    </div>
+  );
+}
+
 export default function OtomasiEmail() {
   const [logs, setLogs] = useState([]);
+  const [modifList, setModifList] = useState([]);
 
   const loadLogs = () => { api.get("/otomasi-email/logs").then((r) => setLogs(r.data)).catch(() => {}); };
-  useEffect(() => { loadLogs(); }, []);
+  const loadModif = () => { api.get("/otomasi-email/modifikasi/perlu-review").then((r) => setModifList(r.data)).catch(() => {}); };
+  useEffect(() => { loadLogs(); loadModif(); }, []);
 
   const resolveManual = async (logId, extractedData) => {
     try {
@@ -670,6 +793,26 @@ export default function OtomasiEmail() {
       loadLogs();
     } catch (e) {
       toast.error(e?.response?.data?.detail || "Gagal memproses manual");
+    }
+  };
+
+  const rescheduleModifikasi = async (bookingId, payload) => {
+    try {
+      await api.post(`/otomasi-email/modifikasi/${bookingId}/reschedule`, payload);
+      toast.success("Jadwal reservasi diperbarui");
+      loadModif(); loadLogs();
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Gagal reschedule");
+    }
+  };
+
+  const batalkanModifikasi = async (bookingId) => {
+    try {
+      await api.post(`/otomasi-email/modifikasi/${bookingId}/batalkan`);
+      toast.success("Reservasi dibatalkan");
+      loadModif(); loadLogs();
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Gagal membatalkan");
     }
   };
 
@@ -688,15 +831,21 @@ export default function OtomasiEmail() {
           {TABS.map((t) => (
             <TabsTrigger key={t.value} value={t.value} data-testid={`tab-${t.value}`} className="gap-1.5">
               <t.icon className="w-3.5 h-3.5" /> {t.label}
+              {t.value === "modifikasi" && modifList.length > 0 && (
+                <span className="ml-1 inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full bg-sky-600 text-white text-[10px] font-bold">{modifList.length}</span>
+              )}
             </TabsTrigger>
           ))}
         </TabsList>
 
         <TabsContent value="koneksi" className="mt-4">
-          <KoneksiGmail onFetched={loadLogs} />
+          <KoneksiGmail onFetched={() => { loadLogs(); loadModif(); }} />
         </TabsContent>
         <TabsContent value="log" className="mt-4">
           <LogEmail logs={logs} />
+        </TabsContent>
+        <TabsContent value="modifikasi" className="mt-4">
+          <ModifikasiPerluReview items={modifList} onReschedule={rescheduleModifikasi} onBatalkan={batalkanModifikasi} />
         </TabsContent>
         <TabsContent value="aturan" className="mt-4">
           <AturanPemetaanAI />

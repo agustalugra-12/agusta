@@ -223,11 +223,22 @@ Jika email notifikasi RESERVASI BARU, balas:
   "status_pembayaran": "<salah satu persis: Lunas | Belum Bayar | Dibatalkan>"
 }}
 
-Jika email notifikasi MODIFIKASI (perubahan tanggal/kamar/detail atas reservasi yang SUDAH
-ADA sebelumnya) atau PEMBATALAN reservasi yang sudah ada, balas — cukup data seperlunya untuk
-mencocokkan reservasi lama, JANGAN karang ulang detail kamar/tanggal baru:
-{"is_reservation": true, "jenis": "<persis "modifikasi" atau "pembatalan">", "data": {
-  "no_reservasi": "<string, WAJIB — nomor reservasi OTA yang dimodifikasi/dibatalkan>",
+Jika email notifikasi MODIFIKASI (perubahan tanggal/kamar/detail atas reservasi yang SUDAH ADA
+sebelumnya), balas — sertakan tanggal check-in/check-out BARU HANYA kalau disebutkan eksplisit
+di isi email (dipakai sistem untuk membandingkan dengan jadwal lama di PMS dan menentukan
+otomatis apakah ini reschedule atau pembatalan terselubung); JANGAN MENGARANG kalau tidak
+disebutkan jelas — kosongkan string-nya:
+{"is_reservation": true, "jenis": "modifikasi", "data": {
+  "no_reservasi": "<string, WAJIB — nomor reservasi OTA yang dimodifikasi>",
+  "nama_tamu": "<string, kalau disebutkan, boleh kosong>",
+  "check_in": "<ISO 8601 datetime check-in BARU kalau disebutkan eksplisit, kalau tidak: string kosong "">",
+  "check_out": "<ISO 8601 datetime check-out BARU kalau disebutkan eksplisit, kalau tidak: string kosong "">"
+}}
+
+Jika email notifikasi PEMBATALAN reservasi yang sudah ada, balas — cukup data seperlunya untuk
+mencocokkan reservasi lama, JANGAN karang detail kamar/tanggal:
+{"is_reservation": true, "jenis": "pembatalan", "data": {
+  "no_reservasi": "<string, WAJIB — nomor reservasi OTA yang dibatalkan>",
   "nama_tamu": "<string, kalau disebutkan, boleh kosong>"
 }}
 """
@@ -312,13 +323,11 @@ async def buat_reservasi_otomatis(log_id: str, data: dict, sumber: str, subjek: 
 
 
 async def batalkan_reservasi_otomatis(log_id: str, data: dict, sumber: str, subjek: str) -> None:
-    """Reservation Automation untuk email MODIFIKASI/PEMBATALAN (keputusan bisnis user
-    2026-07-12): OTA mengirim notifikasi modifikasi/pembatalan terpisah dari notifikasi
-    reservasi baru — daripada menebak detail baru (berisiko salah), reservasi PMS yang cocok
-    (dicari dari `ota_reservation_no` yang disimpan saat reservasi baru dibuat) langsung
-    DIBATALKAN otomatis, sama persis kedua jenis notifikasi ini. Kalau OTA mengirim reservasi
-    baru pengganti (dengan no. reservasi baru), itu akan masuk lagi lewat buat_reservasi_otomatis
-    seperti biasa. Kalau reservasi lama tidak ditemukan, log Manual_Required — tidak menebak.
+    """Reservation Automation untuk email PEMBATALAN eksplisit (jenis="pembatalan" — sinyal
+    tidak ambigu dari OTA). Juga dipanggil dari proses_modifikasi_otomatis kalau tanggal
+    check-in/out di email modifikasi ternyata sama persis dengan yang lama (pembatalan
+    terselubung, lihat keputusan bisnis user 2026-07-12). Reservasi PMS yang cocok (dicari dari
+    `ota_reservation_no`) langsung DIBATALKAN otomatis. Kalau tidak ditemukan, log Manual_Required.
     """
     no_reservasi = data.get("no_reservasi")
     if not no_reservasi:
@@ -355,6 +364,119 @@ async def batalkan_reservasi_otomatis(log_id: str, data: dict, sumber: str, subj
     await db.email_logs.update_one({"id": log_id}, {"$set": {
         "status": "Parsed_Success", "alasan": None,
         "reservation_id": booking["id"], "aksi": "reservasi_dibatalkan",
+    }})
+
+
+async def _modifikasi_menunggu_review(booking: dict, log_id: str, no_reservasi: str, kenapa: str) -> None:
+    """Fallback: tandai booking modifikasi_status="menunggu_review" supaya staf yang baca isi
+    email asli lalu putuskan lewat endpoint reschedule/batalkan (dipakai proses_modifikasi_otomatis
+    kalau data emailnya tidak cukup jelas untuk auto-tentukan, atau jadwal baru bentrok kamar lain).
+    """
+    await db.bookings.update_one(
+        {"id": booking["id"]},
+        {"$set": {"modifikasi_status": "menunggu_review"}, "$push": {"modifikasi_log_ids": log_id}},
+    )
+    await db.email_logs.update_one({"id": log_id}, {"$set": {
+        "status": "Perlu_Review_Modifikasi",
+        "reservation_id": booking["id"], "aksi": "menunggu_review_modifikasi",
+        "alasan": f'Email modifikasi untuk reservasi {booking["kode"]} ({booking["nama_tamu"]}) — perlu ditinjau staf: reschedule atau batalkan? {kenapa} Cek isi email RedDoorz asli untuk detail perubahan tanggal.',
+    }})
+
+
+async def proses_modifikasi_otomatis(log_id: str, data: dict, sumber: str, subjek: str) -> None:
+    """Reservation Automation untuk email MODIFIKASI (keputusan bisnis user 2026-07-12, revisi
+    kedua sama hari): AI Email Parser sekarang juga mencoba ekstrak tanggal check-in/check-out
+    BARU dari isi email modifikasi (kalau disebutkan eksplisit — lihat PARSE_SYSTEM_PROMPT).
+    Aturan penentuan otomatis (keputusan bisnis user):
+    - Tanggal check-in ATAU check-out baru SAMA PERSIS dengan yang tersimpan di PMS untuk
+      KEDUANYA -> dianggap pembatalan terselubung, diproses lewat batalkan_reservasi_otomatis
+      (sama seperti jenis="pembatalan").
+    - Salah satu dari keduanya berbeda dari yang tersimpan -> dianggap RESCHEDULE, jadwal
+      booking diupdate otomatis ke tanggal baru (tetap dicek anti-overbooking dulu).
+    - AI tidak berhasil menemukan check-in/check-out baru yang jelas, atau jadwal baru bentrok
+      dengan reservasi lain -> TIDAK menebak, fallback ke tab "Modifikasi OTA" untuk staf.
+
+    Kalau reservasi yang sama sudah pernah ditandai/diproses sebelumnya (menunggu_review,
+    direschedule, atau dibatalkan), email modifikasi susulan dengan no. reservasi yang sama
+    TIDAK menambah apa pun lagi — cuma dicatat sebagai duplikat (status Sudah_Diproses) supaya
+    tidak menumpuk item review/aksi ganda untuk reservasi yang sama.
+    """
+    no_reservasi = data.get("no_reservasi")
+    if not no_reservasi:
+        await db.email_logs.update_one({"id": log_id}, {"$set": {
+            "status": "Manual_Required",
+            "alasan": "Email modifikasi tidak menyebutkan nomor reservasi OTA — tidak bisa dicocokkan otomatis, cek manual.",
+        }})
+        return
+
+    booking = await db.bookings.find_one({
+        "ota_reservation_no": no_reservasi,
+        "status": {"$in": ["aktif", "booking_pending", "booking_paid"]},
+    })
+    if not booking:
+        await db.email_logs.update_one({"id": log_id}, {"$set": {
+            "status": "Manual_Required",
+            "alasan": f'Tidak ditemukan reservasi PMS aktif dengan no. OTA "{no_reservasi}" — kemungkinan sudah dibatalkan/selesai sebelumnya, atau reservasi awalnya belum pernah berhasil dibuat otomatis. Cek manual.',
+        }})
+        return
+
+    existing_status = booking.get("modifikasi_status")
+    if existing_status in ("menunggu_review", "direschedule", "dibatalkan"):
+        await db.bookings.update_one({"id": booking["id"]}, {"$push": {"modifikasi_log_ids": log_id}})
+        await db.email_logs.update_one({"id": log_id}, {"$set": {
+            "status": "Sudah_Diproses",
+            "reservation_id": booking["id"], "aksi": "modifikasi_duplikat",
+            "alasan": f'Reservasi {booking["kode"]} (no. OTA {no_reservasi}) sudah pernah ditandai modifikasi sebelumnya (status: {existing_status}) — email ini cuma dicatat sebagai riwayat, tidak ada perubahan baru.',
+        }})
+        return
+
+    check_in_raw, check_out_raw = data.get("check_in"), data.get("check_out")
+    try:
+        if not check_in_raw or not check_out_raw:
+            raise ValueError("tanggal check-in/check-out baru tidak disebutkan di email")
+        new_start = parse_iso(check_in_raw, "check_in")
+        new_end = parse_iso(check_out_raw, "check_out")
+    except (ValueError, HTTPException):
+        await _modifikasi_menunggu_review(
+            booking, log_id, no_reservasi,
+            "AI tidak berhasil menemukan tanggal check-in/check-out baru yang jelas di email ini.",
+        )
+        return
+
+    old_start = parse_iso(booking["jam_mulai"], "jam_mulai")
+    old_end = parse_iso(booking["jam_selesai"], "jam_selesai")
+
+    if new_start.date() == old_start.date() and new_end.date() == old_end.date():
+        # Check-in & check-out baru sama persis dengan yang lama -> dianggap pembatalan
+        # terselubung (keputusan bisnis user), diproses sama seperti jenis="pembatalan".
+        await batalkan_reservasi_otomatis(log_id, {**data, "jenis": "modifikasi (tanggal tidak berubah)"}, sumber, subjek)
+        return
+
+    # Check-in atau check-out berbeda -> reschedule otomatis, tetap dicek anti-overbooking dulu.
+    try:
+        await check_room_available(booking["room_id"], new_start, new_end, exclude_booking_id=booking["id"])
+    except HTTPException:
+        await _modifikasi_menunggu_review(
+            booking, log_id, no_reservasi,
+            f"Jadwal baru ({new_start.date()}–{new_end.date()}) bentrok dengan reservasi lain di kamar yang sama — tidak bisa direschedule otomatis.",
+        )
+        return
+
+    now = now_iso()
+    await db.bookings.update_one({"id": booking["id"]}, {"$set": {
+        "jam_mulai": new_start.isoformat(), "jam_selesai": new_end.isoformat(),
+        "modifikasi_status": "direschedule", "modifikasi_reviewed_at": now, "modifikasi_reviewed_by": "ai_email_parser",
+        "updated_at": now, "updated_by": "ai_email_parser",
+    }, "$push": {"modifikasi_log_ids": log_id}})
+    await db.audit_log.insert_one({
+        "id": str(uuid.uuid4()), "user_id": None, "username": "ai_email_parser",
+        "action": "reschedule_ota_auto",
+        "detail": f'Reschedule otomatis {booking["kode"]} (no. OTA {no_reservasi}) ke {new_start.isoformat()} – {new_end.isoformat()} dari email modifikasi "{subjek}"',
+        "entity": booking.get("room_nomor", ""), "timestamp": now,
+    })
+    await db.email_logs.update_one({"id": log_id}, {"$set": {
+        "status": "Parsed_Success", "alasan": None,
+        "reservation_id": booking["id"], "aksi": "reservasi_direschedule",
     }})
 
 
@@ -418,14 +540,20 @@ async def fetch_gmail_emails(max_results: int = 20) -> int:
             disimpan += 1
 
             if status == "Parsed_Success":
-                # Reservation Automation (PRD + keputusan bisnis 2026-07-12): reservasi baru
-                # langsung dibuat, modifikasi/pembatalan langsung membatalkan reservasi lama
-                # yang cocok — semua tanpa menunggu staf. Bisa mengubah status doc ini balik ke
-                # Manual_Required kalau ada yang tidak bisa dicocokkan otomatis (lihat masing2 fungsi).
+                # Reservation Automation (PRD + keputusan bisnis 2026-07-12, direvisi kedua
+                # kalinya sama hari): reservasi baru langsung dibuat; pembatalan eksplisit
+                # langsung membatalkan reservasi lama yang cocok; modifikasi dibandingkan
+                # tanggal check-in/out baru vs lama untuk auto-tentukan reschedule vs
+                # pembatalan terselubung (lihat proses_modifikasi_otomatis), fallback ke tab
+                # review staf kalau datanya tidak cukup jelas. Bisa mengubah status doc ini
+                # balik ke Manual_Required kalau tidak bisa dicocokkan otomatis sama sekali
+                # (lihat masing-masing fungsi).
                 if jenis == "baru":
                     await buat_reservasi_otomatis(doc["id"], extracted_data, sumber, subjek)
-                else:
+                elif jenis == "pembatalan":
                     await batalkan_reservasi_otomatis(doc["id"], {**extracted_data, "jenis": jenis}, sumber, subjek)
+                else:  # modifikasi
+                    await proses_modifikasi_otomatis(doc["id"], extracted_data, sumber, subjek)
     return disimpan
 
 
@@ -538,3 +666,82 @@ async def gmail_disconnect(user: dict = Depends(require_owner)):
     await db.integrations.delete_one({"provider": "gmail"})
     await log_activity(user, "gmail_disconnect", f"Putuskan Gmail: {conn.get('email')}")
     return {"ok": True}
+
+
+@api.get("/otomasi-email/modifikasi/perlu-review")
+async def list_modifikasi_perlu_review(user: dict = Depends(get_current_user)):
+    """Reservasi OTA yang punya email modifikasi menunggu keputusan staf — fallback dari
+    proses_modifikasi_otomatis kalau AI tidak berhasil menentukan reschedule/batal otomatis.
+    Disertakan riwayat email modifikasi terkait (bisa lebih dari satu kalau OTA kirim beberapa
+    notifikasi susulan)."""
+    bookings = await db.bookings.find({"modifikasi_status": "menunggu_review"}, {"_id": 0}).sort("jam_mulai", 1).to_list(100)
+    out = []
+    for b in bookings:
+        logs = await db.email_logs.find(
+            {"id": {"$in": b.get("modifikasi_log_ids", [])}}, {"_id": 0}
+        ).sort("processed_at", -1).to_list(20)
+        out.append({**b, "modifikasi_emails": logs})
+    return out
+
+
+@api.post("/otomasi-email/modifikasi/{booking_id}/batalkan")
+async def modifikasi_batalkan(booking_id: str, user: dict = Depends(get_current_user)):
+    """Staf konfirmasi: email modifikasi OTA yang ditinjau ternyata pembatalan — batalkan
+    reservasi PMS terkait (sama seperti batalkan_reservasi_otomatis, tapi dipicu staf)."""
+    b = await db.bookings.find_one({"id": booking_id})
+    if not b:
+        raise HTTPException(404, "Booking tidak ditemukan")
+    if b.get("modifikasi_status") != "menunggu_review":
+        raise HTTPException(400, "Booking ini tidak sedang menunggu review modifikasi")
+
+    now = now_iso()
+    await db.bookings.update_one({"id": booking_id}, {"$set": {
+        "status": "cancelled", "cancelled_at": now, "cancelled_by": user["nama"],
+        "cancel_reason": "Dibatalkan staf setelah tinjau email modifikasi OTA (RedDoorz)",
+        "cancel_fee": 0, "refund_amount": 0,
+        "modifikasi_status": "dibatalkan", "modifikasi_reviewed_at": now, "modifikasi_reviewed_by": user["nama"],
+    }})
+    await log_availability_change(b["room_id"], b.get("room_tipe", ""), 1, "booking_dibatalkan_modifikasi_ota", booking_id=b["id"])
+    await db.email_logs.update_many(
+        {"id": {"$in": b.get("modifikasi_log_ids", [])}},
+        {"$set": {"status": "Parsed_Success", "aksi": "reservasi_dibatalkan", "alasan": None}},
+    )
+    await log_activity(user, "modifikasi_batalkan_ota", f"Batalkan {b['kode']} setelah tinjau modifikasi OTA (RedDoorz)", entity=b.get("room_nomor", ""))
+    return {"ok": True}
+
+
+@api.post("/otomasi-email/modifikasi/{booking_id}/reschedule")
+async def modifikasi_reschedule(booking_id: str, body: ReschedulePMSBody, user: dict = Depends(get_current_user)):
+    """Staf konfirmasi: email modifikasi OTA yang ditinjau ternyata ganti tanggal — pindahkan
+    jadwal reservasi PMS ke jadwal baru (staf baca tanggal baru dari isi email RedDoorz asli).
+    Harga TIDAK dihitung ulang, konsisten dengan konvensi reschedule staf yang sudah ada
+    (`PUT /bookings/{id}`) — anti-overbooking tetap dicek untuk jadwal baru."""
+    b = await db.bookings.find_one({"id": booking_id})
+    if not b:
+        raise HTTPException(404, "Booking tidak ditemukan")
+    if b.get("modifikasi_status") != "menunggu_review":
+        raise HTTPException(400, "Booking ini tidak sedang menunggu review modifikasi")
+
+    start = parse_iso(body.jam_mulai, "jam_mulai")
+    end = parse_iso(body.jam_selesai, "jam_selesai")
+    if end <= start:
+        raise HTTPException(400, "Jam selesai harus setelah jam mulai")
+    await check_room_available(b["room_id"], start, end, exclude_booking_id=booking_id)
+
+    now = now_iso()
+    await db.bookings.update_one({"id": booking_id}, {"$set": {
+        "jam_mulai": start.isoformat(), "jam_selesai": end.isoformat(),
+        "modifikasi_status": "direschedule", "modifikasi_reviewed_at": now, "modifikasi_reviewed_by": user["nama"],
+        "updated_at": now, "updated_by": user["nama"],
+    }})
+    await db.email_logs.update_many(
+        {"id": {"$in": b.get("modifikasi_log_ids", [])}},
+        {"$set": {"status": "Parsed_Success", "aksi": "reservasi_direschedule", "alasan": None}},
+    )
+    await log_activity(
+        user, "modifikasi_reschedule_ota",
+        f"Reschedule {b['kode']} ke {start.isoformat()} - {end.isoformat()} setelah tinjau modifikasi OTA (RedDoorz)",
+        entity=b.get("room_nomor", ""),
+    )
+    doc = await db.bookings.find_one({"id": booking_id}, {"_id": 0})
+    return doc

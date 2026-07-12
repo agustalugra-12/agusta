@@ -466,6 +466,14 @@ class MappingRuleUpdate(BaseModel):
     pola: Optional[str] = None
     aktif: Optional[bool] = None
 
+class ReschedulePMSBody(BaseModel):
+    """Body untuk staf konfirmasi reschedule booking OTA setelah tinjau email modifikasi
+    (`POST /otomasi-email/modifikasi/{booking_id}/reschedule`) — harga TIDAK dihitung ulang,
+    cuma jadwal yang berubah, konsisten dengan konvensi reschedule staf yang sudah ada
+    (`PUT /bookings/{id}`)."""
+    jam_mulai: str  # ISO datetime
+    jam_selesai: str  # ISO datetime
+
 class WebhookConfigUpdate(BaseModel):
     """Dokumen tunggal di collection `webhook_config` — kredensial penyedia WhatsApp
     pihak ketiga (Fonnte/Wablas/Qontak/custom) yang dimasukkan staf sendiri.
@@ -508,7 +516,7 @@ class EmailLog(BaseModel):
     subjek: str
     pengirim: str
     sumber: str  # Agoda | Traveloka | Booking.com | Lainnya, dst — hasil deteksi domain pengirim
-    status: str  # Parsed_Success | Failed | Manual_Required
+    status: str  # Parsed_Success | Failed | Manual_Required | Perlu_Review_Modifikasi | Sudah_Diproses
     jenis: Optional[str] = None  # baru | modifikasi | pembatalan — klasifikasi AI, None kalau is_reservation false
     extracted_data: Optional[EmailExtractedData] = None
     reservation_id: Optional[str] = None  # booking PMS yang dibuat/dibatalkan otomatis dari email ini
