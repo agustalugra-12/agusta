@@ -116,7 +116,8 @@ async def public_create_booking(body: PublicBookingCreate):
         if not r:
             raise HTTPException(404, "Kamar tidak ditemukan")
         extra_bed_qty = max(0, min(EXTRA_BED_MAX, int(body.extra_bed_qty or 0)))
-        subtotal = r["tarif"] * nights + extra_bed_qty * EXTRA_BED_PRICE * nights
+        tarif_per_malam = r["tarif"] + (BREAKFAST_PRICE if body.dengan_sarapan else 0)
+        subtotal = tarif_per_malam * nights + extra_bed_qty * EXTRA_BED_PRICE * nights
         service_fee = round(subtotal * SERVICE_FEE_PCT)
         total = subtotal + service_fee
         harga_override = {"subtotal": subtotal, "service_fee": service_fee, "total": total, "dp_min": round(total * 0.5)}
@@ -133,6 +134,7 @@ async def public_create_booking(body: PublicBookingCreate):
         "catatan": body.catatan,
         "created_by": body.nama_tamu,
         "tipe": body.tipe,
+        "dengan_sarapan": body.dengan_sarapan,
     }
     return await create_reservation(data, source="online", harga_override=harga_override)
 
@@ -218,7 +220,7 @@ async def public_get_booking(bid: str):
     # batasi field yang dikembalikan ke publik
     safe = {k: b.get(k) for k in [
         "id", "kode", "room_nomor", "room_tipe", "tipe", "nama_tamu", "no_hp", "email",
-        "jumlah_tamu", "extra_bed_qty", "jam_mulai", "jam_selesai", "status", "payment_status",
+        "jumlah_tamu", "extra_bed_qty", "dengan_sarapan", "jam_mulai", "jam_selesai", "status", "payment_status",
         "subtotal", "service_fee", "total", "dp_min", "invoice_id",
     ]}
     return safe

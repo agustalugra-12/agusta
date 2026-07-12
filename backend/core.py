@@ -64,6 +64,7 @@ BREVO_FROM_NAME = os.environ.get("BREVO_FROM_NAME", "Pelangi Homestay")
 SERVICE_FEE_PCT = 0.03  # 3% service fee diaplikasikan ke checkin & booking
 EXTRA_BED_PRICE = 50000  # per extra bed, flat (PRD: "Extra Bed Rp 50.000 berlaku untuk kedua jenis layanan")
 EXTRA_BED_MAX = 2  # maksimal per kamar (sama seperti ExtraBedSelector di frontend)
+BREAKFAST_PRICE = 25000  # per malam, opsional, hanya berlaku untuk tipe menginap (2026-07-12: Standard 150rb/175rb, Cottage 200rb/225rb — selisihnya konsisten 25rb)
 
 # ---- Utilities ----
 def now_iso() -> str:
@@ -333,6 +334,7 @@ class BookingCreate(BaseModel):
     jam_selesai: Optional[str] = None
     catatan: str = ""
     tarif_override: Optional[int] = None  # staf boleh set harga custom per malam/per sesi, beda dari tarif dasar kamar
+    dengan_sarapan: bool = False  # hanya berlaku tipe menginap, diabaikan kalau tarif_override diisi (staf sudah tentukan harga akhir sendiri)
 
 class BookingUpdate(BaseModel):
     nama_tamu: Optional[str] = None
@@ -360,6 +362,7 @@ class PublicBookingCreate(BaseModel):
     extra_bed_qty: int = 0  # maks divalidasi di public_create_booking (EXTRA_BED_MAX)
     tipe: str = "day_use"  # "day_use" | "menginap"
     tanggal_checkout: Optional[str] = None  # YYYY-MM-DD, wajib jika tipe == "menginap"
+    dengan_sarapan: bool = False  # hanya berlaku tipe menginap, +BREAKFAST_PRICE/malam
 
 class CreateSnapTokenBody(BaseModel):
     booking_id: str

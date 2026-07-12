@@ -21,7 +21,10 @@ async def create_booking(body: BookingCreate, user: dict = Depends(get_current_u
     await check_room_available(body.room_id, start, end)
     if body.tarif_override is not None and body.tarif_override <= 0:
         raise HTTPException(400, "Harga custom harus lebih dari 0")
-    unit_tarif = body.tarif_override if body.tarif_override else int(r["tarif"])
+    if body.tarif_override:
+        unit_tarif = body.tarif_override
+    else:
+        unit_tarif = int(r["tarif"]) + (BREAKFAST_PRICE if (body.tipe == "menginap" and body.dengan_sarapan) else 0)
     kode = f"BK-{datetime.now().strftime('%Y%m%d%H%M%S')}-{uuid.uuid4().hex[:4].upper()}"
     # Hitung estimasi tagihan (tarif kamar + 3% service fee). Untuk menginap, durasi jam dipakai sebagai kelipatan 6 jam.
     subtotal = unit_tarif
@@ -40,6 +43,7 @@ async def create_booking(body: BookingCreate, user: dict = Depends(get_current_u
         "no_identitas": body.no_identitas, "kendaraan": body.kendaraan, "jumlah_tamu": body.jumlah_tamu,
         "jam_mulai": start.isoformat(), "jam_selesai": end.isoformat(),
         "catatan": body.catatan, "status": "aktif",
+        "dengan_sarapan": bool(body.dengan_sarapan) if body.tipe == "menginap" else False,
         "subtotal": subtotal, "service_fee": service_fee, "total": total,
         "source": "walk_in",
         "created_at": now_iso(), "created_by": user["nama"],

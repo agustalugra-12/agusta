@@ -82,7 +82,7 @@ daftar ini ringkasan untuk manusia, bisa sedikit basi — cek CLI kalau ragu.
 - [x] Buat Tagihan Baru (simulasi Snap + pilihan metode bayar, mock)
 - [x] Penanganan status pembayaran gagal/kedaluwarsa di PublicBook.jsx (nyata, bukan mock)
 - [x] Navigasi Daftar Reservasi -> Pembayaran (filter kode otomatis)
-- [ ] **Backend (perlu keputusan bisnis, ditunda atas persetujuan user 2026-07-11):** izinkan booking `cancelled` (karena expired/gagal bayar) dibuka lagi untuk retry Snap — perlu re-cek ketersediaan kamar saat retry supaya tidak double-booking. Frontend "Coba Bayar Lagi" sengaja belum dibuat sampai ini selesai.
+- [ ] **Backend (perlu keputusan bisnis, ditunda atas persetujuan user 2026-07-11):** izinkan booking `cancelled` (karena expired/gagal bayar) dibuka lagi untuk retry Snap — perlu re-cek ketersediaan kamar saat retry supaya tidak double-booking. Frontend "Coba Bayar Lagi" sengaja belum dibuat sampai ini selesai. **Dinilai ulang 2026-07-12** (atas permintaan user, "kerjakan jika memang penting"): dicek kodenya, dampaknya cuma UX (tamu isi form ulang) — kamar otomatis lepas lagi & tamu diberi tahu jelas, tidak ada kerugian bisnis/data. Tetap ditunda, prioritas rendah.
 
 ### Pesan WhatsApp Otomatis
 - [x] Halaman dasbor + tab Ringkasan (mock)
@@ -130,6 +130,7 @@ daftar ini ringkasan untuk manusia, bisa sedikit basi — cek CLI kalau ragu.
 
 ### Paket Kamar
 - [x] Komponen PaketKamarSelector (dengan/tanpa breakfast per tipe kamar) + halaman pratinjau (mock, belum ada field paket di backend)
+- [x] **Opsi sarapan SEKARANG NYATA di booking engine (2026-07-12)**, terpisah dari komponen pratinjau mock di atas: harga kamar disesuaikan dengan tarif asli (Standard Rp150rb/Cottage Rp200rb tanpa sarapan, base `rooms.tarif` — dimigrasikan di DB + seed `server.py`, otomatis konsisten di Dashboard/Quick Book karena satu sumber field). Field `dengan_sarapan` di `PublicBookingCreate`/`BookingCreate` (`backend/core.py`) + `BREAKFAST_PRICE=25000`/malam (jadi Rp175rb/Rp225rb dengan sarapan) — dihitung server-side (`backend/routes/public.py`, `backend/routes/bookings.py`). Toggle "Sarapan Pagi" di `PublicBook.jsx` khusus alur Menginap, tampil di breakdown harga, halaman sukses, dan PDF voucher (`email_service.py`). Diverifikasi end-to-end lewat booking uji sungguhan (dihapus dari DB setelah dikonfirmasi).
 
 ### Rekomendasi AI Check-in Day Use
 - [x] Halaman "Rekomendasi Check-in" — saran jam check-in Day Use berdasarkan jam check-out Menginap malam sebelumnya + jeda bersih-bersih 1 jam, auto-update saat tanggal/tipe kamar berubah, alternatif kamar lain, skenario "penuh" (mock)

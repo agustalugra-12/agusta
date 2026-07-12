@@ -22,6 +22,8 @@ const fmtRp = (n) => "Rp " + Number(n || 0).toLocaleString("id-ID");
 // Day Use: flat sekali bayar. Menginap: dikali jumlah malam (lihat summary di bawah).
 const EXTRA_BED_PRICE = 50000;
 const EXTRA_BED_MAX = 2;
+// Sama dengan BREAKFAST_PRICE di backend/core.py — hanya berlaku untuk booking menginap.
+const BREAKFAST_PRICE = 25000;
 const CS_WHATSAPP = "0895356644644";
 const ALAMAT_HOMESTAY = "Jl. Kebun Raya Bedugul, Desa Candikuning, Kec. Baturiti, Tabanan - Bali";
 const addDays = (dateStr, n) => {
@@ -71,6 +73,7 @@ function BookingForm() {
     jam_checkin: "13:00", catatan: "",
   });
   const [extraBedQty, setExtraBedQty] = useState(0);
+  const [denganSarapan, setDenganSarapan] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [paymentOption, setPaymentOption] = useState("dp50"); // dp50 | full
   const nav = useNavigate();
@@ -105,17 +108,19 @@ function BookingForm() {
   const summary = useMemo(() => {
     if (!selectedRoom) return null;
     const isMenginap = bookingTipe === "menginap";
+    const breakfastTotal = isMenginap && denganSarapan ? BREAKFAST_PRICE * nights : 0;
     const extraBedTotal = extraBedQty * EXTRA_BED_PRICE * (isMenginap ? nights : 1);
     const tarifKamar = selectedRoom.tarif * (isMenginap ? nights : 1);
-    const subtotal = tarifKamar + extraBedTotal;
+    const subtotal = tarifKamar + breakfastTotal + extraBedTotal;
     const svc = Math.round(subtotal * 0.03);
     const total = subtotal + svc;
-    return { tarifKamar, extraBedTotal, subtotal, service_fee: svc, total, dp_min: Math.round(total * 0.5), nights };
-  }, [selectedRoom, extraBedQty, bookingTipe, nights]);
+    return { tarifKamar, breakfastTotal, extraBedTotal, subtotal, service_fee: svc, total, dp_min: Math.round(total * 0.5), nights };
+  }, [selectedRoom, extraBedQty, denganSarapan, bookingTipe, nights]);
 
   const onSelectRoom = (room) => {
     setSelectedRoom(room);
     setExtraBedQty(0);
+    setDenganSarapan(false);
     setStep(2);
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
@@ -147,7 +152,7 @@ function BookingForm() {
         catatan: form.catatan.trim(),
         extra_bed_qty: extraBedQty,
         tipe: bookingTipe,
-        ...(bookingTipe === "menginap" ? { tanggal_checkout: checkoutDate } : {}),
+        ...(bookingTipe === "menginap" ? { tanggal_checkout: checkoutDate, dengan_sarapan: denganSarapan } : {}),
       });
       // 2. Buat Snap token
       const { data: tx } = await PUBLIC_API.post("/payments/midtrans/create-snap-token", {
@@ -333,6 +338,25 @@ function BookingForm() {
                 <FieldIcon icon={Clock} label="Jam Check-In">
                   <Input data-testid="pb-jam" type="time" value={form.jam_checkin} onChange={(e) => setForm(f => ({ ...f, jam_checkin: e.target.value }))} className="h-12" />
                 </FieldIcon>
+                {bookingTipe === "menginap" && (
+                  <div>
+                    <Label className="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-1.5 block">Paket Kamar</Label>
+                    <button
+                      type="button"
+                      data-testid="pb-sarapan-toggle"
+                      onClick={() => setDenganSarapan((v) => !v)}
+                      className={`w-full flex items-center justify-between border rounded-lg p-3 text-left transition-colors ${denganSarapan ? "border-blue-600 bg-blue-50" : "border-slate-200 hover:border-slate-300"}`}
+                    >
+                      <div>
+                        <div className="font-medium text-sm">Sarapan Pagi</div>
+                        <div className="text-xs text-slate-500">{fmtRp(BREAKFAST_PRICE)} / malam per kamar (opsional)</div>
+                      </div>
+                      <div className={`w-5 h-5 rounded border-2 grid place-items-center shrink-0 ${denganSarapan ? "border-blue-600 bg-blue-600" : "border-slate-300"}`}>
+                        {denganSarapan && <CheckCircle2 className="w-3.5 h-3.5 text-white" />}
+                      </div>
+                    </button>
+                  </div>
+                )}
                 <div>
                   <Label className="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-1.5 block">Permintaan Khusus</Label>
                   <ExtraBedSelector value={extraBedQty} onChange={setExtraBedQty} max={EXTRA_BED_MAX} harga={EXTRA_BED_PRICE} satuan="pemesanan" />
@@ -365,6 +389,9 @@ function BookingForm() {
                 </div>
                 <div className="space-y-1.5 border-t border-slate-100 pt-3 text-sm">
                   <div className="flex justify-between"><span className="text-slate-600">Tarif Kamar{bookingTipe === "menginap" ? ` × ${summary.nights} malam` : ""}</span><b>{fmtRp(summary.tarifKamar)}</b></div>
+                  {summary.breakfastTotal > 0 && (
+                    <div className="flex justify-between" data-testid="pb-breakfast-fee"><span className="text-slate-600">Sarapan Pagi × {summary.nights} malam</span><b>{fmtRp(summary.breakfastTotal)}</b></div>
+                  )}
                   {extraBedQty > 0 && (
                     <div className="flex justify-between" data-testid="pb-extra-bed-fee"><span className="text-slate-600">Extra Bed &times;{extraBedQty}</span><b>{fmtRp(summary.extraBedTotal)}</b></div>
                   )}
@@ -609,6 +636,9 @@ function SuccessView({ bookingId }) {
             <div className="flex justify-between"><span className="text-slate-500">Check-In</span><b>{new Date(bk.jam_mulai).toLocaleString("id-ID", { dateStyle: "medium", timeStyle: "short" })}</b></div>
             {bk.jam_selesai && (
               <div className="flex justify-between" data-testid="pb-success-checkout"><span className="text-slate-500">Check-Out</span><b>{new Date(bk.jam_selesai).toLocaleString("id-ID", { dateStyle: "medium", timeStyle: "short" })}</b></div>
+            )}
+            {bk.dengan_sarapan && (
+              <div className="flex justify-between" data-testid="pb-success-sarapan"><span className="text-slate-500">Paket Kamar</span><b>Termasuk Sarapan Pagi</b></div>
             )}
             {bk.extra_bed_qty > 0 && (
               <div className="flex justify-between" data-testid="pb-success-extra-bed"><span className="text-slate-500">Permintaan Khusus</span><b>Extra Bed &times;{bk.extra_bed_qty}</b></div>

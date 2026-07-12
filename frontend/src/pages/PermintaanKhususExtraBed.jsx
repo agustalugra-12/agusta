@@ -15,7 +15,7 @@ const EXTRA_BED_MAX = 2; // maksimal per kamar
 
 // Tarif kamar nyata (sama seperti seed di server.py) — dipakai supaya demo total harga
 // realistis, meski form ini sendiri tetap demo/tidak tersambung ke booking sungguhan.
-const ROOM_RATES = { Standard: 120000, Cottage: 140000 };
+const ROOM_RATES = { Standard: 150000, Cottage: 200000 };
 
 export function ExtraBedSelector({ value, onChange, max = EXTRA_BED_MAX, harga = EXTRA_BED_PRICE, satuan = "malam" }) {
   return (

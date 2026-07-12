@@ -39,7 +39,7 @@ async def create_reservation(data: Dict[str, Any], source: str = "public",
 
     data wajib berisi: room_id, nama_tamu, no_hp, email, no_identitas, kendaraan,
     jumlah_tamu, jam_mulai (datetime UTC), jam_selesai (datetime UTC), catatan, created_by.
-    data boleh berisi: tipe (default "day_use"), extra_bed_qty (default 0).
+    data boleh berisi: tipe (default "day_use"), extra_bed_qty (default 0), dengan_sarapan (default False, hanya relevan untuk tipe menginap).
 
     harga_override, jika diisi, wajib berisi subtotal/service_fee/total/dp_min final
     (tidak dihitung ulang) — extra bed (kalau ada) harus sudah termasuk di subtotal.
@@ -76,6 +76,7 @@ async def create_reservation(data: Dict[str, Any], source: str = "public",
         "email": data["email"],
         "no_identitas": data["no_identitas"], "kendaraan": data["kendaraan"],
         "jumlah_tamu": data["jumlah_tamu"], "extra_bed_qty": extra_bed_qty,
+        "dengan_sarapan": bool(data.get("dengan_sarapan")) if data.get("tipe") == "menginap" else False,
         "jam_mulai": mulai.isoformat(), "jam_selesai": selesai.isoformat(),
         "catatan": data["catatan"],
         "status": "booking_pending",          # status booking utama (untuk public booking)

@@ -66,6 +66,8 @@ def generate_voucher_pdf(b: dict) -> bytes:
     baris("Jumlah Tamu", b.get("jumlah_tamu", 1))
     if b.get("extra_bed_qty"):
         baris("Extra Bed", f"x{b['extra_bed_qty']}")
+    if b.get("dengan_sarapan"):
+        baris("Sarapan Pagi", "Termasuk")
     y -= 3 * mm
     c.line(15 * mm, y, w - 15 * mm, y)
     y -= 8 * mm
