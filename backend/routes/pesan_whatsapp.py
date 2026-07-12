@@ -2,6 +2,7 @@ from core import *
 import asyncio
 import httpx
 from openai import OpenAI
+from fastapi.responses import PlainTextResponse
 
 _openai_client = OpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
 
@@ -114,10 +115,23 @@ async def whatsapp_incoming_balesotomatis(token: str, request: Request):
     `webhook_config.webhook_token` (dibuat otomatis di GET /konfigurasi-webhook) supaya URL
     ini tidak bisa dipanggil sembarang orang untuk menyuntik log palsu.
 
-    Keputusan bisnis user (2026-07-13): BalesOtomatis sudah punya AI auto-reply bawaan
-    sendiri, jadi di sini PMS HANYA mencatat pesan masuk ke `wa_conversations` (tampil di
-    Log Percakapan) — TIDAK memanggil OpenAI/mengirim balasan sendiri, supaya tidak dobel
-    balas dengan AI BalesOtomatis.
+    Keputusan bisnis user (2026-07-13, revisi): BalesOtomatis tidak punya REST API publik
+    untuk kirim pesan (dicek langsung ke halaman /rest-api mereka — cuma ada config webhook
+    masuk, token pribadi, & daftar Device ID, tidak ada endpoint "send message"). TAPI
+    BalesOtomatis konfirmasi (via CS) mereka punya fitur: begitu ada balasan yang dikirim
+    "di luar AI bawaan mereka" untuk suatu chat, AI mereka otomatis freeze sementara
+    (durasi diatur di dashboard mereka) lalu ON lagi sendiri — dipakai di sini supaya
+    balasan PMS tidak dobel dengan AI bawaan.
+
+    Karena tidak ada endpoint kirim pesan terpisah, satu-satunya jalur PMS untuk "membalas
+    di luar AI mereka" adalah lewat response JSON webhook AI Trigger ini (field ini yang
+    dipanggil BalesOtomatis saat pesan masuk) — makanya balasan AI di sini dikembalikan di
+    body dengan beberapa nama field sekaligus (reply/message/balasan/text) karena skema
+    persis yang mereka expect belum terkonfirmasi dari dokumentasi resmi. BELUM DIVERIFIKASI
+    LIVE apakah BalesOtomatis benar-benar merelai response ini ke tamu — perlu tes end-to-end
+    dulu (kirim pesan WA, cek apakah balasan di bawah benar-benar sampai ke tamu & AI mereka
+    freeze setelahnya). Kalau ternyata tidak ada field yang cocok, balasan ini tidak akan
+    terkirim ke tamu meski tersimpan di `wa_conversations` — perlu tanya CS field yang benar.
     """
     cfg = await db.webhook_config.find_one({}, {"_id": 0})
     if not cfg or not cfg.get("webhook_token") or cfg["webhook_token"] != token:
@@ -139,14 +153,38 @@ async def whatsapp_incoming_balesotomatis(token: str, request: Request):
     else:
         pesan_masuk = data.get("message_body") or ""
 
+    mulai = datetime.now(timezone.utc)
+    balasan_ai = await _generate_balasan_ai(pesan_masuk) if pesan_masuk else None
+    response_detik = round((datetime.now(timezone.utc) - mulai).total_seconds(), 1)
+
     await db.wa_conversations.insert_one({
         "id": str(uuid.uuid4()), "nama": nama, "no_hp": no_hp,
-        "pesan_masuk": pesan_masuk, "balasan_ai": None,
-        "status_kirim": "Ditangani Provider", "error": None,
-        "response_detik": None, "waktu": now_iso(),
+        "pesan_masuk": pesan_masuk, "balasan_ai": balasan_ai,
+        "status_kirim": "Terkirim (via response webhook)" if balasan_ai else "Ditangani Provider",
+        "error": None, "response_detik": response_detik, "waktu": now_iso(),
         "provider_message_id": data.get("message_id"),
     })
-    return {"ok": True}
+    if not balasan_ai:
+        return {"ok": True}
+    return {"ok": True, "reply": balasan_ai, "message": balasan_ai, "balasan": balasan_ai, "text": balasan_ai}
+
+
+@api.get("/webhook/whatsapp/balesotomatis/{token}/pengetahuan")
+async def balesotomatis_pengetahuan(token: str):
+    """Teks polos ketersediaan & harga kamar TERKINI, dipakai untuk mengisi Knowledge
+    Base/FAQ AI bawaan BalesOtomatis (kalau dashboard mereka mendukung ambil info dari
+    URL) atau disalin manual staf ke sana secara berkala. Ini jalan keluar dari
+    keterbatasan `whatsapp_incoming_balesotomatis` di atas: AI bawaan BalesOtomatis yang
+    balas (bukan PMS), jadi PMS hanya bisa menyuplai datanya lewat sini, bukan lewat
+    balasan langsung. Token sama dengan URL Webhook Masuk supaya tidak perlu kredensial
+    baru, dan publik (tanpa header Authorization) karena kolom URL sumber pengetahuan di
+    dashboard provider pihak ketiga biasanya tidak bisa diisi header custom.
+    """
+    cfg = await db.webhook_config.find_one({}, {"_id": 0})
+    if not cfg or not cfg.get("webhook_token") or cfg["webhook_token"] != token:
+        raise HTTPException(404, "Token webhook tidak valid")
+    teks = await _ringkasan_ketersediaan_untuk_ai()
+    return PlainTextResponse(teks)
 
 
 @api.get("/pesan-whatsapp/percakapan")

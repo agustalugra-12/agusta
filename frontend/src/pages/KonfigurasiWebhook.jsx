@@ -25,6 +25,7 @@ export default function KonfigurasiWebhook() {
   const [testResult, setTestResult] = useState(null); // { ok, message, tested_at }
   const [attemptedSave, setAttemptedSave] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [copiedPengetahuan, setCopiedPengetahuan] = useState(false);
 
   useEffect(() => {
     api.get("/konfigurasi-webhook").then((r) => { setSaved(r.data); setForm(r.data); }).catch(() => {});
@@ -44,12 +45,21 @@ export default function KonfigurasiWebhook() {
       ? `${API_BASE}/webhook/whatsapp/balesotomatis/${saved.webhook_token}`
       : `${API_BASE}/webhook/whatsapp/incoming`
     : null;
+  const pengetahuanUrl = saved.provider === "BalesOtomatis" && saved.webhook_token
+    ? `${API_BASE}/webhook/whatsapp/balesotomatis/${saved.webhook_token}/pengetahuan`
+    : null;
 
   const salinUrl = async () => {
     if (!inboundUrl) return;
     await navigator.clipboard.writeText(inboundUrl);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
+  };
+  const salinPengetahuanUrl = async () => {
+    if (!pengetahuanUrl) return;
+    await navigator.clipboard.writeText(pengetahuanUrl);
+    setCopiedPengetahuan(true);
+    setTimeout(() => setCopiedPengetahuan(false), 2000);
   };
 
   const maskedKey = (key) => (key.length <= 8 ? "••••••••" : `${key.slice(0, 6)}${"•".repeat(Math.min(16, key.length - 10))}${key.slice(-4)}`);
@@ -144,6 +154,26 @@ export default function KonfigurasiWebhook() {
               <Input readOnly value={inboundUrl} data-testid="webhook-inbound-url" className="font-mono text-xs bg-white" onFocus={(e) => e.target.select()} />
               <Button type="button" variant="outline" size="sm" onClick={salinUrl} className="gap-1.5 shrink-0" data-testid="webhook-inbound-copy">
                 {copied ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />} {copied ? "Tersalin" : "Salin"}
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {pengetahuanUrl && (
+        <Card className="border-amber-200 bg-amber-50/50">
+          <CardContent className="p-4 space-y-2">
+            <h3 className="text-sm font-semibold text-slate-700">URL Ketersediaan Kamar (untuk Knowledge Base AI)</h3>
+            <p className="text-xs text-slate-500">
+              AI bawaan BalesOtomatis yang menjawab pertanyaan tamu, bukan PMS ini — supaya jawabannya pakai data kamar
+              yang sebenarnya (bukan jawaban generik), cari fitur "Knowledge Base" / "FAQ" / "Info AI dari URL" di
+              dashboard BalesOtomatis lalu tempel URL ini di sana. Kalau BalesOtomatis belum punya fitur ambil-otomatis
+              dari URL, buka URL ini dan salin isinya manual ke pengaturan AI mereka secara berkala.
+            </p>
+            <div className="flex items-center gap-2">
+              <Input readOnly value={pengetahuanUrl} data-testid="webhook-pengetahuan-url" className="font-mono text-xs bg-white" onFocus={(e) => e.target.select()} />
+              <Button type="button" variant="outline" size="sm" onClick={salinPengetahuanUrl} className="gap-1.5 shrink-0" data-testid="webhook-pengetahuan-copy">
+                {copiedPengetahuan ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />} {copiedPengetahuan ? "Tersalin" : "Salin"}
               </Button>
             </div>
           </CardContent>
