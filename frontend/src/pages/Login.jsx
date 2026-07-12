@@ -82,7 +82,7 @@ export default function Login() {
             <form onSubmit={onSubmit} className="space-y-4">
               <div>
                 <Label htmlFor="username">Username</Label>
-                <Input id="username" data-testid="login-username" value={username} onChange={(e) => setUsername(e.target.value)} placeholder="cth: owner" className="h-12 text-base mt-1.5" autoFocus />
+                <Input id="username" data-testid="login-username" value={username} onChange={(e) => setUsername(e.target.value)} className="h-12 text-base mt-1.5" autoFocus />
               </div>
               <div>
                 <Label htmlFor="password">Password</Label>
@@ -103,11 +103,6 @@ export default function Login() {
                 Daftar
               </Link>
             </p>
-            <div className="mt-6 text-xs text-slate-500 border-t pt-4">
-              <div className="font-semibold text-slate-600 mb-1">Akun Default:</div>
-              <div>Owner — <code>owner</code> / <code>owner123</code></div>
-              <div>Resepsionis — <code>resepsionis</code> / <code>resep123</code></div>
-            </div>
           </CardContent>
         </Card>
       </div>
