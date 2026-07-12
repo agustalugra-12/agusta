@@ -316,8 +316,16 @@ async def buat_reservasi_otomatis(log_id: str, data: dict, sumber: str, subjek: 
         harga_override={"subtotal": total, "service_fee": 0, "total": total, "dp_min": 0},
     )
     update_fields = {"ota_reservation_no": data.get("no_reservasi")}
-    if data.get("status_pembayaran") == "Lunas":
-        update_fields.update({"payment_status": "paid", "status": "aktif"})
+    if data.get("status_pembayaran") == "Dibatalkan":
+        update_fields["status"] = "cancelled"
+    else:
+        # Keputusan bisnis user (2026-07-13): tamu RedDoorz sudah bayar ke RedDoorz saat
+        # booking, PMS baru terima settlement belakangan — field status_pembayaran di email
+        # ("Lunas"/"Belum Bayar") TIDAK merepresentasikan status bayar ke hotel (semua sample
+        # email RedDoorz nyatanya selalu "Belum Bayar" walau tamu sudah bayar), jadi booking
+        # baru dari RedDoorz selalu langsung dianggap lunas supaya terhitung di laporan
+        # pemasukan (yang filter payment_status=paid & paid_at).
+        update_fields.update({"payment_status": "paid", "status": "aktif", "paid_at": now_iso()})
     await db.bookings.update_one({"id": booking["id"]}, {"$set": update_fields})
     await db.email_logs.update_one({"id": log_id}, {"$set": {"reservation_id": booking["id"], "aksi": "reservasi_baru_dibuat"}})
 
