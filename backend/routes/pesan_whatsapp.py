@@ -105,6 +105,50 @@ async def whatsapp_incoming(request: Request):
     return {"ok": True, "balasan_ai": balasan_ai}
 
 
+@api.post("/webhook/whatsapp/balesotomatis/{token}")
+async def whatsapp_incoming_balesotomatis(token: str, request: Request):
+    """Endpoint publik untuk BalesOtomatis.id (WA gateway resmi Meta yang dipakai user sejak
+    2026-07-13) — kontrak payloadnya beda dari webhook generik di atas: nested
+    {"type": "incoming_chat", "data": {chat_id, message_body, name, is_from_me, ...}}
+    (contoh dari user), bukan {sender/from, message/text}. `token` dicocokkan ke
+    `webhook_config.webhook_token` (dibuat otomatis di GET /konfigurasi-webhook) supaya URL
+    ini tidak bisa dipanggil sembarang orang untuk menyuntik log palsu.
+
+    Keputusan bisnis user (2026-07-13): BalesOtomatis sudah punya AI auto-reply bawaan
+    sendiri, jadi di sini PMS HANYA mencatat pesan masuk ke `wa_conversations` (tampil di
+    Log Percakapan) — TIDAK memanggil OpenAI/mengirim balasan sendiri, supaya tidak dobel
+    balas dengan AI BalesOtomatis.
+    """
+    cfg = await db.webhook_config.find_one({}, {"_id": 0})
+    if not cfg or not cfg.get("webhook_token") or cfg["webhook_token"] != token:
+        raise HTTPException(404, "Token webhook tidak valid")
+
+    payload = await request.json()
+    if payload.get("type") != "incoming_chat":
+        return {"ok": True, "diabaikan": f"tipe event '{payload.get('type')}' tidak diproses"}
+
+    data = payload.get("data") or {}
+    if data.get("is_from_me"):
+        return {"ok": True, "diabaikan": "pesan keluar dari nomor bisnis sendiri, bukan pesan masuk tamu"}
+
+    chat_id = data.get("chat_id") or ""
+    no_hp = chat_id.split("@")[0] if "@" in chat_id else chat_id
+    nama = data.get("name") or no_hp or "Tidak diketahui"
+    if data.get("has_media"):
+        pesan_masuk = data.get("message_body") or f"[Lampiran: {data.get('media_name') or data.get('media_mime') or 'media'}]"
+    else:
+        pesan_masuk = data.get("message_body") or ""
+
+    await db.wa_conversations.insert_one({
+        "id": str(uuid.uuid4()), "nama": nama, "no_hp": no_hp,
+        "pesan_masuk": pesan_masuk, "balasan_ai": None,
+        "status_kirim": "Ditangani Provider", "error": None,
+        "response_detik": None, "waktu": now_iso(),
+        "provider_message_id": data.get("message_id"),
+    })
+    return {"ok": True}
+
+
 @api.get("/pesan-whatsapp/percakapan")
 async def list_percakapan(user: dict = Depends(get_current_user)):
     return await db.wa_conversations.find({}, {"_id": 0}).sort("waktu", -1).to_list(200)
@@ -130,11 +174,15 @@ async def whatsapp_stats(user: dict = Depends(get_current_user)):
     convs = await db.wa_conversations.find({"waktu": {"$gte": start, "$lt": end}}, {"_id": 0}).to_list(1000)
     terkirim = sum(1 for c in convs if c["status_kirim"] == "Terkirim")
     total = len(convs)
+    # "Ditangani Provider" (mis. BalesOtomatis dengan AI auto-reply sendiri) sengaja tidak
+    # dihitung PMS sebagai gagal kirim di rasio ini — bukan PMS yang mencoba (dan gagal)
+    # mengirim, jadi tidak representatif dicampur ke tingkat sukses kirim milik PMS sendiri.
+    dikirim_pms = [c for c in convs if c["status_kirim"] in ("Terkirim", "Gagal")]
     reservasi_wa = await db.bookings.count_documents({"source": "whatsapp", "created_at": {"$gte": start, "$lt": end}})
     return {
         "pesan_masuk_hari_ini": total,
         "pesan_terkirim_hari_ini": terkirim,
-        "tingkat_sukses_kirim": round(terkirim / total * 100) if total else 100,
+        "tingkat_sukses_kirim": round(terkirim / len(dikirim_pms) * 100) if dikirim_pms else 100,
         "reservasi_via_wa_hari_ini": reservasi_wa,
     }
 

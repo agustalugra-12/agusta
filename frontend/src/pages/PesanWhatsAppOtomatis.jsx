@@ -216,8 +216,14 @@ function LogPercakapan() {
               <div className="flex items-center justify-between gap-3 mb-2">
                 <div className="text-sm font-semibold">{c.nama} <span className="text-xs font-normal text-slate-400">({c.no_hp})</span></div>
                 <div className="flex items-center gap-2 shrink-0">
-                  <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-xs font-medium ${c.status_kirim === "Terkirim" ? "bg-emerald-100 text-emerald-800" : "bg-red-100 text-red-800"}`}>
-                    {c.status_kirim === "Terkirim" ? <CheckCircle2 className="w-3 h-3" /> : <XCircle className="w-3 h-3" />} {c.status_kirim}
+                  <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-xs font-medium ${
+                    c.status_kirim === "Terkirim" ? "bg-emerald-100 text-emerald-800"
+                    : c.status_kirim === "Ditangani Provider" ? "bg-slate-100 text-slate-600"
+                    : "bg-red-100 text-red-800"
+                  }`}>
+                    {c.status_kirim === "Terkirim" ? <CheckCircle2 className="w-3 h-3" />
+                      : c.status_kirim === "Ditangani Provider" ? <Bot className="w-3 h-3" />
+                      : <XCircle className="w-3 h-3" />} {c.status_kirim}
                   </span>
                   <span className="text-xs text-slate-400">{fmtDateTime(c.waktu)}</span>
                 </div>
@@ -230,6 +236,8 @@ function LogPercakapan() {
                 <span className="text-xs font-bold text-blue-600 w-16 shrink-0">Bot AI</span>
                 {c.balasan_ai ? (
                   <p className="text-sm bg-blue-50 rounded-lg px-3 py-1.5 flex-1">{c.balasan_ai}</p>
+                ) : c.status_kirim === "Ditangani Provider" ? (
+                  <p className="text-sm bg-slate-50 text-slate-500 rounded-lg px-3 py-1.5 flex-1 italic">Dibalas otomatis oleh AI bawaan provider WhatsApp (bukan PMS) — tidak tercatat di sini.</p>
                 ) : (
                   <p className="text-sm bg-red-50 text-red-700 rounded-lg px-3 py-1.5 flex-1 italic">Gagal membalas — lihat tab Pemantauan Status.</p>
                 )}

@@ -4,14 +4,17 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
-import { MessageCircle, Save, Eye, EyeOff, CheckCircle2, XCircle, Zap, Loader2, Undo2, AlertCircle } from "lucide-react";
-import api, { fmtDateTime } from "@/lib/apiClient";
+import { MessageCircle, Save, Eye, EyeOff, CheckCircle2, XCircle, Zap, Loader2, Undo2, AlertCircle, Copy, Check } from "lucide-react";
+import api, { fmtDateTime, API_BASE } from "@/lib/apiClient";
 
 // Provider webhook WhatsApp pihak ketiga yang umum dipakai bisnis di Indonesia.
-const PROVIDER_OPTIONS = ["Fonnte", "Wablas", "Qontak", "Lainnya (Custom API)"];
+// BalesOtomatis: sudah punya AI auto-reply bawaan sendiri & ARAH PANGGILANNYA TERBALIK
+// dari Fonnte/Wablas/Qontak — dia yang memanggil URL Webhook Masuk PMS (bukan PMS yang
+// memanggil dia untuk mengirim pesan), makanya field & validasinya beda, lihat di bawah.
+const PROVIDER_OPTIONS = ["BalesOtomatis", "Fonnte", "Wablas", "Qontak", "Lainnya (Custom API)"];
 
 const EMPTY_CONFIG = {
-  aktif: false, provider: "Fonnte", webhook_url: "", api_key: "", nomor_whatsapp: "", updated_at: null,
+  aktif: false, provider: "Fonnte", webhook_url: "", api_key: "", nomor_whatsapp: "", webhook_token: null, updated_at: null,
 };
 
 export default function KonfigurasiWebhook() {
@@ -21,18 +24,33 @@ export default function KonfigurasiWebhook() {
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState(null); // { ok, message, tested_at }
   const [attemptedSave, setAttemptedSave] = useState(false);
+  const [copied, setCopied] = useState(false);
 
   useEffect(() => {
     api.get("/konfigurasi-webhook").then((r) => { setSaved(r.data); setForm(r.data); }).catch(() => {});
   }, []);
 
+  const isBales = form.provider === "BalesOtomatis";
   const dirty = JSON.stringify(form) !== JSON.stringify(saved);
   const errors = {
-    webhook_url: !form.webhook_url.trim() && "Wajib diisi",
+    webhook_url: !isBales && !form.webhook_url.trim() && "Wajib diisi",
     api_key: !form.api_key.trim() && "Wajib diisi",
     nomor_whatsapp: !form.nomor_whatsapp.trim() && "Wajib diisi",
   };
   const valid = !errors.webhook_url && !errors.api_key && !errors.nomor_whatsapp;
+
+  const inboundUrl = saved.webhook_token
+    ? saved.provider === "BalesOtomatis"
+      ? `${API_BASE}/webhook/whatsapp/balesotomatis/${saved.webhook_token}`
+      : `${API_BASE}/webhook/whatsapp/incoming`
+    : null;
+
+  const salinUrl = async () => {
+    if (!inboundUrl) return;
+    await navigator.clipboard.writeText(inboundUrl);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
 
   const maskedKey = (key) => (key.length <= 8 ? "••••••••" : `${key.slice(0, 6)}${"•".repeat(Math.min(16, key.length - 10))}${key.slice(-4)}`);
 
@@ -113,6 +131,25 @@ export default function KonfigurasiWebhook() {
         </CardContent>
       </Card>
 
+      {inboundUrl && (
+        <Card className="border-blue-200 bg-blue-50/50">
+          <CardContent className="p-4 space-y-2">
+            <h3 className="text-sm font-semibold text-slate-700">URL Webhook Masuk</h3>
+            <p className="text-xs text-slate-500">
+              {saved.provider === "BalesOtomatis"
+                ? "Tempel URL ini di dashboard BalesOtomatis (Pengaturan Device → Webhook / AI Trigger) supaya pesan WhatsApp masuk tercatat di tab Log Percakapan. Balasan otomatis tetap ditangani AI bawaan BalesOtomatis sendiri."
+                : "URL generik untuk provider yang memanggil PMS saat ada pesan masuk (kontrak {sender/from, message/text, name})."}
+            </p>
+            <div className="flex items-center gap-2">
+              <Input readOnly value={inboundUrl} data-testid="webhook-inbound-url" className="font-mono text-xs bg-white" onFocus={(e) => e.target.select()} />
+              <Button type="button" variant="outline" size="sm" onClick={salinUrl} className="gap-1.5 shrink-0" data-testid="webhook-inbound-copy">
+                {copied ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />} {copied ? "Tersalin" : "Salin"}
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
       <Card className="border-slate-200">
         <CardContent className="p-4 space-y-4">
           <div className="flex items-center justify-between">
@@ -135,20 +172,27 @@ export default function KonfigurasiWebhook() {
               {PROVIDER_OPTIONS.map((p) => <option key={p} value={p}>{p}</option>)}
             </select>
           </div>
-          <div>
-            <Label htmlFor="webhook-url">Webhook / Endpoint URL</Label>
-            <Input
-              id="webhook-url"
-              data-testid="webhook-url"
-              value={form.webhook_url}
-              onChange={(e) => setForm((f) => ({ ...f, webhook_url: e.target.value }))}
-              placeholder="https://api.penyedia.com/send"
-              className={`mt-1.5 font-mono text-sm ${attemptedSave && errors.webhook_url ? "border-red-400 focus-visible:ring-red-400" : ""}`}
-            />
-            {attemptedSave && errors.webhook_url && (
-              <p className="text-xs text-red-600 mt-1 flex items-center gap-1"><AlertCircle className="w-3 h-3" /> {errors.webhook_url}</p>
-            )}
-          </div>
+          {!isBales && (
+            <div>
+              <Label htmlFor="webhook-url">Webhook / Endpoint URL</Label>
+              <Input
+                id="webhook-url"
+                data-testid="webhook-url"
+                value={form.webhook_url}
+                onChange={(e) => setForm((f) => ({ ...f, webhook_url: e.target.value }))}
+                placeholder="https://api.penyedia.com/send"
+                className={`mt-1.5 font-mono text-sm ${attemptedSave && errors.webhook_url ? "border-red-400 focus-visible:ring-red-400" : ""}`}
+              />
+              {attemptedSave && errors.webhook_url && (
+                <p className="text-xs text-red-600 mt-1 flex items-center gap-1"><AlertCircle className="w-3 h-3" /> {errors.webhook_url}</p>
+              )}
+            </div>
+          )}
+          {isBales && (
+            <p className="text-xs text-slate-500 bg-slate-50 rounded-lg px-3 py-2">
+              BalesOtomatis tidak butuh Webhook/Endpoint URL di sini — arahnya terbalik, dia yang memanggil PMS lewat "URL Webhook Masuk" di atas.
+            </p>
+          )}
           <div>
             <Label htmlFor="webhook-api-key">API Key / Token</Label>
             <div className="relative mt-1.5">
@@ -176,13 +220,13 @@ export default function KonfigurasiWebhook() {
             )}
           </div>
           <div>
-            <Label htmlFor="webhook-nomor">Nomor WhatsApp Bot</Label>
+            <Label htmlFor="webhook-nomor">{isBales ? "Nomor WhatsApp / Device ID" : "Nomor WhatsApp Bot"}</Label>
             <Input
               id="webhook-nomor"
               data-testid="webhook-nomor"
               value={form.nomor_whatsapp}
               onChange={(e) => setForm((f) => ({ ...f, nomor_whatsapp: e.target.value }))}
-              placeholder="628123456789"
+              placeholder={isBales ? "628123456789 atau Device ID dari dashboard BalesOtomatis" : "628123456789"}
               className={`mt-1.5 ${attemptedSave && errors.nomor_whatsapp ? "border-red-400 focus-visible:ring-red-400" : ""}`}
             />
             {attemptedSave && errors.nomor_whatsapp && (
