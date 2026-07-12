@@ -5,6 +5,19 @@ import httpx
 import io
 from fastapi.responses import StreamingResponse
 
+def _booking_date_range(start: datetime, end: datetime):
+    """Rentang TANGGAL [start_date, end_date_exclusive) yang benar-benar ditempati booking —
+    end_date_exclusive (hari check-out) TIDAK dihitung menempati, tamu sudah checkout sebelum
+    hari itu dianggap kosong lagi, KECUALI booking day-use yang checkin/checkout di hari yang
+    sama (tetap menempati hari itu). Sama seperti `_occupies_date` di routes/ketersediaan.py —
+    lihat bug 2026-07-12 di sana untuk detail kenapa overlap timestamp mentah salah di sini juga.
+    """
+    start_date, end_date = start.date(), end.date()
+    if start_date == end_date:
+        end_date = start_date + timedelta(days=1)
+    return start_date, end_date
+
+
 @api.get("/public/rooms-catalog")
 async def public_rooms_catalog():
     """Katalog kamar untuk halaman publik. Mengelompokkan berdasarkan tipe.
@@ -67,15 +80,24 @@ async def public_availability(tanggal: str, tipe: Optional[str] = None, checkout
     else:
         q["status"] = {"$ne": "maintenance"}
     rooms = await db.rooms.find(q, {"_id": 0}).to_list(500)
-    # Filter rooms yang punya booking overlap di tanggal tsb
+    # Filter rooms yang punya booking overlap di tanggal tsb — [d_start, d_end) di sini
+    # sudah berupa rentang TANGGAL (bukan cuma pre-filter kasar), jadi hari check-out booking
+    # lain TIDAK dihitung menempati (lihat _booking_date_range).
+    q_range_start, q_range_end = d_start.date(), d_end.date()
     out = []
     for r in rooms:
-        bk = await db.bookings.find_one({
+        kandidat = await db.bookings.find({
             "room_id": r["id"],
             "status": {"$in": ["aktif", "booking_paid", "booking_pending"]},
             "jam_mulai": {"$lt": d_end.isoformat()},
             "jam_selesai": {"$gt": d_start.isoformat()},
-        })
+        }, {"_id": 0, "jam_mulai": 1, "jam_selesai": 1}).to_list(50)
+        bk = None
+        for c in kandidat:
+            b_start, b_end = _booking_date_range(parse_iso(c["jam_mulai"], "jam_mulai"), parse_iso(c["jam_selesai"], "jam_selesai"))
+            if b_start < q_range_end and q_range_start < b_end:
+                bk = c
+                break
         if not bk:
             out.append({"id": r["id"], "nomor": r["nomor"], "tipe": r["tipe"], "tarif": r["tarif"], "tarif_menginap": r["tarif_menginap"]})
     out.sort(key=lambda r: (0 if r["tipe"] == "Standard" else 1, int(r["nomor"]) if r["nomor"].isdigit() else 9999))
