@@ -170,8 +170,8 @@ async def whatsapp_incoming_balesotomatis(token: str, request: Request):
     return {"ok": True, "reply": balasan_ai, "message": balasan_ai, "balasan": balasan_ai, "text": balasan_ai}
 
 
-@api.get("/webhook/whatsapp/balesotomatis/{token}/pengetahuan")
-async def balesotomatis_pengetahuan(token: str):
+@api.api_route("/webhook/whatsapp/balesotomatis/{token}/pengetahuan", methods=["GET", "POST"])
+async def balesotomatis_pengetahuan(token: str, request: Request):
     """Teks polos ketersediaan & harga kamar TERKINI, dipakai untuk mengisi Knowledge
     Base/FAQ AI bawaan BalesOtomatis (kalau dashboard mereka mendukung ambil info dari
     URL) atau disalin manual staf ke sana secara berkala. Ini jalan keluar dari
@@ -180,11 +180,20 @@ async def balesotomatis_pengetahuan(token: str):
     balasan langsung. Token sama dengan URL Webhook Masuk supaya tidak perlu kredensial
     baru, dan publik (tanpa header Authorization) karena kolom URL sumber pengetahuan di
     dashboard provider pihak ketiga biasanya tidak bisa diisi header custom.
+
+    Terima GET maupun POST: log nginx (2026-07-13) menunjukkan URL ini juga dipanggil
+    lewat POST oleh sebuah AI Trigger di dashboard BalesOtomatis (bukan cuma fetch
+    Knowledge-Base-dari-URL yang aslinya GET) — semula 405 di method POST, diduga jadi
+    penyebab AI berhenti total tanpa balas ke tamu. GET tetap balas plain text (kontrak
+    Knowledge Base), POST dibalas JSON multi-field sama seperti `cek_ketersediaan` di
+    bawah karena skema respons AI Trigger belum terkonfirmasi.
     """
     cfg = await db.webhook_config.find_one({}, {"_id": 0})
     if not cfg or not cfg.get("webhook_token") or cfg["webhook_token"] != token:
         raise HTTPException(404, "Token webhook tidak valid")
     teks = await _ringkasan_ketersediaan_untuk_ai()
+    if request.method == "POST":
+        return {"ok": True, "reply": teks, "message": teks, "balasan": teks, "text": teks, "response": teks, "output": teks}
     return PlainTextResponse(teks)
 
 
