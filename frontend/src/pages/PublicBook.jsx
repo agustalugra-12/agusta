@@ -8,7 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
-import { bookingConfirmationWaLink } from "@/lib/apiClient";
+import { bookingConfirmationWaLink, waLink } from "@/lib/apiClient";
 import { ExtraBedSelector } from "@/pages/PermintaanKhususExtraBed";
 import {
   BedDouble, Wifi, Snowflake, Tv, Droplets, Bath, Trees, CheckCircle2, XCircle,
@@ -18,10 +18,17 @@ import {
 // API client tanpa auth (untuk endpoint /api/public/*)
 const PUBLIC_API = axios.create({ baseURL: `${process.env.REACT_APP_BACKEND_URL}/api` });
 const fmtRp = (n) => "Rp " + Number(n || 0).toLocaleString("id-ID");
-// Sama dengan EXTRA_BED_PRICE/EXTRA_BED_MAX di backend/core.py — flat, tidak per malam
-// (day use publik saat ini selalu satu sesi, bukan bermalam).
+// Sama dengan EXTRA_BED_PRICE/EXTRA_BED_MAX di backend/core.py.
+// Day Use: flat sekali bayar. Menginap: dikali jumlah malam (lihat summary di bawah).
 const EXTRA_BED_PRICE = 50000;
 const EXTRA_BED_MAX = 2;
+const CS_WHATSAPP = "0895356644644";
+const ALAMAT_HOMESTAY = "Jl. Kebun Raya Bedugul, Desa Candikuning, Kec. Baturiti, Tabanan - Bali";
+const addDays = (dateStr, n) => {
+  const d = new Date(`${dateStr}T00:00:00`);
+  d.setDate(d.getDate() + n);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+};
 const todayStr = () => {
   const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 };
@@ -53,7 +60,9 @@ export default function PublicBook({ successView = false }) {
 function BookingForm() {
   const [catalog, setCatalog] = useState([]);
   const [tanggal, setTanggal] = useState(todayStr());
-  const [tipe, setTipe] = useState("");           // filter tipe (kosong = semua)
+  const [tipe, setTipe] = useState("");           // filter tipe kamar (kosong = semua)
+  const [bookingTipe, setBookingTipe] = useState("day_use"); // "day_use" | "menginap"
+  const [checkoutDate, setCheckoutDate] = useState(addDays(todayStr(), 1));
   const [availability, setAvailability] = useState({ rooms: [] });
   const [step, setStep] = useState(1);            // 1 = pilih kamar, 2 = form
   const [selectedRoom, setSelectedRoom] = useState(null); // {id, nomor, tipe, tarif}
@@ -70,21 +79,39 @@ function BookingForm() {
     PUBLIC_API.get("/public/rooms-catalog").then(r => setCatalog(r.data)).catch(() => {});
   }, []);
 
+  // Kalau tanggal check-in digeser melewati check-out yang sudah dipilih, geser check-out juga
+  useEffect(() => {
+    if (bookingTipe === "menginap" && checkoutDate <= tanggal) {
+      setCheckoutDate(addDays(tanggal, 1));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tanggal, bookingTipe]);
+
   useEffect(() => {
     if (!tanggal) return;
-    PUBLIC_API.get("/public/availability", { params: { tanggal, tipe: tipe || undefined } })
+    const params = { tanggal, tipe: tipe || undefined };
+    if (bookingTipe === "menginap") params.checkout = checkoutDate;
+    PUBLIC_API.get("/public/availability", { params })
       .then(r => setAvailability(r.data))
       .catch(() => setAvailability({ rooms: [] }));
-  }, [tanggal, tipe]);
+  }, [tanggal, tipe, bookingTipe, checkoutDate]);
+
+  const nights = useMemo(() => {
+    if (bookingTipe !== "menginap") return 1;
+    const a = new Date(`${tanggal}T00:00:00`), b = new Date(`${checkoutDate}T00:00:00`);
+    return Math.max(1, Math.round((b - a) / 86400000));
+  }, [bookingTipe, tanggal, checkoutDate]);
 
   const summary = useMemo(() => {
     if (!selectedRoom) return null;
-    const extraBedTotal = extraBedQty * EXTRA_BED_PRICE;
-    const subtotal = selectedRoom.tarif + extraBedTotal;
+    const isMenginap = bookingTipe === "menginap";
+    const extraBedTotal = extraBedQty * EXTRA_BED_PRICE * (isMenginap ? nights : 1);
+    const tarifKamar = selectedRoom.tarif * (isMenginap ? nights : 1);
+    const subtotal = tarifKamar + extraBedTotal;
     const svc = Math.round(subtotal * 0.03);
     const total = subtotal + svc;
-    return { tarifKamar: selectedRoom.tarif, extraBedTotal, subtotal, service_fee: svc, total, dp_min: Math.round(total * 0.5) };
-  }, [selectedRoom, extraBedQty]);
+    return { tarifKamar, extraBedTotal, subtotal, service_fee: svc, total, dp_min: Math.round(total * 0.5), nights };
+  }, [selectedRoom, extraBedQty, bookingTipe, nights]);
 
   const onSelectRoom = (room) => {
     setSelectedRoom(room);
@@ -119,6 +146,8 @@ function BookingForm() {
         tanggal, jam_checkin: form.jam_checkin,
         catatan: form.catatan.trim(),
         extra_bed_qty: extraBedQty,
+        tipe: bookingTipe,
+        ...(bookingTipe === "menginap" ? { tanggal_checkout: checkoutDate } : {}),
       });
       // 2. Buat Snap token
       const { data: tx } = await PUBLIC_API.post("/payments/midtrans/create-snap-token", {
@@ -161,10 +190,11 @@ function BookingForm() {
         <section className="text-center space-y-3">
           <p className="text-xs uppercase tracking-[0.3em] text-amber-700">Reservasi Online</p>
           <h1 className="text-3xl sm:text-5xl font-extrabold tracking-tight text-slate-900">
-            Booking Day Use dalam<br className="hidden sm:block" /> hitungan menit
+            Istirahat Sejenak di<br className="hidden sm:block" /> Sejuknya Bedugul
           </h1>
           <p className="text-slate-600 max-w-xl mx-auto">
-            Kamar nyaman, harga jujur, konfirmasi instan. Pilih tanggal, pilih kamar, selesai.
+            Day use untuk singgah sejenak, atau menginap menikmati udara pegunungan lebih lama —
+            harga jujur, konfirmasi instan. Pilih tanggal, pilih kamar, selesai.
           </p>
         </section>
 
@@ -179,16 +209,34 @@ function BookingForm() {
           <>
             {/* Date picker */}
             <Card className="border-slate-200 shadow-sm">
-              <CardContent className="p-4 sm:p-5 grid sm:grid-cols-[1fr_auto] gap-3 items-end">
+              <CardContent className="p-4 sm:p-5 space-y-4">
                 <div>
-                  <Label className="text-xs font-semibold uppercase tracking-wider text-slate-500">Tanggal Kunjungan</Label>
-                  <Input data-testid="pb-tanggal" type="date" value={tanggal} min={todayStr()} onChange={(e) => setTanggal(e.target.value)} className="h-12 mt-1.5 text-base" />
+                  <Label className="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-1.5 block">Jenis Kunjungan</Label>
+                  <div className="flex gap-2">
+                    <Button data-testid="pb-booking-tipe-dayuse" type="button" variant={bookingTipe === "day_use" ? "default" : "outline"} className={bookingTipe === "day_use" ? "h-12 flex-1 bg-blue-700" : "h-12 flex-1"} onClick={() => setBookingTipe("day_use")}>Day Use</Button>
+                    <Button data-testid="pb-booking-tipe-menginap" type="button" variant={bookingTipe === "menginap" ? "default" : "outline"} className={bookingTipe === "menginap" ? "h-12 flex-1 bg-blue-700" : "h-12 flex-1"} onClick={() => setBookingTipe("menginap")}>Menginap</Button>
+                  </div>
                 </div>
-                <div className="flex gap-2">
-                  <Button data-testid="pb-tipe-all" type="button" variant={tipe === "" ? "default" : "outline"} className={tipe === "" ? "h-12 bg-blue-700" : "h-12"} onClick={() => setTipe("")}>Semua</Button>
-                  <Button data-testid="pb-tipe-std" type="button" variant={tipe === "Standard" ? "default" : "outline"} className={tipe === "Standard" ? "h-12 bg-blue-700" : "h-12"} onClick={() => setTipe("Standard")}>Standard</Button>
-                  <Button data-testid="pb-tipe-cot" type="button" variant={tipe === "Cottage" ? "default" : "outline"} className={tipe === "Cottage" ? "h-12 bg-amber-600" : "h-12"} onClick={() => setTipe("Cottage")}>Cottage</Button>
+                <div className="grid sm:grid-cols-[1fr_1fr_auto] gap-3 items-end">
+                  <div>
+                    <Label className="text-xs font-semibold uppercase tracking-wider text-slate-500">{bookingTipe === "menginap" ? "Tanggal Check-In" : "Tanggal Kunjungan"}</Label>
+                    <Input data-testid="pb-tanggal" type="date" value={tanggal} min={todayStr()} onChange={(e) => setTanggal(e.target.value)} className="h-12 mt-1.5 text-base" />
+                  </div>
+                  {bookingTipe === "menginap" && (
+                    <div>
+                      <Label className="text-xs font-semibold uppercase tracking-wider text-slate-500">Tanggal Check-Out</Label>
+                      <Input data-testid="pb-tanggal-checkout" type="date" value={checkoutDate} min={addDays(tanggal, 1)} onChange={(e) => setCheckoutDate(e.target.value)} className="h-12 mt-1.5 text-base" />
+                    </div>
+                  )}
+                  <div className="flex gap-2">
+                    <Button data-testid="pb-tipe-all" type="button" variant={tipe === "" ? "default" : "outline"} className={tipe === "" ? "h-12 bg-blue-700" : "h-12"} onClick={() => setTipe("")}>Semua</Button>
+                    <Button data-testid="pb-tipe-std" type="button" variant={tipe === "Standard" ? "default" : "outline"} className={tipe === "Standard" ? "h-12 bg-blue-700" : "h-12"} onClick={() => setTipe("Standard")}>Standard</Button>
+                    <Button data-testid="pb-tipe-cot" type="button" variant={tipe === "Cottage" ? "default" : "outline"} className={tipe === "Cottage" ? "h-12 bg-amber-600" : "h-12"} onClick={() => setTipe("Cottage")}>Cottage</Button>
+                  </div>
                 </div>
+                {bookingTipe === "menginap" && (
+                  <p className="text-xs text-slate-500">{nights} malam &middot; Check-out jam 12:00 siang</p>
+                )}
               </CardContent>
             </Card>
 
@@ -206,7 +254,7 @@ function BookingForm() {
                         </div>
                         <div className="text-right">
                           <div className="text-2xl font-extrabold text-blue-700">{fmtRp(c.tarif)}</div>
-                          <div className="text-[10px] uppercase tracking-wider text-slate-500">/ 6 jam</div>
+                          <div className="text-[10px] uppercase tracking-wider text-slate-500">{bookingTipe === "menginap" ? "/ malam" : "/ 6 jam"}</div>
                         </div>
                       </div>
                       <div className="flex flex-wrap gap-2">
@@ -304,12 +352,19 @@ function BookingForm() {
                   <div className="font-extrabold text-lg">{selectedRoom.tipe} • Kamar {selectedRoom.nomor}</div>
                 </div>
                 <div className="space-y-2 text-sm border-t border-slate-100 pt-3">
-                  <Row icon={Calendar} label="Tanggal" value={new Date(`${tanggal}T00:00:00`).toLocaleDateString("id-ID", { weekday: "short", day: "2-digit", month: "long", year: "numeric" })} />
-                  <Row icon={Clock} label="Check-In" value={`${form.jam_checkin} (6 jam)`} />
+                  <Row icon={Calendar} label="Check-In" value={new Date(`${tanggal}T00:00:00`).toLocaleDateString("id-ID", { weekday: "short", day: "2-digit", month: "long", year: "numeric" })} />
+                  {bookingTipe === "menginap" ? (
+                    <>
+                      <Row icon={Calendar} label="Check-Out" value={new Date(`${checkoutDate}T00:00:00`).toLocaleDateString("id-ID", { weekday: "short", day: "2-digit", month: "long", year: "numeric" })} />
+                      <Row icon={Clock} label="Lama Menginap" value={`${summary.nights} malam`} />
+                    </>
+                  ) : (
+                    <Row icon={Clock} label="Jam Check-In" value={`${form.jam_checkin} (6 jam)`} />
+                  )}
                   <Row icon={Building2} label="Tipe" value={selectedRoom.tipe} />
                 </div>
                 <div className="space-y-1.5 border-t border-slate-100 pt-3 text-sm">
-                  <div className="flex justify-between"><span className="text-slate-600">Tarif Kamar</span><b>{fmtRp(summary.tarifKamar)}</b></div>
+                  <div className="flex justify-between"><span className="text-slate-600">Tarif Kamar{bookingTipe === "menginap" ? ` × ${summary.nights} malam` : ""}</span><b>{fmtRp(summary.tarifKamar)}</b></div>
                   {extraBedQty > 0 && (
                     <div className="flex justify-between" data-testid="pb-extra-bed-fee"><span className="text-slate-600">Extra Bed &times;{extraBedQty}</span><b>{fmtRp(summary.extraBedTotal)}</b></div>
                   )}
@@ -336,7 +391,7 @@ function BookingForm() {
                 </Button>
                 <p className="text-[10px] text-center text-slate-500">
                   Dengan menekan tombol, Anda menyetujui kebijakan reservasi.
-                  Refund/cancel dapat dilakukan H-1 dengan biaya 10% dari total pembayaran.
+                  Pembatalan gratis sampai {bookingTipe === "menginap" ? "H-3" : "H-1"} sebelum check-in, setelah itu dikenakan biaya 10% dari total pembayaran.
                 </p>
               </CardContent>
             </Card>
@@ -344,9 +399,16 @@ function BookingForm() {
         )}
 
         {/* Footer info */}
-        <footer className="text-center text-xs text-slate-500 pt-8 border-t border-slate-200">
-          <p>Pelangi Homestay &middot; Operasional Day Use & Menginap</p>
-          <p className="mt-1">Butuh bantuan? Hubungi resepsionis kami.</p>
+        <footer className="text-center text-xs text-slate-500 pt-8 border-t border-slate-200 space-y-2">
+          <p>Pelangi Homestay &middot; Bersantai di kaki Bedugul, Bali</p>
+          <p className="max-w-md mx-auto">{ALAMAT_HOMESTAY}</p>
+          <a
+            href={waLink(CS_WHATSAPP, "Halo, saya ingin bertanya tentang booking di Pelangi Homestay.")}
+            target="_blank" rel="noreferrer"
+            className="inline-flex items-center gap-1.5 text-emerald-700 hover:text-emerald-800 font-semibold"
+          >
+            <Phone className="w-3.5 h-3.5" /> Chat Admin/CS: {CS_WHATSAPP}
+          </a>
         </footer>
       </main>
     </div>

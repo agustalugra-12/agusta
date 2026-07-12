@@ -96,6 +96,9 @@ export function buildBookingConfirmationMessage(b) {
   const jam = dt
     ? dt.toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit" }) + " WIB"
     : "-";
+  const dtOut = b.jam_selesai ? new Date(b.jam_selesai) : null;
+  const isMenginap = b.tipe === "menginap";
+  const nights = isMenginap && dt && dtOut ? Math.max(1, Math.round((dtOut - dt) / 86400000)) : null;
   const total = Number(b.total || 0);
   const dpMin = Number(b.dp_min || 0);
   const sisa = Math.max(0, total - dpMin);
@@ -116,6 +119,10 @@ export function buildBookingConfirmationMessage(b) {
     `\u2022 Nomor Kamar: *${nomor}*`,
     `\u2022 Tanggal Check-in: *${tanggal}*`,
     `\u2022 Jam Check-in: *${jam}*`,
+    ...(isMenginap && dtOut ? [
+      `\u2022 Tanggal Check-out: *${dtOut.toLocaleDateString("id-ID", { weekday: "long", day: "numeric", month: "long", year: "numeric" })}*`,
+      `\u2022 Lama Menginap: *${nights} malam*`,
+    ] : []),
     `\u2022 Jumlah Tamu: *${jumlah}*`,
     "",
   ];

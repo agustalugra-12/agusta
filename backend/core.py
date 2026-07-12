@@ -358,6 +358,8 @@ class PublicBookingCreate(BaseModel):
     jam_checkin: str  # HH:mm (24h)
     catatan: str = ""
     extra_bed_qty: int = 0  # maks divalidasi di public_create_booking (EXTRA_BED_MAX)
+    tipe: str = "day_use"  # "day_use" | "menginap"
+    tanggal_checkout: Optional[str] = None  # YYYY-MM-DD, wajib jika tipe == "menginap"
 
 class CreateSnapTokenBody(BaseModel):
     booking_id: str

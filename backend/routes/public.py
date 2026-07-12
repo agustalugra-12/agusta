@@ -29,18 +29,31 @@ async def public_rooms_catalog():
     return list(grouped.values())
 
 @api.get("/public/availability")
-async def public_availability(tanggal: str, tipe: Optional[str] = None):
+async def public_availability(tanggal: str, tipe: Optional[str] = None, checkout: Optional[str] = None):
     """List kamar tersedia pada tanggal tertentu (halaman publik).
     Untuk tanggal MASA DEPAN, status realtime kamar (day_use/menginap/perlu_dibersihkan) TIDAK relevan
     karena akan kembali kosong sebelum tanggal tersebut. Hanya `maintenance` (long-term) yang di-exclude.
     Filter utama: tidak ada booking_pending/booking_paid/aktif yang overlap dengan tanggal target.
+
+    `checkout` (opsional, YYYY-MM-DD) dipakai untuk booking menginap: kalau diisi,
+    window overlap yang dicek adalah seluruh rentang [tanggal, checkout), bukan cuma
+    1 hari — supaya kamar yang sudah dibooking di salah satu malam dalam rentang itu
+    tidak muncul sebagai tersedia.
     """
     try:
         d = datetime.fromisoformat(tanggal)
     except Exception:
         raise HTTPException(400, "Format tanggal harus YYYY-MM-DD")
     d_start = d.replace(hour=0, minute=0, second=0, microsecond=0)
-    d_end = d_start + timedelta(days=1)
+    if checkout:
+        try:
+            d_end = datetime.fromisoformat(checkout).replace(hour=0, minute=0, second=0, microsecond=0)
+        except Exception:
+            raise HTTPException(400, "Format tanggal checkout harus YYYY-MM-DD")
+        if d_end <= d_start:
+            raise HTTPException(400, "Tanggal checkout harus setelah tanggal check-in")
+    else:
+        d_end = d_start + timedelta(days=1)
     # Untuk hari INI, kamar yang sedang dipakai (day_use/menginap/perlu_dibersihkan) tidak tersedia.
     # Untuk hari LAIN (masa depan), hanya 'maintenance' yang dikecualikan.
     today_local = datetime.now().strftime("%Y-%m-%d")
@@ -70,9 +83,12 @@ async def public_availability(tanggal: str, tipe: Optional[str] = None):
 @api.post("/public/bookings")
 async def public_create_booking(body: PublicBookingCreate):
     """Booking publik (tanpa login). Membuat booking dengan status 'booking_pending'.
-    Tarif = tarif kamar + 3% service fee. Wajib bayar (DP 50% min) via Xendit (Fase C).
-    Sementara Xendit belum ada, booking tetap berstatus pending sampai resepsionis approve.
+    Tarif = tarif kamar (x malam untuk menginap) + 3% service fee. Wajib bayar (DP 50%
+    min) via Midtrans Snap. Day use: 6 jam dari jam check-in (default lama, tidak berubah).
+    Menginap: check-out fixed jam 12:00 WIB, harga dihitung per malam (termasuk extra bed).
     """
+    if body.tipe not in ("day_use", "menginap"):
+        raise HTTPException(400, "Tipe booking tidak valid")
     # Validasi email wajib (untuk kirim bukti pembayaran)
     email = (body.email or "").strip().lower()
     if not email or "@" not in email or "." not in email.split("@")[-1]:
@@ -83,7 +99,30 @@ async def public_create_booking(body: PublicBookingCreate):
     except Exception:
         raise HTTPException(400, "Format tanggal/jam tidak valid")
     start = local_in.astimezone(timezone.utc)
-    end = start + timedelta(hours=6)  # day use 6 jam default
+
+    harga_override = None
+    if body.tipe == "menginap":
+        if not body.tanggal_checkout:
+            raise HTTPException(400, "Booking menginap wajib mengisi tanggal check-out")
+        try:
+            local_out = datetime.fromisoformat(f"{body.tanggal_checkout}T12:00:00+07:00")
+        except Exception:
+            raise HTTPException(400, "Format tanggal check-out tidak valid")
+        end = local_out.astimezone(timezone.utc)
+        if end <= start:
+            raise HTTPException(400, "Tanggal check-out harus setelah tanggal check-in")
+        nights = max(1, (local_out.date() - local_in.date()).days)
+        r = await db.rooms.find_one({"id": body.room_id})
+        if not r:
+            raise HTTPException(404, "Kamar tidak ditemukan")
+        extra_bed_qty = max(0, min(EXTRA_BED_MAX, int(body.extra_bed_qty or 0)))
+        subtotal = r["tarif"] * nights + extra_bed_qty * EXTRA_BED_PRICE * nights
+        service_fee = round(subtotal * SERVICE_FEE_PCT)
+        total = subtotal + service_fee
+        harga_override = {"subtotal": subtotal, "service_fee": service_fee, "total": total, "dp_min": round(total * 0.5)}
+    else:
+        end = start + timedelta(hours=6)  # day use 6 jam default
+
     data = {
         "room_id": body.room_id,
         "nama_tamu": body.nama_tamu, "no_hp": body.no_hp,
@@ -93,8 +132,9 @@ async def public_create_booking(body: PublicBookingCreate):
         "jam_mulai": start, "jam_selesai": end,
         "catatan": body.catatan,
         "created_by": body.nama_tamu,
+        "tipe": body.tipe,
     }
-    return await create_reservation(data, source="online")
+    return await create_reservation(data, source="online", harga_override=harga_override)
 
 def _batas_jam_bebas_biaya(tipe: str) -> int:
     return 72 if tipe == "menginap" else 24  # H-3 menginap, H-1 day use
