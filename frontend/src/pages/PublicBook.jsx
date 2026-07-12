@@ -121,7 +121,8 @@ function BookingForm() {
   const onSelectRoom = (room) => {
     setSelectedRoom(room);
     setExtraBedQty(0);
-    setDenganSarapan(false);
+    // denganSarapan TIDAK direset di sini — tamu sudah memilihnya di katalog (step 1)
+    // lewat tombol harga Tanpa/Dengan Sarapan, harus terbawa ke ringkasan step 2.
     setStep(2);
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
@@ -258,11 +259,37 @@ function BookingForm() {
                           <div className="text-xs uppercase tracking-wider text-slate-500">Kamar</div>
                           <h3 className="text-xl font-extrabold">{c.tipe}</h3>
                         </div>
-                        <div className="text-right">
-                          <div className="text-2xl font-extrabold text-blue-700">{fmtRp(bookingTipe === "menginap" ? c.tarif_menginap : c.tarif)}</div>
-                          <div className="text-[10px] uppercase tracking-wider text-slate-500">{bookingTipe === "menginap" ? "/ malam" : "/ 6 jam"}</div>
-                        </div>
+                        {bookingTipe !== "menginap" && (
+                          <div className="text-right">
+                            <div className="text-2xl font-extrabold text-blue-700">{fmtRp(c.tarif)}</div>
+                            <div className="text-[10px] uppercase tracking-wider text-slate-500">/ 6 jam</div>
+                          </div>
+                        )}
                       </div>
+                      {bookingTipe === "menginap" && (
+                        <div className="grid grid-cols-2 gap-2" data-testid={`pb-sarapan-pilihan-${c.tipe}`}>
+                          <button
+                            type="button"
+                            data-testid={`pb-harga-tanpa-sarapan-${c.tipe}`}
+                            onClick={() => setDenganSarapan(false)}
+                            className={`p-2.5 rounded-lg border-2 text-left transition-colors ${!denganSarapan ? "border-blue-600 bg-blue-50" : "border-slate-200 hover:border-slate-300"}`}
+                          >
+                            <div className="text-[9px] uppercase tracking-wider text-slate-500 font-semibold">Tanpa Sarapan</div>
+                            <div className="font-extrabold text-blue-700">{fmtRp(c.tarif_menginap)}</div>
+                            <div className="text-[9px] text-slate-400">/ malam</div>
+                          </button>
+                          <button
+                            type="button"
+                            data-testid={`pb-harga-dengan-sarapan-${c.tipe}`}
+                            onClick={() => setDenganSarapan(true)}
+                            className={`p-2.5 rounded-lg border-2 text-left transition-colors ${denganSarapan ? "border-blue-600 bg-blue-50" : "border-slate-200 hover:border-slate-300"}`}
+                          >
+                            <div className="text-[9px] uppercase tracking-wider text-slate-500 font-semibold">Dengan Sarapan</div>
+                            <div className="font-extrabold text-blue-700">{fmtRp(c.tarif_menginap + BREAKFAST_PRICE)}</div>
+                            <div className="text-[9px] text-slate-400">/ malam</div>
+                          </button>
+                        </div>
+                      )}
                       <div className="flex flex-wrap gap-2">
                         {c.fasilitas.map((f) => {
                           const Ico = FACILITY_ICONS[f] || CheckCircle2;
