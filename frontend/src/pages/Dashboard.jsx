@@ -125,14 +125,20 @@ export default function Dashboard() {
   const nearDue = active.filter(c => (Date.now() - new Date(c.jam_checkin).getTime()) / 3600000 >= 5);
   const overtime = active.filter(c => (Date.now() - new Date(c.jam_checkin).getTime()) / 3600000 >= 6);
 
-  // Filter bookings: ribbon hanya muncul jika filterDate berada dalam rentang [jam_mulai..jam_selesai] (zona lokal)
+  // Filter bookings: ribbon hanya muncul jika filterDate ada di rentang [checkin_date, checkout_date)
+  // — hari CHECK-OUT TIDAK dihitung menempati (tamu sudah checkout), KECUALI day-use yang
+  // checkin/checkout di hari yang sama (tetap occupy hari itu). Bug ditemukan 2026-07-12: versi
+  // lama pakai overlap TIMESTAMP mentah (start <= dayEnd && end >= dayStart), yang membuat hari
+  // check-out booking menginap selalu ikut tampil sebagai "booked" di grid kamar — sama seperti
+  // bug yang sudah diperbaiki di backend (_occupies_date di routes/ketersediaan.py).
   const bookingsOnDate = useMemo(() => {
-    const dayStart = new Date(`${filterDate}T00:00:00`);
-    const dayEnd = new Date(`${filterDate}T23:59:59.999`);
+    const toDateOnly = (d) => new Date(d.getFullYear(), d.getMonth(), d.getDate());
+    const filterDateOnly = toDateOnly(new Date(`${filterDate}T00:00:00`));
     return bookings.filter(b => {
-      const start = new Date(b.jam_mulai);
-      const end = new Date(b.jam_selesai);
-      return start <= dayEnd && end >= dayStart;
+      const start = toDateOnly(new Date(b.jam_mulai));
+      let end = toDateOnly(new Date(b.jam_selesai));
+      if (end.getTime() === start.getTime()) end = new Date(start.getTime() + 24 * 3600 * 1000);
+      return start <= filterDateOnly && filterDateOnly < end;
     });
   }, [bookings, filterDate]);
 
