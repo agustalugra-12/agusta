@@ -284,7 +284,7 @@ async def buat_reservasi_otomatis(log_id: str, data: dict, sumber: str, subjek: 
         }})
         return
 
-    total = int(data.get("harga") or 0) or room["tarif"]
+    total = int(data.get("harga") or 0) or room["tarif_menginap"]  # OTA selalu tipe menginap
     booking = await create_reservation(
         {
             "room_id": room["id"],

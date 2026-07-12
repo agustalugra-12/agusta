@@ -110,7 +110,8 @@ function BookingForm() {
     const isMenginap = bookingTipe === "menginap";
     const breakfastTotal = isMenginap && denganSarapan ? BREAKFAST_PRICE * nights : 0;
     const extraBedTotal = extraBedQty * EXTRA_BED_PRICE * (isMenginap ? nights : 1);
-    const tarifKamar = selectedRoom.tarif * (isMenginap ? nights : 1);
+    const tarifDasar = isMenginap ? selectedRoom.tarif_menginap : selectedRoom.tarif;
+    const tarifKamar = tarifDasar * (isMenginap ? nights : 1);
     const subtotal = tarifKamar + breakfastTotal + extraBedTotal;
     const svc = Math.round(subtotal * 0.03);
     const total = subtotal + svc;
@@ -258,7 +259,7 @@ function BookingForm() {
                           <h3 className="text-xl font-extrabold">{c.tipe}</h3>
                         </div>
                         <div className="text-right">
-                          <div className="text-2xl font-extrabold text-blue-700">{fmtRp(c.tarif)}</div>
+                          <div className="text-2xl font-extrabold text-blue-700">{fmtRp(bookingTipe === "menginap" ? c.tarif_menginap : c.tarif)}</div>
                           <div className="text-[10px] uppercase tracking-wider text-slate-500">{bookingTipe === "menginap" ? "/ malam" : "/ 6 jam"}</div>
                         </div>
                       </div>

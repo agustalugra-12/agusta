@@ -17,6 +17,7 @@ async def create_room(body: RoomCreate, user: dict = Depends(require_owner)):
         "nomor": body.nomor,
         "tipe": body.tipe,
         "tarif": body.tarif,
+        "tarif_menginap": body.tarif_menginap,
         "status": "kosong",
         "info": {},  # menginap info: nama_tamu, checkin_date, checkout_date, catatan
         "created_at": now_iso(),

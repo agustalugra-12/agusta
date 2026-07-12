@@ -64,7 +64,11 @@ BREVO_FROM_NAME = os.environ.get("BREVO_FROM_NAME", "Pelangi Homestay")
 SERVICE_FEE_PCT = 0.03  # 3% service fee diaplikasikan ke checkin & booking
 EXTRA_BED_PRICE = 50000  # per extra bed, flat (PRD: "Extra Bed Rp 50.000 berlaku untuk kedua jenis layanan")
 EXTRA_BED_MAX = 2  # maksimal per kamar (sama seperti ExtraBedSelector di frontend)
-BREAKFAST_PRICE = 25000  # per malam, opsional, hanya berlaku untuk tipe menginap (2026-07-12: Standard 150rb/175rb, Cottage 200rb/225rb — selisihnya konsisten 25rb)
+BREAKFAST_PRICE = 25000  # per malam, opsional, hanya berlaku untuk tipe menginap
+# `rooms.tarif` = harga Day Use (flat per sesi 6 jam) — Standard 120rb/Cottage 140rb.
+# `rooms.tarif_menginap` = harga Menginap per malam TANPA sarapan — Standard 150rb/Cottage 200rb,
+# +BREAKFAST_PRICE kalau dengan_sarapan (jadi 175rb/225rb). Dua tarif dasar terpisah sejak 2026-07-12
+# (sebelumnya sempat memakai satu field `tarif` untuk keduanya — salah, dikoreksi atas instruksi user).
 
 # ---- Utilities ----
 def now_iso() -> str:
@@ -236,12 +240,14 @@ class MeUpdate(BaseModel):
 class RoomCreate(BaseModel):
     nomor: str
     tipe: str  # Standard | Cottage
-    tarif: int
+    tarif: int  # harga Day Use (flat per sesi 6 jam)
+    tarif_menginap: int  # harga Menginap per malam, TANPA sarapan (beda dari `tarif` Day Use — dua jenis layanan, dua tarif dasar)
 
 class RoomUpdate(BaseModel):
     nomor: Optional[str] = None
     tipe: Optional[str] = None
     tarif: Optional[int] = None
+    tarif_menginap: Optional[int] = None
 
 class RoomStatusUpdate(BaseModel):
     status: str  # kosong, day_use, menginap, perlu_dibersihkan, maintenance

@@ -18,7 +18,8 @@ async def public_rooms_catalog():
         if t not in grouped:
             grouped[t] = {
                 "tipe": t,
-                "tarif": r["tarif"],
+                "tarif": r["tarif"],  # harga Day Use (flat per 6 jam)
+                "tarif_menginap": r["tarif_menginap"],  # harga Menginap per malam, tanpa sarapan
                 "fasilitas": [
                     "AC", "Wi-Fi gratis", "TV LED", "Kamar mandi dalam",
                     "Air panas", "Handuk & toiletries",
@@ -76,7 +77,7 @@ async def public_availability(tanggal: str, tipe: Optional[str] = None, checkout
             "jam_selesai": {"$gt": d_start.isoformat()},
         })
         if not bk:
-            out.append({"id": r["id"], "nomor": r["nomor"], "tipe": r["tipe"], "tarif": r["tarif"]})
+            out.append({"id": r["id"], "nomor": r["nomor"], "tipe": r["tipe"], "tarif": r["tarif"], "tarif_menginap": r["tarif_menginap"]})
     out.sort(key=lambda r: (0 if r["tipe"] == "Standard" else 1, int(r["nomor"]) if r["nomor"].isdigit() else 9999))
     return {"tanggal": tanggal, "tipe": tipe, "rooms": out}
 
@@ -116,7 +117,7 @@ async def public_create_booking(body: PublicBookingCreate):
         if not r:
             raise HTTPException(404, "Kamar tidak ditemukan")
         extra_bed_qty = max(0, min(EXTRA_BED_MAX, int(body.extra_bed_qty or 0)))
-        tarif_per_malam = r["tarif"] + (BREAKFAST_PRICE if body.dengan_sarapan else 0)
+        tarif_per_malam = r["tarif_menginap"] + (BREAKFAST_PRICE if body.dengan_sarapan else 0)
         subtotal = tarif_per_malam * nights + extra_bed_qty * EXTRA_BED_PRICE * nights
         service_fee = round(subtotal * SERVICE_FEE_PCT)
         total = subtotal + service_fee

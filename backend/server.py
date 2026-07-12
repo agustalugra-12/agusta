@@ -84,13 +84,13 @@ async def startup():
         for i in range(1, 13):
             rooms.append({
                 "id": str(uuid.uuid4()),
-                "nomor": str(i), "tipe": "Standard", "tarif": 150000,
+                "nomor": str(i), "tipe": "Standard", "tarif": 120000, "tarif_menginap": 150000,
                 "status": "kosong", "info": {}, "created_at": now_iso(),
             })
         for i in range(13, 19):
             rooms.append({
                 "id": str(uuid.uuid4()),
-                "nomor": str(i), "tipe": "Cottage", "tarif": 200000,
+                "nomor": str(i), "tipe": "Cottage", "tarif": 140000, "tarif_menginap": 200000,
                 "status": "kosong", "info": {}, "created_at": now_iso(),
             })
         await db.rooms.insert_many(rooms)

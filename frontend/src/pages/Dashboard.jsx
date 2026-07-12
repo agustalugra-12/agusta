@@ -501,8 +501,8 @@ export default function Dashboard() {
             <div className="col-span-2">
               <Label>Tipe</Label>
               <div className="grid grid-cols-2 gap-2 mt-1.5">
-                <Button type="button" variant={quickForm.tipe === "day_use" ? "default" : "outline"} className={quickForm.tipe === "day_use" ? "bg-orange-500 hover:bg-orange-600" : ""} onClick={() => setQuickForm(f => ({ ...f, tipe: "day_use" }))} data-testid="q-tipe-dayuse">Day Use</Button>
-                <Button type="button" variant={quickForm.tipe === "menginap" ? "default" : "outline"} className={quickForm.tipe === "menginap" ? "bg-blue-700 hover:bg-blue-800" : ""} onClick={() => setQuickForm(f => ({ ...f, tipe: "menginap" }))} data-testid="q-tipe-menginap">Menginap</Button>
+                <Button type="button" variant={quickForm.tipe === "day_use" ? "default" : "outline"} className={quickForm.tipe === "day_use" ? "bg-orange-500 hover:bg-orange-600" : ""} onClick={() => setQuickForm(f => ({ ...f, tipe: "day_use", harga: quickBook?.tarif ?? f.harga }))} data-testid="q-tipe-dayuse">Day Use</Button>
+                <Button type="button" variant={quickForm.tipe === "menginap" ? "default" : "outline"} className={quickForm.tipe === "menginap" ? "bg-blue-700 hover:bg-blue-800" : ""} onClick={() => setQuickForm(f => ({ ...f, tipe: "menginap", harga: quickBook?.tarif_menginap ?? f.harga }))} data-testid="q-tipe-menginap">Menginap</Button>
               </div>
             </div>
             <div className="col-span-2"><Label>Nama Tamu *</Label><Input data-testid="q-nama" value={quickForm.nama_tamu} onChange={(e) => setQuickForm(f => ({ ...f, nama_tamu: e.target.value }))} autoFocus /></div>

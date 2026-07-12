@@ -14,20 +14,21 @@ export default function Rooms() {
   const isOwner = user?.role === "owner";
   const [rooms, setRooms] = useState([]);
   const [edit, setEdit] = useState(null);
-  const [form, setForm] = useState({ nomor: "", tipe: "Standard", tarif: 120000 });
+  const [form, setForm] = useState({ nomor: "", tipe: "Standard", tarif: 120000, tarif_menginap: 150000 });
 
   const load = async () => { const { data } = await api.get("/rooms"); setRooms(data); };
   useEffect(() => { load(); }, []);
 
-  const openNew = () => { setForm({ nomor: "", tipe: "Standard", tarif: 120000 }); setEdit("new"); };
-  const openEdit = (r) => { setForm({ nomor: r.nomor, tipe: r.tipe, tarif: r.tarif }); setEdit(r); };
+  const openNew = () => { setForm({ nomor: "", tipe: "Standard", tarif: 120000, tarif_menginap: 150000 }); setEdit("new"); };
+  const openEdit = (r) => { setForm({ nomor: r.nomor, tipe: r.tipe, tarif: r.tarif, tarif_menginap: r.tarif_menginap }); setEdit(r); };
 
   const save = async () => {
     try {
+      const payload = { ...form, tarif: Number(form.tarif), tarif_menginap: Number(form.tarif_menginap) };
       if (edit === "new") {
-        await api.post("/rooms", { ...form, tarif: Number(form.tarif) });
+        await api.post("/rooms", payload);
       } else {
-        await api.put(`/rooms/${edit.id}`, { ...form, tarif: Number(form.tarif) });
+        await api.put(`/rooms/${edit.id}`, payload);
       }
       toast.success("Tersimpan");
       setEdit(null); load();
@@ -57,7 +58,8 @@ export default function Rooms() {
               <tr>
                 <th className="text-left p-3">Nomor</th>
                 <th className="text-left p-3">Tipe</th>
-                <th className="text-left p-3">Tarif Dasar</th>
+                <th className="text-left p-3">Tarif Day Use</th>
+                <th className="text-left p-3">Tarif Menginap</th>
                 <th className="text-left p-3">Status</th>
                 {isOwner && <th className="text-right p-3">Aksi</th>}
               </tr>
@@ -68,6 +70,7 @@ export default function Rooms() {
                   <td className="p-3 font-bold">{r.nomor}</td>
                   <td className="p-3">{r.tipe}</td>
                   <td className="p-3">{fmtRp(r.tarif)}</td>
+                  <td className="p-3">{fmtRp(r.tarif_menginap)}</td>
                   <td className="p-3">
                     <span className="inline-flex items-center gap-1.5 px-2 py-1 rounded-md text-xs font-medium" style={{ background: statusColor(r.status) + "22", color: statusColor(r.status) }}>
                       <span className="w-2 h-2 rounded-full" style={{ background: statusColor(r.status) }} />
@@ -94,12 +97,13 @@ export default function Rooms() {
             <div><Label>Nomor</Label><Input data-testid="room-nomor" value={form.nomor} onChange={(e) => setForm(f => ({ ...f, nomor: e.target.value }))} /></div>
             <div>
               <Label>Tipe</Label>
-              <select data-testid="room-tipe" value={form.tipe} onChange={(e) => setForm(f => ({ ...f, tipe: e.target.value, tarif: e.target.value === "Cottage" ? 140000 : 120000 }))} className="w-full h-10 rounded-md border border-slate-300 px-3 bg-white">
+              <select data-testid="room-tipe" value={form.tipe} onChange={(e) => setForm(f => ({ ...f, tipe: e.target.value, tarif: e.target.value === "Cottage" ? 140000 : 120000, tarif_menginap: e.target.value === "Cottage" ? 200000 : 150000 }))} className="w-full h-10 rounded-md border border-slate-300 px-3 bg-white">
                 <option value="Standard">Standard</option>
                 <option value="Cottage">Cottage</option>
               </select>
             </div>
-            <div><Label>Tarif Dasar</Label><Input data-testid="room-tarif" type="number" value={form.tarif} onChange={(e) => setForm(f => ({ ...f, tarif: e.target.value }))} /></div>
+            <div><Label>Tarif Day Use (per 6 jam)</Label><Input data-testid="room-tarif" type="number" value={form.tarif} onChange={(e) => setForm(f => ({ ...f, tarif: e.target.value }))} /></div>
+            <div><Label>Tarif Menginap (per malam, tanpa sarapan)</Label><Input data-testid="room-tarif-menginap" type="number" value={form.tarif_menginap} onChange={(e) => setForm(f => ({ ...f, tarif_menginap: e.target.value }))} /></div>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setEdit(null)}>Batal</Button>
