@@ -260,10 +260,15 @@ async def balesotomatis_cek_ketersediaan(token: str, request: Request):
     if rooms:
         per_tipe: Dict[str, Dict[str, Any]] = {}
         for r in rooms:
-            t = per_tipe.setdefault(r["tipe"], {"tarif": r["tarif"], "jumlah": 0})
+            t = per_tipe.setdefault(
+                r["tipe"], {"tarif": r["tarif"], "tarif_menginap": r["tarif_menginap"], "jumlah": 0}
+            )
             t["jumlah"] += 1
+        # Tampilkan harga Day Use & Menginap sekaligus (bukan tebak salah satu dari AI Input)
+        # supaya AI BalesOtomatis tinggal pilih sendiri sesuai konteks pertanyaan tamu.
         baris = [
-            f"{t}: {v['jumlah']} kamar tersedia, tarif Rp{v['tarif']:,}".replace(",", ".")
+            f"{t}: {v['jumlah']} kamar tersedia. Day use Rp{v['tarif']:,} (6 jam), "
+            f"Menginap Rp{v['tarif_menginap']:,}/malam".replace(",", ".")
             for t, v in per_tipe.items()
         ]
         teks = f"Ketersediaan kamar tanggal {tanggal}:\n" + "\n".join(baris)
