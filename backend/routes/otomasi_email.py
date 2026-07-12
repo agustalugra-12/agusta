@@ -396,10 +396,18 @@ async def proses_modifikasi_otomatis(log_id: str, data: dict, sumber: str, subje
     - AI tidak berhasil menemukan check-in/check-out baru yang jelas, atau jadwal baru bentrok
       dengan reservasi lain -> TIDAK menebak, fallback ke tab "Modifikasi OTA" untuk staf.
 
-    Kalau reservasi yang sama sudah pernah ditandai/diproses sebelumnya (menunggu_review,
-    direschedule, atau dibatalkan), email modifikasi susulan dengan no. reservasi yang sama
-    TIDAK menambah apa pun lagi — cuma dicatat sebagai duplikat (status Sudah_Diproses) supaya
-    tidak menumpuk item review/aksi ganda untuk reservasi yang sama.
+    Kalau reservasi sedang menunggu_review (staf belum memutuskan), email modifikasi susulan
+    dengan no. reservasi yang sama TIDAK menambah apa pun lagi — cuma dicatat sebagai riwayat
+    (status Sudah_Diproses) supaya tidak menumpuk item review ganda untuk reservasi yang sama.
+
+    PENTING (bug 2026-07-13): kalau reservasi sudah pernah direschedule sebelumnya, email
+    modifikasi SUSULAN tetap diproses (bukan didiamkan sebagai duplikat) — dibandingkan
+    terhadap jadwal booking yang SEKARANG (hasil reschedule terakhir), bukan jadwal asli.
+    Kasus nyata yang ketahuan: reschedule pertama pindah ke tanggal X, lalu OTA kirim email
+    modifikasi KEDUA yang tanggalnya sama persis dengan X (yang sudah tersimpan) — seharusnya
+    ini pembatalan terselubung (aturan "tanggal sama = batal" berlaku juga di reschedule
+    kedua/ketiga dst, bukan cuma dibanding ke tanggal asli booking), tapi sebelumnya dedup guard
+    ini keburu menghentikan proses sehingga bookingnya tetap aktif/dianggap masih menginap.
     """
     no_reservasi = data.get("no_reservasi")
     if not no_reservasi:
@@ -421,14 +429,16 @@ async def proses_modifikasi_otomatis(log_id: str, data: dict, sumber: str, subje
         return
 
     existing_status = booking.get("modifikasi_status")
-    if existing_status in ("menunggu_review", "direschedule", "dibatalkan"):
+    if existing_status == "menunggu_review":
         await db.bookings.update_one({"id": booking["id"]}, {"$push": {"modifikasi_log_ids": log_id}})
         await db.email_logs.update_one({"id": log_id}, {"$set": {
             "status": "Sudah_Diproses",
             "reservation_id": booking["id"], "aksi": "modifikasi_duplikat",
-            "alasan": f'Reservasi {booking["kode"]} (no. OTA {no_reservasi}) sudah pernah ditandai modifikasi sebelumnya (status: {existing_status}) — email ini cuma dicatat sebagai riwayat, tidak ada perubahan baru.',
+            "alasan": f'Reservasi {booking["kode"]} (no. OTA {no_reservasi}) sedang menunggu tinjauan staf dari modifikasi sebelumnya — email ini dicatat sebagai riwayat tambahan, staf tetap perlu memutuskan manual.',
         }})
         return
+    # existing_status == "direschedule" (atau None untuk modifikasi pertama kali) -> lanjut
+    # diproses di bawah, dibandingkan terhadap jadwal booking yang sekarang tersimpan.
 
     check_in_raw, check_out_raw = data.get("check_in"), data.get("check_out")
     try:
