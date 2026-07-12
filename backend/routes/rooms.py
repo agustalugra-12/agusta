@@ -4,9 +4,8 @@ from core import *
 @api.get("/rooms")
 async def list_rooms(user: dict = Depends(get_current_user)):
     rooms = await db.rooms.find({}, {"_id": 0}).to_list(500)
-    # tipe order (Standard first, then Cottage), then numeric room number
-    tipe_order = {"Standard": 0, "Cottage": 1}
-    rooms.sort(key=lambda r: (tipe_order.get(r.get("tipe", ""), 99), int("".join(c for c in r.get("nomor", "0") if c.isdigit()) or 0)))
+    # Urut murni berdasarkan nomor kamar (1..18), tanpa dikelompokkan per tipe — nomor kamar tidak berurutan per tipe.
+    rooms.sort(key=lambda r: int("".join(c for c in r.get("nomor", "0") if c.isdigit()) or 0))
     return rooms
 
 @api.post("/rooms")

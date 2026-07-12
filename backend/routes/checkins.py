@@ -7,6 +7,9 @@ async def create_checkin(body: CheckinCreate, user: dict = Depends(get_current_u
         raise HTTPException(404, "Kamar tidak ditemukan")
     if r["status"] != "kosong":
         raise HTTPException(400, "Kamar belum tersedia dan tidak dapat digunakan untuk check-in.")
+    if body.tarif_override is not None and body.tarif_override <= 0:
+        raise HTTPException(400, "Harga custom harus lebih dari 0")
+    tarif_dasar = body.tarif_override if body.tarif_override else r["tarif"]
     # Save / upsert guest
     guest = None
     if body.no_identitas:
@@ -60,7 +63,7 @@ async def create_checkin(body: CheckinCreate, user: dict = Depends(get_current_u
         "room_id": body.room_id,
         "room_nomor": r["nomor"],
         "room_tipe": r["tipe"],
-        "tarif_dasar": r["tarif"],
+        "tarif_dasar": tarif_dasar,
         "jam_checkin": jam_ci_iso,
         "jam_checkout": None,
         "durasi_jam": 0,

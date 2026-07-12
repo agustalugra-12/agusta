@@ -2,8 +2,8 @@ import { Link, NavLink, Outlet, useNavigate } from "react-router-dom";
 import { useAuth } from "@/context/AuthContext";
 import { Button } from "@/components/ui/button";
 import {
-  LayoutDashboard, BedDouble, ShoppingCart, Users, Boxes,
-  Wallet, Sparkles, BarChart3, UserCog, ShieldCheck, LogOut, Hotel, Menu, CalendarCheck, HandCoins, DoorOpen, ListChecks, Mail, RefreshCw, MessageCircle, CreditCard, MessageSquare, Shuffle, Database, BedSingle, Activity, CalendarRange, Send, Coffee, Wand2, Tag, TrendingUp,
+  LayoutDashboard, BedDouble, ShoppingCart, Boxes,
+  Wallet, Sparkles, BarChart3, UserCog, ShieldCheck, LogOut, Hotel, Menu, HandCoins, DoorOpen, ListChecks, Mail, RefreshCw, MessageCircle, CreditCard, MessageSquare, Shuffle, Database, BedSingle, Activity, CalendarRange, Send, Coffee, Wand2, Tag, TrendingUp,
 } from "lucide-react";
 import { useState } from "react";
 
@@ -27,10 +27,8 @@ const navItems = [
   { to: "/kalender-harga", label: "Kalender Harga", icon: Tag },
   { to: "/laporan-analitik", label: "Analitik Saluran", icon: TrendingUp },
   { to: "/rooms", label: "Kamar", icon: BedDouble },
-  { to: "/bookings", label: "Booking", icon: CalendarCheck },
   { to: "/kasir", label: "Kasir", icon: ShoppingCart },
   { to: "/service", label: "Service", icon: HandCoins },
-  { to: "/tamu", label: "Tamu", icon: Users },
   { to: "/inventory", label: "Inventory", icon: Boxes },
   { to: "/pengeluaran", label: "Pengeluaran", icon: Wallet },
   { to: "/housekeeping", label: "Housekeeping", icon: Sparkles },

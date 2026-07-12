@@ -29,6 +29,12 @@ const todayLocal = () => {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 };
 
+const nowLocalDateTime = () => { const d = new Date(); d.setMinutes(d.getMinutes() - d.getTimezoneOffset()); return d.toISOString().slice(0, 16); };
+const emptyQuickForm = (tarif) => ({
+  tipe: "day_use", nama_tamu: "", no_hp: "", no_identitas: "", kendaraan: "", jumlah_tamu: 1,
+  jam_checkin: nowLocalDateTime(), malam: 1, harga: tarif ?? 0, catatan: "",
+});
+
 export default function Dashboard() {
   const { user } = useAuth();
   const nav = useNavigate();
@@ -40,6 +46,59 @@ export default function Dashboard() {
   const [filterDate, setFilterDate] = useState(todayLocal());
   const [actionRoom, setActionRoom] = useState(null);
   const [statusForm, setStatusForm] = useState({ status: "", nama_tamu: "", catatan: "" });
+
+  // Quick Book — klik kamar kosong: pilih Day Use/Menginap + harga custom, langsung tercatat.
+  const [quickBook, setQuickBook] = useState(null); // room yang sedang di-quick-book
+  const [quickForm, setQuickForm] = useState(emptyQuickForm());
+
+  const openQuickBook = (room) => { setQuickForm(emptyQuickForm(room.tarif)); setQuickBook(room); };
+
+  const quickEst = useMemo(() => {
+    const harga = Number(quickForm.harga) || 0;
+    if (quickForm.tipe === "menginap") {
+      const nights = Math.max(1, Number(quickForm.malam) || 1);
+      const subtotal = harga * nights;
+      const svc = Math.round(subtotal * 0.03);
+      return { subtotal, service_fee: svc, total: subtotal + svc, nights };
+    }
+    const svc = Math.round(harga * 0.03);
+    return { subtotal: harga, service_fee: svc, total: harga + svc, nights: 1 };
+  }, [quickForm]);
+
+  const submitQuickBook = async () => {
+    if (!quickBook) return;
+    if (!quickForm.nama_tamu.trim()) { toast.error("Nama tamu wajib diisi"); return; }
+    const harga = Number(quickForm.harga) || 0;
+    if (harga <= 0) { toast.error("Harga harus lebih dari 0"); return; }
+    try {
+      if (quickForm.tipe === "day_use") {
+        const jamIso = quickForm.jam_checkin ? new Date(quickForm.jam_checkin).toISOString() : undefined;
+        const { data } = await api.post("/checkins", {
+          room_id: quickBook.id, nama_tamu: quickForm.nama_tamu, no_hp: quickForm.no_hp,
+          no_identitas: quickForm.no_identitas, kendaraan: quickForm.kendaraan,
+          jumlah_tamu: Number(quickForm.jumlah_tamu) || 1, catatan: quickForm.catatan,
+          jam_checkin: jamIso, tarif_override: harga,
+        });
+        toast.success(`Check-in berhasil • ${data.trx_no}`);
+      } else {
+        const nights = Math.max(1, Number(quickForm.malam) || 1);
+        const start = new Date();
+        const end = new Date(start);
+        end.setDate(end.getDate() + nights);
+        await api.post("/bookings", {
+          room_id: quickBook.id, tipe: "menginap", nama_tamu: quickForm.nama_tamu, no_hp: quickForm.no_hp,
+          no_identitas: quickForm.no_identitas, kendaraan: quickForm.kendaraan,
+          jumlah_tamu: Number(quickForm.jumlah_tamu) || 1, catatan: quickForm.catatan,
+          jam_mulai: start.toISOString(), jam_selesai: end.toISOString(), tarif_override: harga,
+        });
+        await api.put(`/rooms/${quickBook.id}/status`, {
+          status: "menginap", nama_tamu: quickForm.nama_tamu, catatan: quickForm.catatan,
+        });
+        toast.success("Booking menginap dibuat, kamar ditandai terisi");
+      }
+      setQuickBook(null); load();
+    } catch (e) { toast.error(e?.response?.data?.detail || "Gagal"); }
+  };
 
   const load = async () => {
     try {
@@ -111,7 +170,7 @@ export default function Dashboard() {
       return;
     }
     if (room.status === "kosong") {
-      nav(`/checkin/${room.id}`);
+      openQuickBook(room);
       return;
     }
     setActionRoom(room);
@@ -375,7 +434,11 @@ export default function Dashboard() {
             ))}
             <div className="flex items-center gap-1.5">
               <span className="w-3 h-3 rounded-sm" style={{ background: "#92400E" }} />
-              <span className="text-slate-600">Booked ({bookingsOnDate.length})</span>
+              <span className="text-slate-600">Booked Day Use</span>
+            </div>
+            <div className="flex items-center gap-1.5">
+              <span className="w-3 h-3 rounded-sm" style={{ background: "#3B82F6" }} />
+              <span className="text-slate-600">Booked Menginap ({bookingsOnDate.length})</span>
             </div>
           </div>
           <div data-testid="room-grid" className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 gap-3">
@@ -385,7 +448,7 @@ export default function Dashboard() {
               const upcomingBk = effStatus === "kosong" ? bookingsOnDate
                 .filter(b => b.room_id === r.id)
                 .sort((a, c) => a.jam_mulai.localeCompare(c.jam_mulai))[0] : null;
-              const bg = upcomingBk ? "#92400E" : statusColor(effStatus);
+              const bg = upcomingBk ? (upcomingBk.tipe === "menginap" ? "#3B82F6" : "#92400E") : statusColor(effStatus);
               const bkLabel = upcomingBk
                 ? new Date(upcomingBk.jam_mulai).toLocaleString("id-ID", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })
                 : null;
@@ -429,6 +492,49 @@ export default function Dashboard() {
           </div>
         </CardContent>
       </Card>
+
+      {/* Quick Book Dialog — klik kamar kosong: pilih Day Use/Menginap + harga custom */}
+      <Dialog open={!!quickBook} onOpenChange={(o) => !o && setQuickBook(null)}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader><DialogTitle>Kamar {quickBook?.nomor} — {quickBook?.tipe}</DialogTitle></DialogHeader>
+          <div className="grid grid-cols-2 gap-3 max-h-[70vh] overflow-y-auto">
+            <div className="col-span-2">
+              <Label>Tipe</Label>
+              <div className="grid grid-cols-2 gap-2 mt-1.5">
+                <Button type="button" variant={quickForm.tipe === "day_use" ? "default" : "outline"} className={quickForm.tipe === "day_use" ? "bg-orange-500 hover:bg-orange-600" : ""} onClick={() => setQuickForm(f => ({ ...f, tipe: "day_use" }))} data-testid="q-tipe-dayuse">Day Use</Button>
+                <Button type="button" variant={quickForm.tipe === "menginap" ? "default" : "outline"} className={quickForm.tipe === "menginap" ? "bg-blue-700 hover:bg-blue-800" : ""} onClick={() => setQuickForm(f => ({ ...f, tipe: "menginap" }))} data-testid="q-tipe-menginap">Menginap</Button>
+              </div>
+            </div>
+            <div className="col-span-2"><Label>Nama Tamu *</Label><Input data-testid="q-nama" value={quickForm.nama_tamu} onChange={(e) => setQuickForm(f => ({ ...f, nama_tamu: e.target.value }))} autoFocus /></div>
+            <div><Label>HP</Label><Input data-testid="q-hp" value={quickForm.no_hp} onChange={(e) => setQuickForm(f => ({ ...f, no_hp: e.target.value }))} /></div>
+            <div><Label>KTP</Label><Input value={quickForm.no_identitas} onChange={(e) => setQuickForm(f => ({ ...f, no_identitas: e.target.value }))} /></div>
+            <div><Label>Kendaraan</Label><Input value={quickForm.kendaraan} onChange={(e) => setQuickForm(f => ({ ...f, kendaraan: e.target.value }))} /></div>
+            <div><Label>Jumlah Tamu</Label><Input type="number" min="1" value={quickForm.jumlah_tamu} onChange={(e) => setQuickForm(f => ({ ...f, jumlah_tamu: e.target.value }))} /></div>
+            {quickForm.tipe === "day_use" ? (
+              <div className="col-span-2"><Label>Jam Check-In</Label><Input data-testid="q-jam" type="datetime-local" value={quickForm.jam_checkin} onChange={(e) => setQuickForm(f => ({ ...f, jam_checkin: e.target.value }))} /></div>
+            ) : (
+              <div className="col-span-2"><Label>Jumlah Malam</Label><Input data-testid="q-malam" type="number" min="1" value={quickForm.malam} onChange={(e) => setQuickForm(f => ({ ...f, malam: e.target.value }))} /></div>
+            )}
+            <div className="col-span-2">
+              <Label>{quickForm.tipe === "day_use" ? "Harga (per 6 jam)" : "Harga per Malam"}</Label>
+              <Input data-testid="q-harga" type="number" min="0" value={quickForm.harga} onChange={(e) => setQuickForm(f => ({ ...f, harga: e.target.value }))} />
+            </div>
+            <div className="col-span-2"><Label>Catatan</Label><Textarea value={quickForm.catatan} onChange={(e) => setQuickForm(f => ({ ...f, catatan: e.target.value }))} rows={2} /></div>
+            <div data-testid="q-est-summary" className="col-span-2 rounded-lg bg-blue-50 border border-blue-200 p-3 text-sm space-y-1">
+              <div className="flex justify-between"><span className="text-slate-600">Subtotal{quickForm.tipe === "menginap" ? ` (${quickEst.nights} malam)` : ""}</span><b>{fmtRp(quickEst.subtotal)}</b></div>
+              <div className="flex justify-between"><span className="text-slate-600">Service Fee (3%)</span><b>{fmtRp(quickEst.service_fee)}</b></div>
+              <div className="flex justify-between text-base pt-1 border-t border-blue-200 mt-1"><span className="font-bold">Estimasi Total</span><b className="text-blue-700">{fmtRp(quickEst.total)}</b></div>
+              {quickForm.tipe === "day_use" && <p className="text-[10px] text-slate-500">*Belum termasuk overtime setelah 6 jam.</p>}
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setQuickBook(null)}>Batal</Button>
+            <Button data-testid="q-submit" onClick={submitQuickBook} className="bg-blue-700 hover:bg-blue-800">
+              {quickForm.tipe === "day_use" ? "Konfirmasi Check-In" : "Buat Booking Menginap"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Action Dialog */}
       <Dialog open={!!actionRoom} onOpenChange={(o) => !o && setActionRoom(null)}>

@@ -8,10 +8,8 @@ import Layout from "@/components/Layout";
 import Dashboard from "@/pages/Dashboard";
 import Ketersediaan from "@/pages/Ketersediaan";
 import Rooms from "@/pages/Rooms";
-import CheckIn from "@/pages/CheckIn";
 import CheckOut from "@/pages/CheckOut";
 import Kasir from "@/pages/Kasir";
-import Tamu from "@/pages/Tamu";
 import Inventory from "@/pages/Inventory";
 import Pengeluaran from "@/pages/Pengeluaran";
 import Housekeeping from "@/pages/Housekeeping";
@@ -22,7 +20,6 @@ import Profil from "@/pages/Profil";
 import KalenderHarga from "@/pages/KalenderHarga";
 import LaporanAnalitik from "@/pages/LaporanAnalitik";
 import Audit from "@/pages/Audit";
-import Bookings from "@/pages/Bookings";
 import DaftarReservasi from "@/pages/DaftarReservasi";
 import OtomasiEmail from "@/pages/OtomasiEmail";
 import SinkronisasiKetersediaan from "@/pages/SinkronisasiKetersediaan";
@@ -60,10 +57,8 @@ function AppRoutes() {
         <Route path="/" element={<Dashboard />} />
         <Route path="/ketersediaan" element={<Ketersediaan />} />
         <Route path="/rooms" element={<Rooms />} />
-        <Route path="/checkin/:roomId" element={<CheckIn />} />
         <Route path="/checkout/:checkinId" element={<CheckOut />} />
         <Route path="/kasir" element={<Kasir />} />
-        <Route path="/tamu" element={<Tamu />} />
         <Route path="/inventory" element={<Inventory />} />
         <Route path="/pengeluaran" element={<Pengeluaran />} />
         <Route path="/service" element={<Service />} />
@@ -74,7 +69,6 @@ function AppRoutes() {
         <Route path="/kalender-harga" element={<KalenderHarga />} />
         <Route path="/laporan-analitik" element={<LaporanAnalitik />} />
         <Route path="/audit" element={<Audit />} />
-        <Route path="/bookings" element={<Bookings />} />
         <Route path="/reservasi" element={<DaftarReservasi />} />
         <Route path="/otomasi-email" element={<OtomasiEmail />} />
         <Route path="/sinkronisasi-ketersediaan" element={<SinkronisasiKetersediaan />} />

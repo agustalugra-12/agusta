@@ -100,6 +100,55 @@ async def kalender_bulanan(
     return {"year": year, "month": month, "days": days}
 
 
+@api.get("/ketersediaan/hari")
+async def ketersediaan_hari(
+    tanggal: str = Query(...),
+    user: dict = Depends(get_current_user),
+):
+    """Ketersediaan satu tanggal tertentu, dipecah per tipe kamar — dipakai dialog detail hari
+    di Kalender Ketersediaan. Logika overlap booking sama dengan kalender_bulanan, tapi
+    dikelompokkan per tipe kamar bukan agregat total.
+    """
+    try:
+        day_start = datetime.fromisoformat(tanggal).replace(tzinfo=timezone.utc)
+    except Exception:
+        raise HTTPException(400, "Format tanggal harus YYYY-MM-DD")
+    day_end = day_start + timedelta(days=1)
+
+    rooms = await db.rooms.find({}, {"_id": 0, "id": 1, "tipe": 1}).to_list(500)
+    bookings = await db.bookings.find({
+        "status": {"$in": ACTIVE_BOOKING_STATUSES},
+        "jam_mulai": {"$lt": day_end.isoformat()},
+        "jam_selesai": {"$gte": day_start.isoformat()},
+    }, {"_id": 0, "room_id": 1, "jam_mulai": 1, "jam_selesai": 1}).to_list(2000)
+    occupied_room_ids = {
+        b["room_id"] for b in bookings
+        if b.get("jam_selesai") and parse_iso(b["jam_mulai"], "jam_mulai") < day_end and parse_iso(b["jam_selesai"], "jam_selesai") >= day_start
+    }
+
+    by_tipe: Dict[str, Dict[str, int]] = {}
+    for r in rooms:
+        entry = by_tipe.setdefault(r.get("tipe", "-"), {"total": 0, "terisi": 0})
+        entry["total"] += 1
+        if r["id"] in occupied_room_ids:
+            entry["terisi"] += 1
+
+    rows = [
+        {"tipe": tipe, "total": v["total"], "terisi": v["terisi"], "tersedia": v["total"] - v["terisi"]}
+        for tipe, v in sorted(by_tipe.items())
+    ]
+    total = len(rooms)
+    terisi = len(occupied_room_ids)
+    return {
+        "tanggal": tanggal,
+        "total_kamar": total,
+        "terisi": terisi,
+        "tersedia": total - terisi,
+        "okupansi_pct": round((terisi / total) * 100) if total else 0,
+        "by_tipe": rows,
+    }
+
+
 @api.get("/ketersediaan/status-tipe-kamar")
 async def status_tipe_kamar(user: dict = Depends(get_current_user)):
     """Ketersediaan hari ini, dipecah per tipe kamar (Standard/Cottage)."""

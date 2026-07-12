@@ -19,15 +19,18 @@ async def create_booking(body: BookingCreate, user: dict = Depends(get_current_u
     if end <= start:
         raise HTTPException(400, "Jam selesai harus setelah jam mulai")
     await check_room_available(body.room_id, start, end)
+    if body.tarif_override is not None and body.tarif_override <= 0:
+        raise HTTPException(400, "Harga custom harus lebih dari 0")
+    unit_tarif = body.tarif_override if body.tarif_override else int(r["tarif"])
     kode = f"BK-{datetime.now().strftime('%Y%m%d%H%M%S')}-{uuid.uuid4().hex[:4].upper()}"
     # Hitung estimasi tagihan (tarif kamar + 3% service fee). Untuk menginap, durasi jam dipakai sebagai kelipatan 6 jam.
-    subtotal = int(r["tarif"])
+    subtotal = unit_tarif
     if body.tipe == "menginap":
         hours = max(6, int((end - start).total_seconds() / 3600))
         # menginap: tarif per hari (24 jam) — pakai ceil(hours/24) hari × tarif harian (tarif kamar × 4 untuk menginap)
         # Sederhanakan: tarif × ceil(hours/24)
         days = max(1, -(-hours // 24))
-        subtotal = int(r["tarif"]) * days
+        subtotal = unit_tarif * days
     service_fee = round(subtotal * SERVICE_FEE_PCT)
     total = subtotal + service_fee
     doc = {

@@ -257,6 +257,7 @@ class CheckinCreate(BaseModel):
     catatan: str = ""
     foto_identitas_url: Optional[str] = ""
     jam_checkin: Optional[str] = None  # ISO datetime; default = now
+    tarif_override: Optional[int] = None  # staf boleh set harga custom, beda dari tarif dasar kamar
 
 class CheckoutIn(BaseModel):
     pembayaran: List[Dict[str, Any]] = []  # [{"metode":"tunai","jumlah":100000}]
@@ -331,6 +332,7 @@ class BookingCreate(BaseModel):
     jam_mulai: str
     jam_selesai: Optional[str] = None
     catatan: str = ""
+    tarif_override: Optional[int] = None  # staf boleh set harga custom per malam/per sesi, beda dari tarif dasar kamar
 
 class BookingUpdate(BaseModel):
     nama_tamu: Optional[str] = None
