@@ -47,6 +47,15 @@ snap_client = midtransclient.Snap(
     client_key=MIDTRANS_CLIENT_KEY,
 )
 
+# ---- Tripay setup (menggantikan Midtrans — lihat routes/tripay.py) ----
+# Kosong sampai kredensial (sandbox/production) diberikan lewat env var pms-backend.service;
+# endpoint callback tetap bisa didaftarkan di Tripay walau TRIPAY_PRIVATE_KEY belum diisi.
+TRIPAY_MERCHANT_CODE = os.environ.get("TRIPAY_MERCHANT_CODE", "")
+TRIPAY_API_KEY = os.environ.get("TRIPAY_API_KEY", "")
+TRIPAY_PRIVATE_KEY = os.environ.get("TRIPAY_PRIVATE_KEY", "")
+TRIPAY_IS_PRODUCTION = os.environ.get("TRIPAY_IS_PRODUCTION", "false").lower() == "true"
+TRIPAY_BASE_URL = "https://tripay.co.id/api" if TRIPAY_IS_PRODUCTION else "https://tripay.co.id/api-sandbox"
+
 # ---- Google OAuth (Otomasi Email — koneksi Gmail) ----
 GOOGLE_CLIENT_ID = os.environ.get("GOOGLE_CLIENT_ID", "")
 GOOGLE_CLIENT_SECRET = os.environ.get("GOOGLE_CLIENT_SECRET", "")

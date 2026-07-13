@@ -25,3 +25,4 @@ from . import pesan_whatsapp  # noqa: F401
 from . import sinkronisasi_data_pms  # noqa: F401
 from . import laporan_analitik  # noqa: F401
 from . import rates  # noqa: F401
+from . import tripay  # noqa: F401
