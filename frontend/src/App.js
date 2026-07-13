@@ -18,21 +18,15 @@ import Service from "@/pages/Service";
 import Pengguna from "@/pages/Pengguna";
 import Profil from "@/pages/Profil";
 import KalenderHarga from "@/pages/KalenderHarga";
-import LaporanAnalitik from "@/pages/LaporanAnalitik";
 import Audit from "@/pages/Audit";
 import DaftarReservasi from "@/pages/DaftarReservasi";
 import OtomasiEmail from "@/pages/OtomasiEmail";
 import SinkronisasiKetersediaan from "@/pages/SinkronisasiKetersediaan";
-import KonfigurasiWebhook from "@/pages/KonfigurasiWebhook";
 import Pembayaran from "@/pages/Pembayaran";
 import PesanWhatsAppOtomatis from "@/pages/PesanWhatsAppOtomatis";
 import PemetaanTipeKamar from "@/pages/PemetaanTipeKamar";
-import SinkronisasiDataPMS from "@/pages/SinkronisasiDataPMS";
 import PermintaanKhususExtraBed from "@/pages/PermintaanKhususExtraBed";
-import PemantauanStatusWA from "@/pages/PemantauanStatusWA";
-import JenisReservasi from "@/pages/JenisReservasi";
 import PengirimanVoucherOtomatis from "@/pages/PengirimanVoucherOtomatis";
-import PaketKamar from "@/pages/PaketKamar";
 import RekomendasiCheckinDayUse from "@/pages/RekomendasiCheckinDayUse";
 import PublicBook from "@/pages/PublicBook";
 import "@/App.css";
@@ -68,21 +62,15 @@ function AppRoutes() {
         <Route path="/pengguna" element={<Protected ownerOnly><Pengguna /></Protected>} />
         <Route path="/profil" element={<Profil />} />
         <Route path="/kalender-harga" element={<KalenderHarga />} />
-        <Route path="/laporan-analitik" element={<LaporanAnalitik />} />
         <Route path="/audit" element={<Audit />} />
         <Route path="/reservasi" element={<DaftarReservasi />} />
         <Route path="/otomasi-email" element={<OtomasiEmail />} />
         <Route path="/sinkronisasi-ketersediaan" element={<SinkronisasiKetersediaan />} />
-        <Route path="/konfigurasi-webhook" element={<KonfigurasiWebhook />} />
         <Route path="/pembayaran" element={<Pembayaran />} />
         <Route path="/whatsapp-otomatis" element={<PesanWhatsAppOtomatis />} />
         <Route path="/pemetaan-tipe-kamar" element={<PemetaanTipeKamar />} />
-        <Route path="/sinkronisasi-data-pms" element={<SinkronisasiDataPMS />} />
         <Route path="/extra-bed" element={<PermintaanKhususExtraBed />} />
-        <Route path="/pemantauan-status-wa" element={<PemantauanStatusWA />} />
-        <Route path="/jenis-reservasi" element={<JenisReservasi />} />
         <Route path="/pengiriman-voucher" element={<PengirimanVoucherOtomatis />} />
-        <Route path="/paket-kamar" element={<PaketKamar />} />
         <Route path="/rekomendasi-checkin" element={<RekomendasiCheckinDayUse />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />

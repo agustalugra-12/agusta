@@ -3,7 +3,7 @@ import { useAuth } from "@/context/AuthContext";
 import { Button } from "@/components/ui/button";
 import {
   LayoutDashboard, BedDouble, ShoppingCart, Boxes,
-  Wallet, Sparkles, BarChart3, UserCog, ShieldCheck, LogOut, Hotel, Menu, HandCoins, DoorOpen, ListChecks, Mail, RefreshCw, MessageCircle, CreditCard, MessageSquare, Shuffle, Database, BedSingle, Activity, CalendarRange, Send, Coffee, Wand2, Tag, TrendingUp,
+  Wallet, Sparkles, BarChart3, UserCog, ShieldCheck, LogOut, Hotel, Menu, HandCoins, DoorOpen, ListChecks, Mail, RefreshCw, CreditCard, MessageSquare, Shuffle, BedSingle, Send, Wand2, Tag,
 } from "lucide-react";
 import { useState } from "react";
 
@@ -13,19 +13,13 @@ const navItems = [
   { to: "/reservasi", label: "Reservasi", icon: ListChecks },
   { to: "/otomasi-email", label: "Otomasi Email", icon: Mail, ownerOnly: true },
   { to: "/sinkronisasi-ketersediaan", label: "Sinkronisasi", icon: RefreshCw, ownerOnly: true },
-  { to: "/konfigurasi-webhook", label: "Webhook WA", icon: MessageCircle, ownerOnly: true },
   { to: "/pembayaran", label: "Pembayaran", icon: CreditCard },
   { to: "/whatsapp-otomatis", label: "WhatsApp Bot", icon: MessageSquare, ownerOnly: true },
   { to: "/pemetaan-tipe-kamar", label: "Pemetaan Kamar", icon: Shuffle, ownerOnly: true },
-  { to: "/sinkronisasi-data-pms", label: "Sinkron Data PMS", icon: Database, ownerOnly: true },
   { to: "/extra-bed", label: "Extra Bed", icon: BedSingle },
-  { to: "/pemantauan-status-wa", label: "Pemantauan WA", icon: Activity, ownerOnly: true },
-  { to: "/jenis-reservasi", label: "Jenis Reservasi", icon: CalendarRange, ownerOnly: true },
   { to: "/pengiriman-voucher", label: "Voucher Terkirim", icon: Send, ownerOnly: true },
-  { to: "/paket-kamar", label: "Paket Kamar", icon: Coffee, ownerOnly: true },
   { to: "/rekomendasi-checkin", label: "Rekomendasi Check-in", icon: Wand2 },
   { to: "/kalender-harga", label: "Kalender Harga", icon: Tag, ownerOnly: true },
-  { to: "/laporan-analitik", label: "Analitik Saluran", icon: TrendingUp, ownerOnly: true },
   { to: "/rooms", label: "Kamar", icon: BedDouble },
   { to: "/kasir", label: "Kasir", icon: ShoppingCart },
   { to: "/service", label: "Service", icon: HandCoins },
