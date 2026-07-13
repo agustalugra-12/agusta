@@ -1,6 +1,107 @@
 from core import *
 from email_service import generate_voucher_pdf, send_voucher_email
 import hmac
+import httpx
+
+@api.get("/payments/tripay/channels")
+async def tripay_channels():
+    """Daftar metode pembayaran aktif dari Tripay (VA/e-wallet/QRIS/retail dst) — dipakai
+    halaman booking publik sebagai pengganti pilihan metode di popup Snap Midtrans (Tripay
+    tidak punya widget serupa, tamu pilih metode dulu baru transaksi dibuat khusus metode itu).
+    No-auth (dipakai PublicBook.jsx sebelum tamu login)."""
+    if not TRIPAY_API_KEY:
+        raise HTTPException(503, "Tripay belum dikonfigurasi")
+    async with httpx.AsyncClient(timeout=10) as http:
+        try:
+            r = await http.get(
+                f"{TRIPAY_BASE_URL}/merchant/payment-channel",
+                headers={"Authorization": f"Bearer {TRIPAY_API_KEY}"},
+            )
+        except httpx.HTTPError as e:
+            raise HTTPException(502, f"Gagal menghubungi Tripay: {e}")
+    resp = r.json()
+    if r.status_code != 200 or not resp.get("success", True):
+        raise HTTPException(502, f"Tripay error: {resp.get('message', r.text)}")
+    return [c for c in resp.get("data", []) if c.get("active")]
+
+@api.post("/payments/tripay/create-transaction")
+async def tripay_create_transaction(body: TripayCreateTransactionBody):
+    """Buat transaksi closed-payment Tripay untuk booking publik. No-auth (tamu publik).
+    Pengganti /payments/midtrans/create-snap-token — beda dari Snap, Tripay butuh `method`
+    (channel spesifik) di-set duluan, hasilnya `checkout_url` (halaman instruksi bayar
+    ter-hosted Tripay) untuk di-redirect, bukan token untuk popup JS.
+    """
+    if not (TRIPAY_MERCHANT_CODE and TRIPAY_API_KEY and TRIPAY_PRIVATE_KEY):
+        raise HTTPException(503, "Tripay belum dikonfigurasi")
+    b = await db.bookings.find_one({"id": body.booking_id})
+    if not b:
+        raise HTTPException(404, "Booking tidak ditemukan")
+    if b.get("status") not in ("booking_pending",):
+        raise HTTPException(400, f"Booking tidak dapat dibayar (status: {b.get('status')})")
+    total = int(b.get("total", 0))
+    if body.payment_option == "dp50":
+        amount = int(b.get("dp_min") or round(total * 0.5))
+    elif body.payment_option == "full":
+        amount = total
+    else:
+        raise HTTPException(400, "payment_option harus 'dp50' atau 'full'")
+
+    merchant_ref = f"{b['kode']}-{datetime.now().strftime('%H%M%S')}{uuid.uuid4().hex[:3].upper()}"
+    signature = hmac.new(
+        TRIPAY_PRIVATE_KEY.encode(),
+        f"{TRIPAY_MERCHANT_CODE}{merchant_ref}{amount}".encode(),
+        hashlib.sha256,
+    ).hexdigest()
+    payload = {
+        "method": body.method,
+        "merchant_ref": merchant_ref,
+        "amount": amount,
+        "customer_name": b.get("nama_tamu") or "Tamu",
+        "customer_email": b.get("email") or "tamu@pelangihomestay.com",
+        "customer_phone": b.get("no_hp") or "",
+        "order_items": [{
+            "sku": b["room_id"], "name": f"Kamar {b['room_nomor']} ({b['room_tipe']}) - {b['kode']}",
+            "price": amount, "quantity": 1,
+        }],
+        "return_url": f"{os.environ.get('FRONTEND_URL', '')}/book/sukses/{b['id']}",
+        "expired_time": int(datetime.now(timezone.utc).timestamp()) + 24 * 3600,
+        "signature": signature,
+    }
+    async with httpx.AsyncClient(timeout=15) as http:
+        try:
+            r = await http.post(
+                f"{TRIPAY_BASE_URL}/transaction/create", json=payload,
+                headers={"Authorization": f"Bearer {TRIPAY_API_KEY}"},
+            )
+        except httpx.HTTPError as e:
+            raise HTTPException(502, f"Gagal menghubungi Tripay: {e}")
+    resp = r.json()
+    if r.status_code != 200 or not resp.get("success"):
+        raise HTTPException(502, f"Tripay error: {resp.get('message', r.text)}")
+    trx = resp["data"]
+
+    await db.bookings.update_one({"id": b["id"]}, {"$set": {
+        "invoice_id": merchant_ref, "payment_option": body.payment_option,
+        "amount_due": amount, "amount_paid_min": amount,
+        "updated_at": now_iso(),
+    }})
+    await db.payment_log.insert_one({
+        "id": str(uuid.uuid4()), "booking_id": b["id"], "booking_kode": b["kode"],
+        "order_id": merchant_ref, "gateway": "tripay",
+        "reference": trx.get("reference"), "checkout_url": trx.get("checkout_url"),
+        "gross_amount": str(amount), "payment_option": body.payment_option,
+        "transaction_status": "UNPAID", "status_code": None,
+        "payment_type": body.method, "fraud_status": None,
+        "created_at": now_iso(), "updated_at": now_iso(),
+        "tripay_response": trx,
+    })
+    return {
+        "booking_id": b["id"], "order_id": merchant_ref,
+        "reference": trx.get("reference"), "checkout_url": trx.get("checkout_url"),
+        "qr_url": trx.get("qr_url"), "pay_code": trx.get("pay_code"),
+        "amount": amount, "expired_time": trx.get("expired_time"),
+        "instructions": trx.get("instructions"),
+    }
 
 @api.get("/payments/tripay/config")
 async def get_tripay_config(user: dict = Depends(get_current_user)):

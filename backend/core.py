@@ -383,6 +383,11 @@ class CreateSnapTokenBody(BaseModel):
     booking_id: str
     payment_option: str  # "dp50" atau "full"
 
+class TripayCreateTransactionBody(BaseModel):
+    booking_id: str
+    payment_option: str  # "dp50" atau "full"
+    method: str  # kode channel Tripay, mis. QRIS/BRIVA/ALFAMART — dari GET /payments/tripay/channels
+
 class CancelWithFeeBody(BaseModel):
     alasan: Optional[str] = ""
 

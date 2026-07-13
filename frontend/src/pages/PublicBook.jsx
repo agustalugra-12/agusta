@@ -26,8 +26,8 @@ const EXTRA_BED_MAX = 2;
 const BREAKFAST_PRICE = 25000;
 const CS_WHATSAPP = "0895356644644";
 // Disimpan begitu booking dibuat, dipakai SuccessView sebagai fallback kalau URL /book/sukses
-// diakses tanpa :bookingId (mis. Midtrans Finish Redirect URL di dashboard mereka bersifat statis
-// per-akun, tidak selalu bisa disisipi ID per transaksi untuk semua metode pembayaran).
+// diakses tanpa :bookingId (mis. tamu menutup tab checkout Tripay lalu balik lewat riwayat
+// browser, bukan lewat return_url yang sudah disisipi ID booking).
 const LAST_BOOKING_ID_KEY = "pelangi_last_booking_id";
 const ALAMAT_HOMESTAY = "Jl. Kebun Raya Bedugul, Desa Candikuning, Kec. Baturiti, Tabanan - Bali";
 const addDays = (dateStr, n) => {
@@ -38,18 +38,6 @@ const addDays = (dateStr, n) => {
 const todayStr = () => {
   const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 };
-
-function loadSnapScript(snapUrl, clientKey) {
-  return new Promise((resolve, reject) => {
-    if (window.snap) { resolve(window.snap); return; }
-    const s = document.createElement("script");
-    s.src = snapUrl;
-    s.setAttribute("data-client-key", clientKey);
-    s.onload = () => window.snap ? resolve(window.snap) : reject(new Error("Snap not ready"));
-    s.onerror = () => reject(new Error("Failed to load Snap.js"));
-    document.body.appendChild(s);
-  });
-}
 
 const FACILITY_ICONS = {
   "AC": Snowflake, "Wi-Fi gratis": Wifi, "TV LED": Tv,
@@ -80,10 +68,15 @@ function BookingForm() {
   const [denganSarapan, setDenganSarapan] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [paymentOption, setPaymentOption] = useState("dp50"); // dp50 | full
+  const [channels, setChannels] = useState([]);
+  const [method, setMethod] = useState(""); // kode channel Tripay, mis. "BRIVA"
   const nav = useNavigate();
 
   useEffect(() => {
     PUBLIC_API.get("/public/rooms-catalog").then(r => setCatalog(r.data)).catch(() => {});
+    // daftar metode bayar Tripay dimuat sekali di awal (bukan tiap step 2) supaya siap saat
+    // tamu sampai ke ringkasan — daftarnya jarang berubah, aman di-fetch lebih awal.
+    PUBLIC_API.get("/payments/tripay/channels").then(r => setChannels(r.data)).catch(() => setChannels([]));
   }, []);
 
   // Kalau tanggal check-in digeser melewati check-out yang sudah dipilih, geser check-out juga
@@ -143,6 +136,7 @@ function BookingForm() {
       return;
     }
     if (!selectedRoom) { toast.error("Pilih kamar dulu"); return; }
+    if (!method) { toast.error("Pilih metode pembayaran dulu"); return; }
     setSubmitting(true);
     try {
       // 1. Buat booking
@@ -161,20 +155,14 @@ function BookingForm() {
         ...(bookingTipe === "menginap" ? { tanggal_checkout: checkoutDate, dengan_sarapan: denganSarapan } : {}),
       });
       localStorage.setItem(LAST_BOOKING_ID_KEY, bk.id);
-      // 2. Buat Snap token
-      const { data: tx } = await PUBLIC_API.post("/payments/midtrans/create-snap-token", {
-        booking_id: bk.id, payment_option: paymentOption,
+      // 2. Buat transaksi Tripay untuk metode yang dipilih, lalu redirect ke halaman
+      // instruksi bayar ter-hosted Tripay (checkout_url) — beda dari Snap Midtrans yang
+      // dulu buka popup, Tripay tidak punya widget popup jadi tamu diarahkan ke tab ini juga.
+      const { data: tx } = await PUBLIC_API.post("/payments/tripay/create-transaction", {
+        booking_id: bk.id, payment_option: paymentOption, method,
       });
-      // 3. Load Snap.js lazy lalu buka popup
-      const { data: cfg } = await PUBLIC_API.get("/payments/midtrans/config");
-      const snap = await loadSnapScript(cfg.snap_url, tx.client_key);
       toast.dismiss();
-      snap.pay(tx.transaction_token, {
-        onSuccess: () => { toast.success("Pembayaran berhasil!"); nav(`/book/sukses/${bk.id}`); },
-        onPending: () => { toast.info("Pembayaran pending - selesaikan sesuai instruksi"); nav(`/book/sukses/${bk.id}`); },
-        onError: () => { toast.error("Pembayaran gagal - silakan coba lagi"); setSubmitting(false); },
-        onClose: () => { toast.warning("Popup pembayaran ditutup. Booking masih PENDING di /book/sukses"); nav(`/book/sukses/${bk.id}`); },
-      });
+      window.location.href = tx.checkout_url;
     } catch (e) {
       toast.error(e?.response?.data?.detail || "Gagal membuat booking");
       setSubmitting(false);
@@ -446,7 +434,41 @@ function BookingForm() {
                     </button>
                   </div>
                 </div>
-                <Button data-testid="pb-submit" disabled={submitting} onClick={submit} className="w-full h-12 bg-gradient-to-r from-blue-700 to-blue-600 hover:from-blue-800 hover:to-blue-700 text-base font-bold">
+                <div className="border-t border-slate-100 pt-3">
+                  <Label className="text-xs font-semibold uppercase tracking-wider text-slate-500">Metode Pembayaran</Label>
+                  {channels.length === 0 ? (
+                    <p className="text-xs text-slate-400 mt-2">Memuat metode pembayaran...</p>
+                  ) : (
+                    <div className="mt-2 space-y-3 max-h-64 overflow-y-auto pr-1" data-testid="pb-payment-methods">
+                      {Object.entries(
+                        channels.reduce((acc, c) => {
+                          acc[c.group] = acc[c.group] || [];
+                          acc[c.group].push(c);
+                          return acc;
+                        }, {})
+                      ).map(([group, items]) => (
+                        <div key={group}>
+                          <div className="text-[10px] uppercase tracking-wider text-slate-400 font-semibold mb-1">{group}</div>
+                          <div className="grid grid-cols-2 gap-1.5">
+                            {items.map((c) => (
+                              <button
+                                key={c.code}
+                                type="button"
+                                data-testid={`pb-method-${c.code}`}
+                                onClick={() => setMethod(c.code)}
+                                className={`flex items-center gap-2 p-2 rounded-lg border-2 text-left transition-colors ${method === c.code ? "border-blue-600 bg-blue-50" : "border-slate-200 hover:border-slate-300"}`}
+                              >
+                                <img src={c.icon_url} alt="" className="w-6 h-6 object-contain shrink-0" />
+                                <span className="text-xs font-medium truncate">{c.name}</span>
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+                <Button data-testid="pb-submit" disabled={submitting || !method} onClick={submit} className="w-full h-12 bg-gradient-to-r from-blue-700 to-blue-600 hover:from-blue-800 hover:to-blue-700 text-base font-bold">
                   {submitting ? "Memproses..." : "Bayar Sekarang"} <ArrowRight className="w-4 h-4 ml-2" />
                 </Button>
                 <p className="text-[10px] text-center text-slate-500">
@@ -622,8 +644,8 @@ function BatalkanPesananDialog({ bk, open, onOpenChange, onCancelled }) {
 
 function SuccessView({ bookingId: bookingIdFromUrl }) {
   const nav = useNavigate();
-  // Fallback kalau URL diakses tanpa :bookingId (mis. Midtrans Finish Redirect URL statis di
-  // dashboard mereka untuk sebagian metode pembayaran tidak selalu bisa disisipi ID transaksi) —
+  // Fallback kalau URL diakses tanpa :bookingId (mis. tamu menutup tab checkout Tripay lalu
+  // balik lewat riwayat browser, bukan lewat return_url yang sudah disisipi ID booking) —
   // pakai booking terakhir yang tersimpan di perangkat ini saat checkout, lalu betulkan URL-nya.
   const [bookingId] = useState(() => bookingIdFromUrl || localStorage.getItem(LAST_BOOKING_ID_KEY));
   const [bk, setBk] = useState(null);
@@ -729,9 +751,9 @@ function SuccessView({ bookingId: bookingIdFromUrl }) {
           {isPending && (
             <div className="bg-amber-50 border-2 border-amber-300 rounded-lg p-4 text-left text-xs space-y-2">
               <p className="font-bold text-amber-900">⚠ Pembayaran Belum Selesai</p>
-              <p className="text-amber-800">Jika Anda memilih <b>Virtual Account</b>, pastikan untuk benar-benar transfer ke nomor VA yang ditampilkan di Snap. Saat <b>uang masuk</b>, sistem otomatis update status menjadi PAID.</p>
+              <p className="text-amber-800">Selesaikan pembayaran sesuai instruksi yang tadi ditampilkan (nomor Virtual Account/QRIS/dll). Saat <b>uang masuk</b>, sistem otomatis update status menjadi PAID.</p>
               <p className="text-amber-700 text-[10px]">
-                <b>Untuk testing Sandbox:</b> buka <a className="underline" href="https://simulator.sandbox.midtrans.com" target="_blank" rel="noreferrer">simulator.sandbox.midtrans.com</a>, pilih bank yang sama, paste VA Number, klik Inquiry → Pay. Status di halaman ini akan auto-refresh setelah webhook diterima.
+                <b>Untuk testing Sandbox:</b> buka <a className="underline" href="https://tripay.co.id/simulator/console/callback" target="_blank" rel="noreferrer">simulator Tripay</a> untuk simulasikan status pembayaran. Status di halaman ini akan auto-refresh setelah webhook diterima.
               </p>
             </div>
           )}
