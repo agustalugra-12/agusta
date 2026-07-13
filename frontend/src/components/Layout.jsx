@@ -9,6 +9,7 @@ import { useState } from "react";
 
 const navItems = [
   { to: "/", label: "Dashboard", icon: LayoutDashboard, exact: true },
+  { to: "/kasir", label: "Kasir", icon: ShoppingCart },
   { to: "/ketersediaan", label: "Ketersediaan", icon: DoorOpen },
   { to: "/reservasi", label: "Reservasi", icon: ListChecks },
   { to: "/otomasi-email", label: "Otomasi Email", icon: Mail, ownerOnly: true },
@@ -21,7 +22,6 @@ const navItems = [
   { to: "/rekomendasi-checkin", label: "Rekomendasi Check-in", icon: Wand2 },
   { to: "/kalender-harga", label: "Kalender Harga", icon: Tag, ownerOnly: true },
   { to: "/rooms", label: "Kamar", icon: BedDouble },
-  { to: "/kasir", label: "Kasir", icon: ShoppingCart },
   { to: "/service", label: "Service", icon: HandCoins },
   { to: "/inventory", label: "Inventory", icon: Boxes, ownerOnly: true },
   { to: "/pengeluaran", label: "Pengeluaran", icon: Wallet, ownerOnly: true },
