@@ -4,11 +4,20 @@ from email_service import generate_voucher_pdf, send_voucher_email
 
 @api.post("/bookings")
 async def create_booking(body: BookingCreate, user: dict = Depends(get_current_user)):
+    """Buat 1 booking (alur lama, `room_id`) atau beberapa kamar sekaligus dalam 1 grup
+    (`room_ids`, mis. rombongan walk-in) — tipe/jam/tarif_override/dengan_sarapan berlaku
+    sama untuk tiap kamar dalam grup, masing-masing tetap jadi dokumen booking terpisah
+    (harga dihitung per kamar dari tarifnya sendiri, bukan dibagi dari satu total gabungan —
+    beda dari grup OTA di `otomasi_email.py` yang cuma dapat 1 angka total dari email OTA
+    tanpa rincian per kamar). Response tetap 1 dict datar (backward compatible) kalau cuma
+    1 kamar; jadi `{"group_id", "bookings": [...]}` kalau lebih dari 1.
+    """
+    room_ids = body.room_ids if body.room_ids else ([body.room_id] if body.room_id else [])
+    room_ids = list(dict.fromkeys(room_ids))  # buang duplikat sambil pertahankan urutan
+    if not room_ids:
+        raise HTTPException(400, "room_id atau room_ids wajib diisi")
     if body.tipe not in ("day_use", "menginap"):
         raise HTTPException(400, "Tipe booking tidak valid")
-    r = await db.rooms.find_one({"id": body.room_id})
-    if not r:
-        raise HTTPException(404, "Kamar tidak ditemukan")
     start = parse_iso(body.jam_mulai, "jam_mulai")
     if body.jam_selesai:
         end = parse_iso(body.jam_selesai, "jam_selesai")
@@ -18,43 +27,64 @@ async def create_booking(body: BookingCreate, user: dict = Depends(get_current_u
         end = start + timedelta(hours=6)
     if end <= start:
         raise HTTPException(400, "Jam selesai harus setelah jam mulai")
-    await check_room_available(body.room_id, start, end)
     if body.tarif_override is not None and body.tarif_override <= 0:
         raise HTTPException(400, "Harga custom harus lebih dari 0")
-    if body.tarif_override:
-        unit_tarif = body.tarif_override
-    elif body.tipe == "menginap":
-        unit_tarif = int(r["tarif_menginap"]) + (BREAKFAST_PRICE if body.dengan_sarapan else 0)
-    else:
-        unit_tarif = int(r["tarif"])
-    kode = f"BK-{datetime.now().strftime('%Y%m%d%H%M%S')}-{uuid.uuid4().hex[:4].upper()}"
-    # Hitung estimasi tagihan (tarif kamar + 3% service fee). Untuk menginap, durasi jam dipakai sebagai kelipatan 6 jam.
-    subtotal = unit_tarif
-    if body.tipe == "menginap":
-        hours = max(6, int((end - start).total_seconds() / 3600))
-        # menginap: tarif per hari (24 jam) — pakai ceil(hours/24) hari × tarif harian (tarif kamar × 4 untuk menginap)
-        # Sederhanakan: tarif × ceil(hours/24)
-        days = max(1, -(-hours // 24))
-        subtotal = unit_tarif * days
-    service_fee = round(subtotal * SERVICE_FEE_PCT)
-    total = subtotal + service_fee
-    doc = {
-        "id": str(uuid.uuid4()), "kode": kode,
-        "room_id": body.room_id, "room_nomor": r["nomor"], "room_tipe": r["tipe"],
-        "tipe": body.tipe, "nama_tamu": body.nama_tamu, "no_hp": body.no_hp,
-        "no_identitas": body.no_identitas, "kendaraan": body.kendaraan, "jumlah_tamu": body.jumlah_tamu,
-        "jam_mulai": start.isoformat(), "jam_selesai": end.isoformat(),
-        "catatan": body.catatan, "status": "aktif",
-        "dengan_sarapan": bool(body.dengan_sarapan) if body.tipe == "menginap" else False,
-        "subtotal": subtotal, "service_fee": service_fee, "total": total,
-        "source": "walk_in",
-        "created_at": now_iso(), "created_by": user["nama"],
-    }
-    await db.bookings.insert_one(doc)
-    await log_availability_change(r["id"], r["tipe"], -1, "booking_dibuat", booking_id=doc["id"])
-    await log_activity(user, "create_booking", f"Booking {body.tipe} kamar {r['nomor']} untuk {body.nama_tamu}", entity=r["nomor"])
-    doc.pop("_id", None)
-    return doc
+
+    # Cek semua kamar dulu SEBELUM membuat satupun dokumen — all-or-nothing untuk grup,
+    # supaya tidak ada kamar yang setengah jalan ter-booking kalau salah satu ternyata bentrok
+    # (beda dari alur email OTA otomatis yang partial-fulfillment-nya wajar karena async/tanpa
+    # staf menunggu; di sini staf memilih kamar spesifik secara live).
+    rooms = []
+    for rid in room_ids:
+        r = await db.rooms.find_one({"id": rid})
+        if not r:
+            raise HTTPException(404, f"Kamar tidak ditemukan (id {rid})")
+        await check_room_available(rid, start, end)
+        rooms.append(r)
+
+    group_id = str(uuid.uuid4()) if len(rooms) > 1 else None
+    created = []
+    for r in rooms:
+        if body.tarif_override:
+            unit_tarif = body.tarif_override
+        elif body.tipe == "menginap":
+            unit_tarif = int(r["tarif_menginap"]) + (BREAKFAST_PRICE if body.dengan_sarapan else 0)
+        else:
+            unit_tarif = int(r["tarif"])
+        kode = f"BK-{datetime.now().strftime('%Y%m%d%H%M%S')}-{uuid.uuid4().hex[:4].upper()}"
+        # Hitung estimasi tagihan (tarif kamar + 3% service fee). Untuk menginap, durasi jam dipakai sebagai kelipatan 6 jam.
+        subtotal = unit_tarif
+        if body.tipe == "menginap":
+            hours = max(6, int((end - start).total_seconds() / 3600))
+            # menginap: tarif per hari (24 jam) — pakai ceil(hours/24) hari × tarif harian (tarif kamar × 4 untuk menginap)
+            # Sederhanakan: tarif × ceil(hours/24)
+            days = max(1, -(-hours // 24))
+            subtotal = unit_tarif * days
+        service_fee = round(subtotal * SERVICE_FEE_PCT)
+        total = subtotal + service_fee
+        doc = {
+            "id": str(uuid.uuid4()), "kode": kode,
+            "room_id": r["id"], "room_nomor": r["nomor"], "room_tipe": r["tipe"],
+            "tipe": body.tipe, "nama_tamu": body.nama_tamu, "no_hp": body.no_hp,
+            "no_identitas": body.no_identitas, "kendaraan": body.kendaraan, "jumlah_tamu": body.jumlah_tamu,
+            "jam_mulai": start.isoformat(), "jam_selesai": end.isoformat(),
+            "catatan": body.catatan, "status": "aktif",
+            "dengan_sarapan": bool(body.dengan_sarapan) if body.tipe == "menginap" else False,
+            "subtotal": subtotal, "service_fee": service_fee, "total": total,
+            "source": "walk_in",
+            "created_at": now_iso(), "created_by": user["nama"],
+        }
+        if group_id:
+            doc["group_id"] = group_id
+        await db.bookings.insert_one(doc)
+        await log_availability_change(r["id"], r["tipe"], -1, "booking_dibuat", booking_id=doc["id"])
+        await log_activity(user, "create_booking", f"Booking {body.tipe} kamar {r['nomor']} untuk {body.nama_tamu}", entity=r["nomor"])
+        doc.pop("_id", None)
+        created.append(doc)
+
+    if len(created) == 1:
+        return created[0]
+    return {"group_id": group_id, "bookings": created}
 
 @api.get("/bookings")
 async def list_bookings(status: Optional[str] = None, tipe: Optional[str] = None,

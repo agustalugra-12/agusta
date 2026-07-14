@@ -48,10 +48,18 @@ export default function Dashboard() {
   const [statusForm, setStatusForm] = useState({ status: "", nama_tamu: "", catatan: "" });
 
   // Quick Book — klik kamar kosong: pilih Day Use/Menginap + harga custom, langsung tercatat.
-  const [quickBook, setQuickBook] = useState(null); // room yang sedang di-quick-book
+  // Bisa >1 kamar sekaligus (mis. rombongan walk-in) lewat mode "Pilih Banyak Kamar" —
+  // quickBookRooms selalu array (1 kamar = alur lama, >1 = grup, tarif sama per kamar).
+  const [quickBookRooms, setQuickBookRooms] = useState([]); // kamar yang sedang di-quick-book
   const [quickForm, setQuickForm] = useState(emptyQuickForm());
+  const [multiSelectMode, setMultiSelectMode] = useState(false);
+  const [selectedIds, setSelectedIds] = useState([]);
 
-  const openQuickBook = (room) => { setQuickForm(emptyQuickForm(room.tarif)); setQuickBook(room); };
+  const openQuickBook = (rooms) => { setQuickForm(emptyQuickForm(rooms[0]?.tarif)); setQuickBookRooms(rooms); };
+  const toggleRoomSelect = (room) => {
+    setSelectedIds((ids) => ids.includes(room.id) ? ids.filter((id) => id !== room.id) : [...ids, room.id]);
+  };
+  const cancelMultiSelect = () => { setMultiSelectMode(false); setSelectedIds([]); };
 
   const quickEst = useMemo(() => {
     const harga = Number(quickForm.harga) || 0;
@@ -66,37 +74,40 @@ export default function Dashboard() {
   }, [quickForm]);
 
   const submitQuickBook = async () => {
-    if (!quickBook) return;
+    if (!quickBookRooms.length) return;
     if (!quickForm.nama_tamu.trim()) { toast.error("Nama tamu wajib diisi"); return; }
     const harga = Number(quickForm.harga) || 0;
     if (harga <= 0) { toast.error("Harga harus lebih dari 0"); return; }
+    const roomIds = quickBookRooms.map((r) => r.id);
+    const isGroup = roomIds.length > 1;
     try {
       if (quickForm.tipe === "day_use") {
         const jamIso = quickForm.jam_checkin ? new Date(quickForm.jam_checkin).toISOString() : undefined;
         const { data } = await api.post("/checkins", {
-          room_id: quickBook.id, nama_tamu: quickForm.nama_tamu, no_hp: quickForm.no_hp,
+          room_ids: roomIds, nama_tamu: quickForm.nama_tamu, no_hp: quickForm.no_hp,
           no_identitas: quickForm.no_identitas, kendaraan: quickForm.kendaraan,
           jumlah_tamu: Number(quickForm.jumlah_tamu) || 1, catatan: quickForm.catatan,
           jam_checkin: jamIso, tarif_override: harga,
         });
-        toast.success(`Check-in berhasil • ${data.trx_no}`);
+        toast.success(isGroup ? `Check-in berhasil untuk ${data.checkins.length} kamar` : `Check-in berhasil • ${data.trx_no}`);
       } else {
         const nights = Math.max(1, Number(quickForm.malam) || 1);
         const start = new Date();
         const end = new Date(start);
         end.setDate(end.getDate() + nights);
-        await api.post("/bookings", {
-          room_id: quickBook.id, tipe: "menginap", nama_tamu: quickForm.nama_tamu, no_hp: quickForm.no_hp,
+        const { data } = await api.post("/bookings", {
+          room_ids: roomIds, tipe: "menginap", nama_tamu: quickForm.nama_tamu, no_hp: quickForm.no_hp,
           no_identitas: quickForm.no_identitas, kendaraan: quickForm.kendaraan,
           jumlah_tamu: Number(quickForm.jumlah_tamu) || 1, catatan: quickForm.catatan,
           jam_mulai: start.toISOString(), jam_selesai: end.toISOString(), tarif_override: harga,
         });
-        await api.put(`/rooms/${quickBook.id}/status`, {
+        const bks = isGroup ? data.bookings : [data];
+        await Promise.all(bks.map((bk) => api.put(`/rooms/${bk.room_id}/status`, {
           status: "menginap", nama_tamu: quickForm.nama_tamu, catatan: quickForm.catatan,
-        });
-        toast.success("Booking menginap dibuat, kamar ditandai terisi");
+        })));
+        toast.success(isGroup ? `Booking menginap dibuat untuk ${bks.length} kamar, semua ditandai terisi` : "Booking menginap dibuat, kamar ditandai terisi");
       }
-      setQuickBook(null); load();
+      setQuickBookRooms([]); cancelMultiSelect(); load();
     } catch (e) { toast.error(e?.response?.data?.detail || "Gagal"); }
   };
 
@@ -176,7 +187,8 @@ export default function Dashboard() {
       return;
     }
     if (room.status === "kosong") {
-      openQuickBook(room);
+      if (multiSelectMode) { toggleRoomSelect(room); return; }
+      openQuickBook([room]);
       return;
     }
     setActionRoom(room);
@@ -408,7 +420,7 @@ export default function Dashboard() {
         <CardContent className="p-4 sm:p-6">
           <div className="flex items-center justify-between mb-4 flex-wrap gap-3">
             <h2 className="text-xl font-bold">Daftar Kamar</h2>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 flex-wrap">
               <Calendar className="w-4 h-4 text-slate-500" />
               <Label htmlFor="filter-date" className="text-xs text-slate-600">Booking pada:</Label>
               <Input
@@ -424,8 +436,34 @@ export default function Dashboard() {
                   Hari ini
                 </Button>
               )}
+              {isToday && (
+                <Button
+                  data-testid="multi-select-toggle"
+                  size="sm" variant={multiSelectMode ? "default" : "outline"}
+                  className={multiSelectMode ? "bg-blue-700 hover:bg-blue-800 h-9" : "h-9"}
+                  onClick={() => (multiSelectMode ? cancelMultiSelect() : setMultiSelectMode(true))}
+                >
+                  {multiSelectMode ? "Batal Pilih Banyak" : "Pilih Banyak Kamar"}
+                </Button>
+              )}
             </div>
           </div>
+          {multiSelectMode && (
+            <div data-testid="multi-select-bar" className="mb-3 rounded-lg bg-blue-50 border border-blue-200 px-3 py-2 text-xs sm:text-sm flex items-center justify-between flex-wrap gap-2">
+              <span className="text-blue-800">Klik kamar kosong untuk pilih rombongan — <b>{selectedIds.length} kamar dipilih</b></span>
+              <div className="flex gap-2">
+                <Button size="sm" variant="ghost" onClick={cancelMultiSelect}>Batal</Button>
+                <Button
+                  size="sm" data-testid="multi-select-lanjut"
+                  disabled={selectedIds.length === 0}
+                  className="bg-blue-700 hover:bg-blue-800"
+                  onClick={() => openQuickBook(rooms.filter((r) => selectedIds.includes(r.id)))}
+                >
+                  Lanjut ({selectedIds.length})
+                </Button>
+              </div>
+            </div>
+          )}
           {!isToday && (
             <div data-testid="filter-date-banner" className="mb-3 rounded-lg bg-amber-50 border border-amber-200 px-3 py-2 text-xs text-amber-800">
               Menampilkan booking untuk <b>{new Date(`${filterDate}T00:00:00`).toLocaleDateString("id-ID", { weekday: "long", day: "2-digit", month: "long", year: "numeric" })}</b>. Hanya kamar yang punya booking di tanggal ini yang ditandai; status real-time (Day Use/Menginap/dll) hanya berlaku untuk hari ini.
@@ -458,6 +496,8 @@ export default function Dashboard() {
               const bkLabel = upcomingBk
                 ? new Date(upcomingBk.jam_mulai).toLocaleString("id-ID", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })
                 : null;
+              const selectable = multiSelectMode && effStatus === "kosong" && !upcomingBk;
+              const isSelected = selectable && selectedIds.includes(r.id);
               return (
               <div
                 key={r.id}
@@ -465,9 +505,12 @@ export default function Dashboard() {
                 onClick={() => handleRoomClick(r, upcomingBk)}
                 role="button" tabIndex={0}
                 onKeyDown={(e) => { if (e.key === "Enter") handleRoomClick(r, upcomingBk); }}
-                className="room-card relative rounded-xl text-white p-4 aspect-square flex flex-col justify-between text-left overflow-hidden cursor-pointer"
+                className={`room-card relative rounded-xl text-white p-4 aspect-square flex flex-col justify-between text-left overflow-hidden cursor-pointer ${isSelected ? "ring-4 ring-blue-500 ring-offset-2" : ""} ${selectable && !isSelected ? "ring-2 ring-dashed ring-white/60" : ""}`}
                 style={{ background: bg }}
               >
+                {isSelected && (
+                  <div className="absolute top-1 right-1 w-5 h-5 rounded-full bg-blue-600 border-2 border-white grid place-items-center text-[10px] font-bold z-10">✓</div>
+                )}
                 <div className="flex items-center justify-between">
                   <span className="text-[10px] uppercase font-semibold tracking-wider opacity-90">{r.tipe}</span>
                   <span className="text-[10px] bg-white/25 rounded px-1.5 py-0.5">{upcomingBk ? "Booked" : statusLabel(effStatus)}</span>
@@ -499,16 +542,23 @@ export default function Dashboard() {
         </CardContent>
       </Card>
 
-      {/* Quick Book Dialog — klik kamar kosong: pilih Day Use/Menginap + harga custom */}
-      <Dialog open={!!quickBook} onOpenChange={(o) => !o && setQuickBook(null)}>
+      {/* Quick Book Dialog — klik kamar kosong: pilih Day Use/Menginap + harga custom. quickBookRooms
+          bisa >1 kamar (rombongan) — harga/tipe yang sama berlaku untuk tiap kamar dalam grup. */}
+      <Dialog open={quickBookRooms.length > 0} onOpenChange={(o) => !o && setQuickBookRooms([])}>
         <DialogContent className="max-w-lg">
-          <DialogHeader><DialogTitle>Kamar {quickBook?.nomor} — {quickBook?.tipe}</DialogTitle></DialogHeader>
+          <DialogHeader>
+            <DialogTitle>
+              {quickBookRooms.length > 1
+                ? `${quickBookRooms.length} Kamar: ${quickBookRooms.map((r) => r.nomor).join(", ")}`
+                : `Kamar ${quickBookRooms[0]?.nomor} — ${quickBookRooms[0]?.tipe}`}
+            </DialogTitle>
+          </DialogHeader>
           <div className="grid grid-cols-2 gap-3 max-h-[70vh] overflow-y-auto">
             <div className="col-span-2">
               <Label>Tipe</Label>
               <div className="grid grid-cols-2 gap-2 mt-1.5">
-                <Button type="button" variant={quickForm.tipe === "day_use" ? "default" : "outline"} className={quickForm.tipe === "day_use" ? "bg-orange-500 hover:bg-orange-600" : ""} onClick={() => setQuickForm(f => ({ ...f, tipe: "day_use", harga: quickBook?.tarif ?? f.harga }))} data-testid="q-tipe-dayuse">Day Use</Button>
-                <Button type="button" variant={quickForm.tipe === "menginap" ? "default" : "outline"} className={quickForm.tipe === "menginap" ? "bg-blue-700 hover:bg-blue-800" : ""} onClick={() => setQuickForm(f => ({ ...f, tipe: "menginap", harga: quickBook?.tarif_menginap ?? f.harga }))} data-testid="q-tipe-menginap">Menginap</Button>
+                <Button type="button" variant={quickForm.tipe === "day_use" ? "default" : "outline"} className={quickForm.tipe === "day_use" ? "bg-orange-500 hover:bg-orange-600" : ""} onClick={() => setQuickForm(f => ({ ...f, tipe: "day_use", harga: quickBookRooms[0]?.tarif ?? f.harga }))} data-testid="q-tipe-dayuse">Day Use</Button>
+                <Button type="button" variant={quickForm.tipe === "menginap" ? "default" : "outline"} className={quickForm.tipe === "menginap" ? "bg-blue-700 hover:bg-blue-800" : ""} onClick={() => setQuickForm(f => ({ ...f, tipe: "menginap", harga: quickBookRooms[0]?.tarif_menginap ?? f.harga }))} data-testid="q-tipe-menginap">Menginap</Button>
               </div>
             </div>
             <div className="col-span-2"><Label>Nama Tamu *</Label><Input data-testid="q-nama" value={quickForm.nama_tamu} onChange={(e) => setQuickForm(f => ({ ...f, nama_tamu: e.target.value }))} autoFocus /></div>
@@ -522,19 +572,22 @@ export default function Dashboard() {
               <div className="col-span-2"><Label>Jumlah Malam</Label><Input data-testid="q-malam" type="number" min="1" value={quickForm.malam} onChange={(e) => setQuickForm(f => ({ ...f, malam: e.target.value }))} /></div>
             )}
             <div className="col-span-2">
-              <Label>{quickForm.tipe === "day_use" ? "Harga (per 6 jam)" : "Harga per Malam"}</Label>
+              <Label>{quickForm.tipe === "day_use" ? "Harga (per 6 jam)" : "Harga per Malam"}{quickBookRooms.length > 1 ? " — per kamar" : ""}</Label>
               <Input data-testid="q-harga" type="number" min="0" value={quickForm.harga} onChange={(e) => setQuickForm(f => ({ ...f, harga: e.target.value }))} />
             </div>
             <div className="col-span-2"><Label>Catatan</Label><Textarea value={quickForm.catatan} onChange={(e) => setQuickForm(f => ({ ...f, catatan: e.target.value }))} rows={2} /></div>
             <div data-testid="q-est-summary" className="col-span-2 rounded-lg bg-blue-50 border border-blue-200 p-3 text-sm space-y-1">
-              <div className="flex justify-between"><span className="text-slate-600">Subtotal{quickForm.tipe === "menginap" ? ` (${quickEst.nights} malam)` : ""}</span><b>{fmtRp(quickEst.subtotal)}</b></div>
-              <div className="flex justify-between"><span className="text-slate-600">Service Fee (3%)</span><b>{fmtRp(quickEst.service_fee)}</b></div>
-              <div className="flex justify-between text-base pt-1 border-t border-blue-200 mt-1"><span className="font-bold">Estimasi Total</span><b className="text-blue-700">{fmtRp(quickEst.total)}</b></div>
+              <div className="flex justify-between"><span className="text-slate-600">Subtotal{quickForm.tipe === "menginap" ? ` (${quickEst.nights} malam)` : ""}{quickBookRooms.length > 1 ? " / kamar" : ""}</span><b>{fmtRp(quickEst.subtotal)}</b></div>
+              <div className="flex justify-between"><span className="text-slate-600">Service Fee (3%){quickBookRooms.length > 1 ? " / kamar" : ""}</span><b>{fmtRp(quickEst.service_fee)}</b></div>
+              <div className="flex justify-between text-base pt-1 border-t border-blue-200 mt-1"><span className="font-bold">Estimasi Total{quickBookRooms.length > 1 ? " / kamar" : ""}</span><b className="text-blue-700">{fmtRp(quickEst.total)}</b></div>
+              {quickBookRooms.length > 1 && (
+                <div className="flex justify-between text-base pt-1 border-t border-blue-300 mt-1"><span className="font-bold">Total {quickBookRooms.length} Kamar</span><b className="text-blue-800">{fmtRp(quickEst.total * quickBookRooms.length)}</b></div>
+              )}
               {quickForm.tipe === "day_use" && <p className="text-[10px] text-slate-500">*Belum termasuk overtime setelah 6 jam.</p>}
             </div>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setQuickBook(null)}>Batal</Button>
+            <Button variant="outline" onClick={() => setQuickBookRooms([])}>Batal</Button>
             <Button data-testid="q-submit" onClick={submitQuickBook} className="bg-blue-700 hover:bg-blue-800">
               {quickForm.tipe === "day_use" ? "Konfirmasi Check-In" : "Buat Booking Menginap"}
             </Button>

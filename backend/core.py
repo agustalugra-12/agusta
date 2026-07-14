@@ -296,7 +296,8 @@ class CheckinCreate(BaseModel):
     no_identitas: str = ""
     kendaraan: str = ""
     jumlah_tamu: int = 1
-    room_id: str
+    room_id: Optional[str] = None  # 1 kamar (alur lama) — diabaikan kalau room_ids diisi
+    room_ids: Optional[List[str]] = None  # >1 kamar Day Use sekaligus (mis. rombongan), tarif_override berlaku sama utk tiap kamar
     catatan: str = ""
     foto_identitas_url: Optional[str] = ""
     jam_checkin: Optional[str] = None  # ISO datetime; default = now
@@ -365,7 +366,8 @@ class MoveRoomBody(BaseModel):
     alasan: Optional[str] = ""
 
 class BookingCreate(BaseModel):
-    room_id: str
+    room_id: Optional[str] = None  # 1 kamar (alur lama) — diabaikan kalau room_ids diisi
+    room_ids: Optional[List[str]] = None  # >1 kamar sekaligus (mis. rombongan walk-in), tarif_override/dengan_sarapan berlaku sama utk tiap kamar
     tipe: str  # "day_use" | "menginap"
     nama_tamu: str
     no_hp: str = ""

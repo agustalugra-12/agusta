@@ -2,15 +2,30 @@ from core import *
 
 @api.post("/checkins")
 async def create_checkin(body: CheckinCreate, user: dict = Depends(get_current_user)):
-    r = await db.rooms.find_one({"id": body.room_id})
-    if not r:
-        raise HTTPException(404, "Kamar tidak ditemukan")
-    if r["status"] != "kosong":
-        raise HTTPException(400, "Kamar belum tersedia dan tidak dapat digunakan untuk check-in.")
+    """Check-in Day Use 1 kamar (alur lama, `room_id`) atau beberapa kamar sekaligus dalam
+    1 grup (`room_ids`, mis. rombongan walk-in) — tarif_override berlaku sama untuk tiap
+    kamar, 1 data tamu/guest record dipakai bersama, tapi tiap kamar tetap jadi dokumen
+    checkin terpisah (harga/durasi/checkout dihitung independen per kamar). Response tetap
+    1 dict datar (backward compatible) kalau cuma 1 kamar; jadi `{"group_id", "checkins": [...]}`
+    kalau lebih dari 1.
+    """
+    room_ids = body.room_ids if body.room_ids else ([body.room_id] if body.room_id else [])
+    room_ids = list(dict.fromkeys(room_ids))
+    if not room_ids:
+        raise HTTPException(400, "room_id atau room_ids wajib diisi")
     if body.tarif_override is not None and body.tarif_override <= 0:
         raise HTTPException(400, "Harga custom harus lebih dari 0")
-    tarif_dasar = body.tarif_override if body.tarif_override else r["tarif"]
-    # Save / upsert guest
+
+    rooms = []
+    for rid in room_ids:
+        r = await db.rooms.find_one({"id": rid})
+        if not r:
+            raise HTTPException(404, f"Kamar tidak ditemukan (id {rid})")
+        if r["status"] != "kosong":
+            raise HTTPException(400, f"Kamar {r['nomor']} belum tersedia dan tidak dapat digunakan untuk check-in.")
+        rooms.append(r)
+
+    # Save / upsert guest — 1 data tamu dipakai bersama untuk semua kamar dalam grup ini.
     guest = None
     if body.no_identitas:
         guest = await db.guests.find_one({"no_identitas": body.no_identitas})
@@ -49,40 +64,50 @@ async def create_checkin(body: CheckinCreate, user: dict = Depends(get_current_u
             jam_ci_iso = d.astimezone(timezone.utc).isoformat()
         except Exception:
             raise HTTPException(400, "Format jam check-in tidak valid")
-    # number generator
-    trx_no = f"CI-{datetime.now().strftime('%Y%m%d%H%M%S')}-{uuid.uuid4().hex[:4].upper()}"
-    doc = {
-        "id": str(uuid.uuid4()),
-        "trx_no": trx_no,
-        "guest_id": guest_id,
-        "nama_tamu": body.nama_tamu,
-        "no_hp": body.no_hp,
-        "no_identitas": body.no_identitas,
-        "kendaraan": body.kendaraan,
-        "jumlah_tamu": body.jumlah_tamu,
-        "room_id": body.room_id,
-        "room_nomor": r["nomor"],
-        "room_tipe": r["tipe"],
-        "tarif_dasar": tarif_dasar,
-        "jam_checkin": jam_ci_iso,
-        "jam_checkout": None,
-        "durasi_jam": 0,
-        "overtime_jam": 0,
-        "biaya_tambahan": 0,
-        "total": 0,
-        "status": "aktif",
-        "catatan": body.catatan,
-        "foto_identitas_url": body.foto_identitas_url or "",
-        "pembayaran": [],
-        "petugas_checkin": user["nama"],
-        "petugas_checkin_id": user["id"],
-        "created_at": now_iso(),
-    }
-    await db.checkins.insert_one(doc)
-    await db.rooms.update_one({"id": body.room_id}, {"$set": {"status": "day_use", "info": {"checkin_id": doc["id"], "nama_tamu": body.nama_tamu}}})
-    await log_activity(user, "checkin", f"Check-in {body.nama_tamu} ke kamar {r['nomor']}", entity=r["nomor"])
-    doc.pop("_id", None)
-    return doc
+
+    group_id = str(uuid.uuid4()) if len(rooms) > 1 else None
+    created = []
+    for r in rooms:
+        tarif_dasar = body.tarif_override if body.tarif_override else r["tarif"]
+        trx_no = f"CI-{datetime.now().strftime('%Y%m%d%H%M%S')}-{uuid.uuid4().hex[:4].upper()}"
+        doc = {
+            "id": str(uuid.uuid4()),
+            "trx_no": trx_no,
+            "guest_id": guest_id,
+            "nama_tamu": body.nama_tamu,
+            "no_hp": body.no_hp,
+            "no_identitas": body.no_identitas,
+            "kendaraan": body.kendaraan,
+            "jumlah_tamu": body.jumlah_tamu,
+            "room_id": r["id"],
+            "room_nomor": r["nomor"],
+            "room_tipe": r["tipe"],
+            "tarif_dasar": tarif_dasar,
+            "jam_checkin": jam_ci_iso,
+            "jam_checkout": None,
+            "durasi_jam": 0,
+            "overtime_jam": 0,
+            "biaya_tambahan": 0,
+            "total": 0,
+            "status": "aktif",
+            "catatan": body.catatan,
+            "foto_identitas_url": body.foto_identitas_url or "",
+            "pembayaran": [],
+            "petugas_checkin": user["nama"],
+            "petugas_checkin_id": user["id"],
+            "created_at": now_iso(),
+        }
+        if group_id:
+            doc["group_id"] = group_id
+        await db.checkins.insert_one(doc)
+        await db.rooms.update_one({"id": r["id"]}, {"$set": {"status": "day_use", "info": {"checkin_id": doc["id"], "nama_tamu": body.nama_tamu}}})
+        await log_activity(user, "checkin", f"Check-in {body.nama_tamu} ke kamar {r['nomor']}", entity=r["nomor"])
+        doc.pop("_id", None)
+        created.append(doc)
+
+    if len(created) == 1:
+        return created[0]
+    return {"group_id": group_id, "checkins": created}
 
 @api.get("/checkins")
 async def list_checkins(
