@@ -476,6 +476,7 @@ class EmailExtractedData(BaseModel):
     jumlah_tamu: int
     harga: int
     status_pembayaran: str  # Lunas | Belum Bayar | Dibatalkan
+    jumlah_kamar: int = 1  # satu email OTA bisa memesan lebih dari 1 kamar sekaligus (mis. RedDoorz "Jumlah Kamar : 3")
 
 class RoomMappingCreate(BaseModel):
     """Dokumen di collection `room_mappings` — entitas ROOM_MAPPINGS di PRD, menyamakan
@@ -560,7 +561,8 @@ class EmailLog(BaseModel):
     status: str  # Parsed_Success | Failed | Manual_Required | Perlu_Review_Modifikasi | Sudah_Diproses
     jenis: Optional[str] = None  # baru | modifikasi | pembatalan — klasifikasi AI, None kalau is_reservation false
     extracted_data: Optional[EmailExtractedData] = None
-    reservation_id: Optional[str] = None  # booking PMS yang dibuat/dibatalkan otomatis dari email ini
+    reservation_id: Optional[str] = None  # booking PMS yang dibuat/dibatalkan otomatis dari email ini (pertama, kalau lebih dari satu)
+    reservation_ids: Optional[List[str]] = None  # semua booking PMS terkait (kalau 1 email OTA = beberapa kamar sekaligus)
     aksi: Optional[str] = None  # reservasi_baru_dibuat | reservasi_dibatalkan — hasil Reservation Automation
     alasan: Optional[str] = None  # diisi kalau status Failed/Manual_Required
     processed_at: str

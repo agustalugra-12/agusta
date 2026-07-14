@@ -198,10 +198,14 @@ function LogEmailDetailDialog({ log, onClose }) {
                 <div><span className="text-slate-500">Check-in:</span> {fmtDateTime(log.extracted_data.check_in)}</div>
                 <div><span className="text-slate-500">Check-out:</span> {fmtDateTime(log.extracted_data.check_out)}</div>
                 <div><span className="text-slate-500">Jumlah Tamu:</span> {log.extracted_data.jumlah_tamu}</div>
+                <div><span className="text-slate-500">Jumlah Kamar:</span> {log.extracted_data.jumlah_kamar || 1}</div>
                 <div className="flex justify-between pt-1 border-t border-slate-200 mt-1">
                   <span className="font-bold">Harga</span><b className="text-blue-700">{fmtRp(log.extracted_data.harga)}</b>
                 </div>
                 <div><span className="text-slate-500">Status Pembayaran:</span> {log.extracted_data.status_pembayaran}</div>
+                {log.reservation_ids && log.reservation_ids.length > 1 && (
+                  <div className="text-emerald-700 pt-1 border-t border-slate-200 mt-1">{log.reservation_ids.length} reservasi dibuat dari email ini (multi-kamar)</div>
+                )}
               </div>
             ) : (
               <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 mt-2 flex gap-2">
@@ -524,7 +528,7 @@ function LogEmail({ logs }) {
 
 const emptyManualForm = {
   no_reservasi: "", nama_tamu: "", tipe_kamar: ROOM_TYPE_OPTIONS[0],
-  check_in: "", check_out: "", jumlah_tamu: 1, harga: 0, status_pembayaran: PAYMENT_STATUS_OPTIONS[0],
+  check_in: "", check_out: "", jumlah_tamu: 1, jumlah_kamar: 1, harga: 0, status_pembayaran: PAYMENT_STATUS_OPTIONS[0],
 };
 const isoFromLocal = (v) => (v ? new Date(v).toISOString() : "");
 
@@ -563,8 +567,14 @@ function ManualProcessDialog({ log, onClose, onSave }) {
               </select>
             </div>
             <div>
-              <Label>Jumlah Tamu</Label>
+              <Label>Jumlah Tamu (per kamar)</Label>
               <Input data-testid="manual-jumlah-tamu" type="number" min={1} value={form.jumlah_tamu} onChange={(e) => setForm((f) => ({ ...f, jumlah_tamu: e.target.value }))} className="mt-1.5" />
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <Label>Jumlah Kamar</Label>
+              <Input data-testid="manual-jumlah-kamar" type="number" min={1} value={form.jumlah_kamar} onChange={(e) => setForm((f) => ({ ...f, jumlah_kamar: e.target.value }))} className="mt-1.5" />
             </div>
           </div>
           <div className="grid grid-cols-2 gap-3">
@@ -608,6 +618,7 @@ function ManualProcessDialog({ log, onClose, onSave }) {
               check_in: isoFromLocal(form.check_in),
               check_out: isoFromLocal(form.check_out),
               jumlah_tamu: Number(form.jumlah_tamu) || 1,
+              jumlah_kamar: Number(form.jumlah_kamar) || 1,
               harga: Number(form.harga) || 0,
               status_pembayaran: form.status_pembayaran,
             })}
