@@ -47,8 +47,8 @@ echo "======================================"
 
 echo ""
 echo "Website:"
-echo "https://pmspelangi.my.id"
+echo "https://pelangihomestay.com"
 
 echo ""
 echo "API:"
-echo "https://api.pmspelangi.my.id"
+echo "https://api.pelangihomestay.com"
