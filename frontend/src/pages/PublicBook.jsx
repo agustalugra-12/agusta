@@ -705,6 +705,11 @@ function SuccessView({ bookingId: bookingIdFromUrl }) {
   const isPaid = bk.payment_status === "paid";
   const isFailed = bk.status === "cancelled" && (bk.payment_status === "expired" || bk.payment_status === "failed");
   const isPending = !isFailed && (bk.payment_status === "pending" || bk.status === "booking_pending");
+  // status_bayar (belum_bayar/dp/lunas) dari backend — beda dari payment_status mentah
+  // yang cuma tahu "paid" (settlement gateway) tanpa peduli itu DP atau bayar penuh.
+  const statusBayar = bk.status_bayar || (isPaid ? "lunas" : "belum_bayar");
+  const isDp = isPaid && statusBayar === "dp";
+  const STATUS_BAYAR_LABEL = { belum_bayar: "BELUM BAYAR", dp: "DP — BELUM LUNAS", lunas: "LUNAS" };
   return (
     <div className={`min-h-screen grid place-items-center p-4 bg-gradient-to-b print:bg-white print:block print:p-0 ${isPaid ? "from-emerald-50 via-white to-blue-50" : isFailed ? "from-red-50 via-white to-blue-50" : "from-amber-50 via-white to-blue-50"}`}>
       <Card className={`max-w-md w-full print:max-w-none print:shadow-none print:border-0 ${isPaid ? "border-emerald-200" : isFailed ? "border-red-200" : "border-amber-200"}`}>
@@ -713,9 +718,11 @@ function SuccessView({ bookingId: bookingIdFromUrl }) {
             {isFailed ? <XCircle className="w-9 h-9 text-red-600" /> : <CheckCircle2 className={`w-9 h-9 ${isPaid ? "text-emerald-600" : "text-amber-600"}`} />}
           </div>
           <div>
-            <h2 className="text-2xl font-extrabold">{isPaid ? "Pembayaran Diterima!" : isFailed ? "Booking Dibatalkan" : "Booking Berhasil Dibuat!"}</h2>
+            <h2 className="text-2xl font-extrabold">{isDp ? "DP Diterima!" : isPaid ? "Pembayaran Diterima!" : isFailed ? "Booking Dibatalkan" : "Booking Berhasil Dibuat!"}</h2>
             <p className="text-slate-600 text-sm mt-1">
-              {isPaid
+              {isDp
+                ? "Booking Anda sudah terkonfirmasi dengan DP. Sisa pembayaran dilunasi saat check-in di lokasi."
+                : isPaid
                 ? "Booking Anda sudah terkonfirmasi. Simpan nomor booking di bawah."
                 : isFailed
                 ? "Pembayaran tidak diselesaikan tepat waktu sehingga booking otomatis dibatalkan dan kamar dilepas kembali."
@@ -739,8 +746,11 @@ function SuccessView({ bookingId: bookingIdFromUrl }) {
             <div className="flex justify-between border-t pt-2 mt-2"><span className="text-slate-500">Total</span><b className="text-blue-700">{fmtRp(bk.total)}</b></div>
             <div className="flex justify-between"><span className="text-slate-500">DP Minimum</span><b>{fmtRp(bk.dp_min)}</b></div>
             <div className="flex justify-between"><span className="text-slate-500">Status Pembayaran</span>
-              <b data-testid="pb-success-paystatus" className={isPaid ? "text-emerald-600" : isFailed ? "text-red-600" : "text-amber-600"}>{bk.payment_status?.toUpperCase()}</b>
+              <b data-testid="pb-success-paystatus" className={isDp ? "text-amber-600" : isPaid ? "text-emerald-600" : isFailed ? "text-red-600" : "text-amber-600"}>{STATUS_BAYAR_LABEL[statusBayar] || bk.payment_status?.toUpperCase()}</b>
             </div>
+            {isDp && bk.sisa_tagihan > 0 && (
+              <div className="flex justify-between" data-testid="pb-success-sisa"><span className="text-slate-500">Sisa Dibayar di Lokasi</span><b className="text-amber-600">{fmtRp(bk.sisa_tagihan)}</b></div>
+            )}
           </div>
           {isFailed && (
             <div data-testid="pb-payment-failed" className="bg-red-50 border-2 border-red-300 rounded-lg p-4 text-left text-xs space-y-2">
@@ -758,7 +768,11 @@ function SuccessView({ bookingId: bookingIdFromUrl }) {
             </div>
           )}
           {isPaid && (
-            <p className="text-xs text-slate-500">Mohon tunjukkan nomor booking saat kedatangan.</p>
+            <p className="text-xs text-slate-500">
+              {isDp
+                ? `Mohon tunjukkan nomor booking saat kedatangan dan lunasi sisa ${fmtRp(bk.sisa_tagihan)} di lokasi.`
+                : "Mohon tunjukkan nomor booking saat kedatangan."}
+            </p>
           )}
           <button
             type="button"

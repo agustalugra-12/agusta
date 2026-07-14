@@ -16,18 +16,6 @@ const MOCK_UNPAID_BOOKINGS = [
   { id: "b2", kode: "RSV-1045", nama_tamu: "Yusuf Pratama", total: 130000, dp_min: 65000 },
 ];
 
-// Data tiruan (stub) — daftar transaksi Midtrans, bentuknya mengikuti koleksi `payment_log`
-// yang sudah nyata di backend (backend/routes/payments.py). Alur checkout tamu (Snap.js)
-// SUDAH berfungsi sungguhan di PublicBook.jsx; halaman ini baru untuk staf memantau semua
-// transaksi — endpoint list-nya menyusul (backend baru punya lookup per order_id).
-const MOCK_TRANSACTIONS = [
-  { id: "1", order_id: "RSV-1042-143022ABC", booking_kode: "RSV-1042", nama_tamu: "Dewi Anggraini", gross_amount: 130000, payment_option: "dp50", payment_type: "qris", transaction_status: "settlement", created_at: "2026-07-11T09:30:22" },
-  { id: "2", order_id: "RSV-1041-101503XYZ", booking_kode: "RSV-1041", nama_tamu: "Budi Santoso", gross_amount: 123600, payment_option: "full", payment_type: "bca_va", transaction_status: "pending", created_at: "2026-07-11T10:15:03" },
-  { id: "3", order_id: "RSV-1040-081145DEF", booking_kode: "RSV-1040", nama_tamu: "Ahmad Fauzi", gross_amount: 240000, payment_option: "full", payment_type: "bni_va", transaction_status: "settlement", created_at: "2026-07-10T08:11:45" },
-  { id: "4", order_id: "RSV-1039-070230GHI", booking_kode: "RSV-1039", nama_tamu: "Sri Wahyuni", gross_amount: 65000, payment_option: "dp50", payment_type: "bank_transfer", transaction_status: "expire", created_at: "2026-07-09T07:02:30" },
-  { id: "5", order_id: "RSV-1037-063312JKL", booking_kode: "RSV-1037", nama_tamu: "Hendra Wijaya", gross_amount: 123600, payment_option: "full", payment_type: "qris", transaction_status: "deny", created_at: "2026-07-10T06:33:12" },
-];
-
 const STATUS_META = {
   settlement: { label: "Lunas", cls: "bg-emerald-100 text-emerald-800" },
   capture: { label: "Lunas", cls: "bg-emerald-100 text-emerald-800" },
@@ -42,10 +30,12 @@ const STATUS_META = {
 const STATUS_OPTIONS = ["Semua", "settlement", "pending", "expire", "deny", "cancel", "refund"];
 const UBAH_STATUS_OPTIONS = ["settlement", "pending", "expire", "deny", "cancel", "refund"];
 
-// Dialog "Buat Tagihan Baru" — simulasi alur Midtrans Snap dari sisi staf (bukan tamu):
-// pilih booking yang belum lunas + metode bayar (DP50/Lunas), hasilnya link pembayaran
-// tiruan yang bisa "dikirim" ke tamu. Ini melengkapi alur checkout tamu di PublicBook.jsx
-// (yang sudah nyata pakai Snap.js) untuk kasus reservasi yang masuk lewat telepon/WA.
+// Dialog "Buat Tagihan Baru" — simulasi alur bayar dari sisi staf (bukan tamu): pilih
+// booking yang belum lunas + metode bayar (DP50/Lunas), hasilnya link pembayaran tiruan
+// yang bisa "dikirim" ke tamu. Ini melengkapi alur checkout tamu di PublicBook.jsx (yang
+// sudah nyata pakai Tripay) untuk kasus reservasi yang masuk lewat telepon/WA. Belum
+// dipanggilkan ke POST /payments/tripay/create-transaction sungguhan karena endpoint itu
+// juga butuh pilihan channel Tripay spesifik (QRIS/VA/dst) yang belum ada UI-nya di sini.
 function BuatTagihanDialog({ open, onOpenChange, onCreated }) {
   const [bookingId, setBookingId] = useState(MOCK_UNPAID_BOOKINGS[0]?.id || "");
   const [opsi, setOpsi] = useState("dp50");
@@ -66,7 +56,7 @@ function BuatTagihanDialog({ open, onOpenChange, onCreated }) {
       payment_type: null,
       transaction_status: "pending",
       created_at: new Date().toISOString(),
-      redirect_url: `https://app.sandbox.midtrans.com/snap/v4/simulasi/${orderId}`,
+      redirect_url: `https://pelangihomestay.com/book/simulasi-tagihan/${orderId}`,
     };
     setHasil(trx);
     onCreated(trx);
@@ -83,7 +73,7 @@ function BuatTagihanDialog({ open, onOpenChange, onCreated }) {
     <Dialog open={open} onOpenChange={(o) => { if (!o) tutup(); }}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle data-testid="buat-tagihan-title">Buat Tagihan Baru (Simulasi Snap)</DialogTitle>
+          <DialogTitle data-testid="buat-tagihan-title">Buat Tagihan Baru (Simulasi)</DialogTitle>
         </DialogHeader>
         {!hasil ? (
           <div className="space-y-3 text-sm">
@@ -135,7 +125,7 @@ function BuatTagihanDialog({ open, onOpenChange, onCreated }) {
                 <a href={hasil.redirect_url} target="_blank" rel="noreferrer"><ExternalLink className="w-3.5 h-3.5" /></a>
               </Button>
             </div>
-            <p className="text-[11px] text-slate-400">Simulasi — belum memanggil Midtrans Snap sungguhan.</p>
+            <p className="text-[11px] text-slate-400">Simulasi — belum memanggil Tripay sungguhan.</p>
           </div>
         )}
         <DialogFooter>
@@ -152,7 +142,8 @@ function BuatTagihanDialog({ open, onOpenChange, onCreated }) {
 
 export default function Pembayaran() {
   const [searchParams] = useSearchParams();
-  const [transactions, setTransactions] = useState(MOCK_TRANSACTIONS);
+  const [transactions, setTransactions] = useState([]);
+  const [loading, setLoading] = useState(true);
   // Terima navigasi dari Daftar Reservasi (?kode=RSV-1042) — langsung filter ke booking itu.
   const [search, setSearch] = useState(searchParams.get("kode") || "");
   const [status, setStatus] = useState("Semua");
@@ -162,6 +153,16 @@ export default function Pembayaran() {
   const [savingStatus, setSavingStatus] = useState(false);
   const [riwayat, setRiwayat] = useState([]);
   const [riwayatLoading, setRiwayatLoading] = useState(false);
+
+  const muatTransaksi = () => {
+    setLoading(true);
+    api.get("/payments/log")
+      .then(({ data }) => setTransactions(data))
+      .catch(() => toast.error("Gagal memuat daftar transaksi pembayaran"))
+      .finally(() => setLoading(false));
+  };
+
+  useEffect(() => { muatTransaksi(); }, []);
 
   useEffect(() => {
     if (!selected?.booking_kode) { setRiwayat([]); return; }
@@ -192,7 +193,10 @@ export default function Pembayaran() {
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
     return transactions.filter((t) => {
-      if (q && !t.booking_kode.toLowerCase().includes(q) && !t.nama_tamu.toLowerCase().includes(q) && !t.order_id.toLowerCase().includes(q)) return false;
+      if (q) {
+        const hay = `${t.booking_kode || ""} ${t.nama_tamu || ""} ${t.order_id || ""}`.toLowerCase();
+        if (!hay.includes(q)) return false;
+      }
       if (status !== "Semua" && t.transaction_status !== status) return false;
       return true;
     });
@@ -207,7 +211,7 @@ export default function Pembayaran() {
         <div>
           <p className="text-xs uppercase tracking-[0.25em] text-slate-500">Fase 2 — AI Reservation Automation</p>
           <h1 className="text-3xl sm:text-4xl font-extrabold">Pembayaran</h1>
-          <p className="text-slate-500 mt-1">Daftar transaksi Midtrans dari semua reservasi (checkout tamu &amp; DP).</p>
+          <p className="text-slate-500 mt-1">Daftar transaksi Tripay &amp; Midtrans dari semua reservasi (checkout tamu &amp; DP).</p>
         </div>
         <Button data-testid="buat-tagihan-buka" onClick={() => setTagihanOpen(true)} className="gap-1.5 bg-blue-700 hover:bg-blue-800 shrink-0">
           <Plus className="w-3.5 h-3.5" /> Buat Tagihan Baru
@@ -284,8 +288,11 @@ export default function Pembayaran() {
                   </tr>
                 );
               })}
-              {filtered.length === 0 && (
+              {!loading && filtered.length === 0 && (
                 <tr><td colSpan={6} className="p-6 text-center text-slate-500">Tidak ada transaksi yang cocok</td></tr>
+              )}
+              {loading && (
+                <tr><td colSpan={6} className="p-6 text-center text-slate-400">Memuat transaksi…</td></tr>
               )}
             </tbody>
           </table>
@@ -363,7 +370,7 @@ export default function Pembayaran() {
                 )}
               </div>
 
-              <p className="text-[11px] text-slate-400 pt-1">Daftar transaksi masih data tiruan — riwayat pembayaran &amp; ubah status sudah tersambung ke backend nyata.</p>
+              <p className="text-[11px] text-slate-400 pt-1">Dialog "Buat Tagihan Baru" masih simulasi (belum memanggil Tripay sungguhan) — daftar transaksi, riwayat pembayaran &amp; ubah status di atas sudah data nyata.</p>
             </div>
           )}
         </DialogContent>
