@@ -228,6 +228,15 @@ async def report_summary(user: dict = Depends(get_current_user)):
     ci_today = await db.checkins.find({"jam_checkin": {"$gte": today_iso}}, {"_id": 0}).to_list(500)
     co_today = await db.checkins.find({"jam_checkout": {"$gte": today_iso}, "status": "selesai"}, {"_id": 0}).to_list(500)
     rev_room_today = sum(c.get("total", 0) for c in co_today)
+    # booking online/OTA/WhatsApp yang sudah lunas (dibucket per paid_at — tanggal uang benar-benar
+    # masuk, sama seperti /reports/daily & /reports/rooms yang sudah lebih dulu diperbaiki 2026-07-13;
+    # endpoint ini (dipakai Dashboard utama) sebelumnya kelewat, bikin "Pendapatan"/"Laba Bersih" di
+    # Dashboard tidak sinkron dengan jumlah booking (yang sudah mencakup semua sumber sejak awal).
+    bk_today = await db.bookings.find({
+        "source": {"$in": ["ota", "online", "whatsapp"]}, "payment_status": "paid",
+        "paid_at": {"$gte": today_iso},
+    }, {"_id": 0, "total": 1}).to_list(1000)
+    rev_booking_today = sum(int(b.get("total") or 0) for b in bk_today)
     # kasir today / month
     kasir_today = await db.kasir.find({"timestamp": {"$gte": today_iso}}, {"_id": 0}).to_list(1000)
     rev_kasir_today = sum(k.get("total", 0) for k in kasir_today)
@@ -238,12 +247,17 @@ async def report_summary(user: dict = Depends(get_current_user)):
     # month
     ci_month = await db.checkins.find({"jam_checkout": {"$gte": month_start}, "status": "selesai"}, {"_id": 0}).to_list(2000)
     kasir_month = await db.kasir.find({"timestamp": {"$gte": month_start}}, {"_id": 0}).to_list(2000)
+    bk_month = await db.bookings.find({
+        "source": {"$in": ["ota", "online", "whatsapp"]}, "payment_status": "paid",
+        "paid_at": {"$gte": month_start},
+    }, {"_id": 0, "total": 1}).to_list(5000)
+    rev_booking_month = sum(int(b.get("total") or 0) for b in bk_month)
     # services (manual)
     svc_today = await db.services.find({"tanggal": {"$gte": today_iso}}, {"_id": 0}).to_list(500)
     svc_month = await db.services.find({"tanggal": {"$gte": month_start}}, {"_id": 0}).to_list(2000)
     rev_svc_today = sum(s.get("nominal", 0) for s in svc_today)
     rev_svc_month = sum(s.get("nominal", 0) for s in svc_month)
-    rev_month = sum(c.get("total", 0) for c in ci_month) + sum(k.get("total", 0) for k in kasir_month) + rev_svc_month
+    rev_month = sum(c.get("total", 0) for c in ci_month) + sum(k.get("total", 0) for k in kasir_month) + rev_svc_month + rev_booking_month
     # expenses
     exp_today = await db.expenses.find({"tanggal": {"$gte": today_iso}}, {"_id": 0}).to_list(500)
     exp_month = await db.expenses.find({"tanggal": {"$gte": month_start}}, {"_id": 0}).to_list(2000)
@@ -254,8 +268,8 @@ async def report_summary(user: dict = Depends(get_current_user)):
         "total_rooms": len(rooms),
         "tamu_hari_ini": len(ci_today),
         "checkout_hari_ini": len(co_today),
-        "pendapatan_hari_ini": rev_room_today + rev_kasir_today + rev_svc_today,
-        "pendapatan_kamar_hari_ini": rev_room_today,
+        "pendapatan_hari_ini": rev_room_today + rev_booking_today + rev_kasir_today + rev_svc_today,
+        "pendapatan_kamar_hari_ini": rev_room_today + rev_booking_today,
         "pendapatan_kasir_hari_ini": rev_kasir_today,
         "pendapatan_service_hari_ini": rev_svc_today,
         "pendapatan_service_bulan_ini": rev_svc_month,
