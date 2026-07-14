@@ -78,6 +78,7 @@ async def create_booking(body: BookingCreate, user: dict = Depends(get_current_u
             doc["group_id"] = group_id
         await db.bookings.insert_one(doc)
         await log_availability_change(r["id"], r["tipe"], -1, "booking_dibuat", booking_id=doc["id"])
+        await upsert_guest(body.nama_tamu, body.no_hp, body.no_identitas, body.kendaraan, count_kunjungan=False)
         await log_activity(user, "create_booking", f"Booking {body.tipe} kamar {r['nomor']} untuk {body.nama_tamu}", entity=r["nomor"])
         doc.pop("_id", None)
         created.append(doc)
@@ -441,6 +442,7 @@ async def update_booking(bid: str, body: BookingCreate, user: dict = Depends(get
         "catatan": body.catatan, "updated_at": now_iso(), "updated_by": user["nama"],
     }
     await db.bookings.update_one({"id": bid}, {"$set": update_fields})
+    await upsert_guest(body.nama_tamu, body.no_hp, body.no_identitas, body.kendaraan, count_kunjungan=False)
     await log_activity(user, "update_booking", f"Edit booking {b['kode']} kamar {r['nomor']} untuk {body.nama_tamu}", entity=r["nomor"])
     doc = await db.bookings.find_one({"id": bid}, {"_id": 0})
     return doc

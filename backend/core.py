@@ -142,12 +142,18 @@ async def log_availability_change(room_id: str, room_tipe: str, stock_change: in
     })
     await push_sync_event("ketersediaan", f"Stok {room_tipe} berubah ({stock_change:+d}): {reason}")
 
-async def upsert_guest(nama: str, no_hp: str = "", no_identitas: str = "", kendaraan: str = "") -> str:
+async def upsert_guest(nama: str, no_hp: str = "", no_identitas: str = "", kendaraan: str = "",
+                        count_kunjungan: bool = True) -> str:
     """Catat/perbarui 1 data tamu di `db.guests` — dipanggil dari SEMUA jalur yang menghasilkan
-    tamu ter-check-in (check-in Day Use langsung `/checkins`, maupun check-in dari booking
-    `/bookings/{id}/checkin` baik yang asalnya walk-in staf maupun email OTA), supaya tab
-    "Data Tamu" di Reservasi lengkap terlepas dari sumber booking-nya. Dicari dulu berdasarkan
+    booking (create/update booking staf, booking publik, booking OTA) maupun check-in sungguhan
+    (`/checkins`, `/bookings/{id}/checkin`), supaya tab "Data Tamu" di Reservasi mencerminkan
+    semua orang yang pernah booking, bukan cuma yang sempat check-in. Dicari dulu berdasarkan
     no_identitas, lalu no_hp; kalau tidak ketemu keduanya, buat data tamu baru.
+
+    `count_kunjungan` membedakan "booking dibuat/diubah" dari "tamu benar-benar datang":
+    cuma jalur check-in sungguhan yang menaikkan `total_kunjungan` (default True, dipanggil
+    dengan False dari create/update booking supaya angka kunjungan tetap berarti "berapa kali
+    benar-benar menginap/check-in", bukan ikut naik tiap booking dibuat/diedit/dibatalkan).
     """
     guest = None
     if no_identitas:
@@ -155,15 +161,15 @@ async def upsert_guest(nama: str, no_hp: str = "", no_identitas: str = "", kenda
     if not guest and no_hp:
         guest = await db.guests.find_one({"no_hp": no_hp})
     if guest:
-        await db.guests.update_one({"id": guest["id"]}, {
-            "$set": {
-                "nama": nama,
-                "no_hp": no_hp or guest.get("no_hp", ""),
-                "kendaraan": kendaraan or guest.get("kendaraan", ""),
-                "last_visit": now_iso(),
-            },
-            "$inc": {"total_kunjungan": 1},
-        })
+        update: Dict[str, Any] = {"$set": {
+            "nama": nama,
+            "no_hp": no_hp or guest.get("no_hp", ""),
+            "kendaraan": kendaraan or guest.get("kendaraan", ""),
+            "last_visit": now_iso(),
+        }}
+        if count_kunjungan:
+            update["$inc"] = {"total_kunjungan": 1}
+        await db.guests.update_one({"id": guest["id"]}, update)
         return guest["id"]
     guest_id = str(uuid.uuid4())
     await db.guests.insert_one({
@@ -172,7 +178,7 @@ async def upsert_guest(nama: str, no_hp: str = "", no_identitas: str = "", kenda
         "no_hp": no_hp,
         "no_identitas": no_identitas,
         "kendaraan": kendaraan,
-        "total_kunjungan": 1,
+        "total_kunjungan": 1 if count_kunjungan else 0,
         "last_visit": now_iso(),
         "created_at": now_iso(),
     })
