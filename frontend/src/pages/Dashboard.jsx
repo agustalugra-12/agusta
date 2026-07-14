@@ -18,6 +18,7 @@ import {
 
 const STAT_CARDS = [
   { key: "kosong", label: "Kosong", icon: BedDouble, color: "#10B981" },
+  { key: "dipesan_hari_ini", label: "Dipesan (Belum Tiba)", icon: CalendarRange, color: "#8B5CF6" },
   { key: "day_use", label: "Day Use", icon: Clock, color: "#EF4444" },
   { key: "menginap", label: "Menginap", icon: BedDouble, color: "#3B82F6" },
   { key: "perlu_dibersihkan", label: "Perlu Bersih", icon: Sparkles, color: "#F97316" },
@@ -249,7 +250,8 @@ export default function Dashboard() {
     if (!window.confirm(`Check-in tamu ${bookingDetail.nama_tamu} (kamar ${bookingDetail.room_nomor})?${warn}`)) return;
     try {
       const { data } = await api.post(`/bookings/${bookingDetail.id}/checkin`, {});
-      toast.success(`Check-in OK. TRX ${data.trx_no}${data.remaining > 0 ? ` (sisa Rp ${data.remaining.toLocaleString("id-ID")})` : ""}`);
+      const trxLabel = data.trx_no ? `Check-in OK. TRX ${data.trx_no}` : `Check-in OK, kamar ditandai terisi`;
+      toast.success(`${trxLabel}${data.remaining > 0 ? ` (sisa Rp ${data.remaining.toLocaleString("id-ID")})` : ""}`);
       setBookingDetail(null); load();
     } catch (e) { toast.error(e?.response?.data?.detail || "Gagal"); }
   };
@@ -734,6 +736,9 @@ export default function Dashboard() {
           <DialogFooter className="flex-wrap gap-2">
             {!rescheduleMode && bookingDetail?.status === "aktif" && (
               <>
+                <Button data-testid="bd-checkin-aktif" onClick={checkinFromBooking} className="bg-emerald-600 hover:bg-emerald-700 text-white">
+                  Check-in Tamu
+                </Button>
                 <Button data-testid="bd-reschedule" variant="outline" onClick={() => setRescheduleMode(true)}>Reschedule</Button>
                 <Button data-testid="bd-cancel" variant="outline" onClick={cancelBookingDetail} className="text-red-600 border-red-300 hover:bg-red-50">Batalkan (Fee 10%)</Button>
               </>

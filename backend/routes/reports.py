@@ -224,9 +224,35 @@ async def report_summary(user: dict = Depends(get_current_user)):
     month_start = datetime.now(timezone.utc).replace(day=1, hour=0, minute=0, second=0, microsecond=0).isoformat()
     # rooms
     rooms = await db.rooms.find({}, {"_id": 0}).to_list(500)
-    counts = {"kosong": 0, "day_use": 0, "menginap": 0, "perlu_dibersihkan": 0, "maintenance": 0}
+    counts = {"kosong": 0, "day_use": 0, "menginap": 0, "perlu_dibersihkan": 0, "maintenance": 0, "dipesan_hari_ini": 0}
+    # Kamar berstatus "kosong" tapi SUDAH ada booking (aktif/booking_pending/booking_paid) yang
+    # menempati hari ini dihitung sebagai "dipesan_hari_ini", BUKAN "kosong" — sebelumnya kartu
+    # "Kosong" di Dashboard murni baca `room.status` real-time, jadi tidak pernah berkurang
+    # walau sudah ada booking OTA/walk-in untuk hari ini (room.status baru berubah setelah
+    # tamu benar-benar di-check-in, lihat checkin_from_booking di routes/bookings.py). Rentang
+    # tanggal sama seperti _occupies_date (routes/ketersediaan.py): [checkin_date, checkout_date)
+    # exclusive checkout, kecuali day-use (checkin=checkout, tetap terhitung).
+    today_date = datetime.now(timezone.utc).date()
+    today_start_dt = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+    today_end_dt = today_start_dt + timedelta(days=1)
+    today_bookings = await db.bookings.find({
+        "status": {"$in": ["aktif", "booking_pending", "booking_paid"]},
+        "jam_mulai": {"$lt": today_end_dt.isoformat()},
+        "jam_selesai": {"$gt": today_start_dt.isoformat()},
+    }, {"_id": 0, "room_id": 1, "jam_mulai": 1, "jam_selesai": 1}).to_list(500)
+    rooms_dipesan_hari_ini = set()
+    for b in today_bookings:
+        b_start = parse_iso(b["jam_mulai"], "jam_mulai").date()
+        b_end = parse_iso(b["jam_selesai"], "jam_selesai").date()
+        occupies_today = today_date == b_start if b_start == b_end else b_start <= today_date < b_end
+        if occupies_today:
+            rooms_dipesan_hari_ini.add(b["room_id"])
     for r in rooms:
-        counts[r.get("status", "kosong")] = counts.get(r.get("status", "kosong"), 0) + 1
+        status = r.get("status", "kosong")
+        if status == "kosong" and r["id"] in rooms_dipesan_hari_ini:
+            counts["dipesan_hari_ini"] += 1
+        else:
+            counts[status] = counts.get(status, 0) + 1
     # checkins today
     ci_today = await db.checkins.find({"jam_checkin": {"$gte": today_iso}}, {"_id": 0}).to_list(500)
     co_today = await db.checkins.find({"jam_checkout": {"$gte": today_iso}, "status": "selesai"}, {"_id": 0}).to_list(500)

@@ -194,25 +194,49 @@ async def collect_balance(bid: str, body: CollectBalanceBody, user: dict = Depen
 
 @api.post("/bookings/{bid}/checkin")
 async def checkin_from_booking(bid: str, user: dict = Depends(get_current_user)):
-    """Check-in tamu dari booking (booking_paid → checked_in).
-    Membuat record di db.checkins (status=aktif), update room → day_use, ubah booking status → checked_in.
+    """Check-in tamu dari booking (booking_paid ATAU aktif → checked_in). `aktif` ditambahkan
+    2026-07-14 — sebelumnya cuma `booking_paid` (booking online tamu yang lunas via Tripay)
+    yang bisa di-check-in, jadi booking OTA (RedDoorz, selalu status `aktif`) dan booking
+    walk-in Day Use yang dibuat staf via Quick Book (juga `aktif`) TIDAK PERNAH bisa ditandai
+    "tamu sudah tiba" — kamarnya pun tidak pernah lepas dari hitungan "Kosong" di ringkasan
+    Dashboard walau sudah ada booking utk hari itu (lihat report_summary, backend/routes/reports.py).
+
+    Untuk tipe `menginap`, TIDAK dibuatkan dokumen `checkins` terpisah (field durasi_jam/
+    overtime_jam di situ memang semantik Day Use) — cukup tandai kamar `menginap` dan booking
+    `checked_in`, sama seperti alur Quick Book staf untuk menginap. Untuk tipe `day_use`,
+    tetap buat dokumen `checkins` seperti sebelumnya (perbaikan bug: dulu SELALU di-set
+    "day_use" walau booking-nya menginap).
     """
     b = await db.bookings.find_one({"id": bid})
     if not b:
         raise HTTPException(404, "Booking tidak ditemukan")
-    if b.get("status") != "booking_paid":
-        raise HTTPException(400, f"Hanya booking lunas yang bisa di-check-in (status: {b.get('status')})")
+    if b.get("status") not in ("booking_paid", "aktif"):
+        raise HTTPException(400, f"Booking ini tidak bisa di-check-in (status: {b.get('status')})")
     r = await db.rooms.find_one({"id": b["room_id"]})
     if not r:
         raise HTTPException(404, "Kamar tidak ditemukan")
     if r["status"] != "kosong":
         raise HTTPException(400, f"Kamar {r['nomor']} sedang dipakai (status: {r['status']})")
-    # Buat checkin doc
-    trx_no = f"CI-{datetime.now().strftime('%Y%m%d%H%M%S')}-{uuid.uuid4().hex[:4].upper()}"
+
     total = int(b.get("total") or 0)
     paid = int(b.get("amount_due") or 0)
     sisa = max(0, total - paid)
     now = now_iso()
+
+    if b.get("tipe") == "menginap":
+        await db.rooms.update_one({"id": b["room_id"]}, {"$set": {
+            "status": "menginap", "info": {"nama_tamu": b.get("nama_tamu", "")},
+        }})
+        await db.bookings.update_one({"id": bid}, {"$set": {
+            "status": "checked_in", "checked_in_at": now, "checked_in_by": user["nama"],
+        }})
+        await log_activity(user, "checkin_from_booking",
+                           f"Check-in tamu {b.get('nama_tamu','')} dari booking {b['kode']} ke kamar {r['nomor']} (menginap, sisa Rp{sisa:,})".replace(",", "."),
+                           entity=r["nomor"])
+        return {"ok": True, "booking_kode": b["kode"], "remaining": sisa}
+
+    # Buat checkin doc (day_use)
+    trx_no = f"CI-{datetime.now().strftime('%Y%m%d%H%M%S')}-{uuid.uuid4().hex[:4].upper()}"
     ci_doc = {
         "id": str(uuid.uuid4()),
         "trx_no": trx_no,
