@@ -3,6 +3,7 @@ import { toast } from "sonner";
 import api, { fmtDateTime } from "@/lib/apiClient";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { useAuth } from "@/context/AuthContext";
 import { Sparkles } from "lucide-react";
 
@@ -10,17 +11,26 @@ export default function Housekeeping() {
   const { user } = useAuth();
   const [rooms, setRooms] = useState([]);
   const [logs, setLogs] = useState([]);
+  const [petugasMap, setPetugasMap] = useState({});
 
   const load = async () => {
     const [r, l] = await Promise.all([api.get("/rooms"), api.get("/housekeeping")]);
-    setRooms(r.data.filter(x => x.status === "perlu_dibersihkan"));
+    const perlu = r.data.filter(x => x.status === "perlu_dibersihkan");
+    setRooms(perlu);
+    setPetugasMap(prev => {
+      const next = { ...prev };
+      perlu.forEach(x => { if (next[x.id] === undefined) next[x.id] = user?.nama || ""; });
+      return next;
+    });
     setLogs(l.data);
   };
   useEffect(() => { load(); }, []);
 
   const done = async (r) => {
+    const petugas = (petugasMap[r.id] || "").trim();
+    if (!petugas) { toast.error("Nama petugas wajib diisi"); return; }
     try {
-      await api.post(`/rooms/${r.id}/housekeeping-done`, { petugas: user?.nama });
+      await api.post(`/rooms/${r.id}/housekeeping-done`, { petugas });
       toast.success(`Kamar ${r.nomor} selesai`); load();
     } catch (e) { toast.error(e?.response?.data?.detail || "Gagal"); }
   };
@@ -52,7 +62,7 @@ export default function Housekeeping() {
           ) : (
             <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
               {rooms.map(r => (
-                <div key={r.id} className="rounded-xl border border-orange-200 bg-orange-50 p-4 flex items-center justify-between gap-3">
+                <div key={r.id} className="rounded-xl border border-orange-200 bg-orange-50 p-4 flex flex-col gap-3">
                   <div className="flex items-center gap-3">
                     <div className="w-10 h-10 rounded-lg bg-orange-500 text-white grid place-items-center"><Sparkles className="w-5 h-5" /></div>
                     <div>
@@ -60,6 +70,13 @@ export default function Housekeeping() {
                       <div className="text-xs text-slate-600">{r.tipe}</div>
                     </div>
                   </div>
+                  <Input
+                    data-testid={`hk-petugas-${r.nomor}`}
+                    value={petugasMap[r.id] ?? ""}
+                    onChange={(e) => setPetugasMap(prev => ({ ...prev, [r.id]: e.target.value }))}
+                    placeholder="Nama petugas"
+                    className="bg-white"
+                  />
                   <Button data-testid={`hk-done-${r.nomor}`} onClick={() => done(r)} className="bg-emerald-600 hover:bg-emerald-700">Selesai</Button>
                 </div>
               ))}

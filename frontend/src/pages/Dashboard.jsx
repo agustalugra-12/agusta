@@ -47,6 +47,7 @@ export default function Dashboard() {
   const [filterDate, setFilterDate] = useState(todayLocal());
   const [actionRoom, setActionRoom] = useState(null);
   const [statusForm, setStatusForm] = useState({ status: "", nama_tamu: "", catatan: "" });
+  const [hkPetugas, setHkPetugas] = useState("");
 
   // Quick Book — klik kamar kosong: pilih Day Use/Menginap + harga custom, langsung tercatat.
   // Bisa >1 kamar sekaligus (mis. rombongan walk-in) lewat mode "Pilih Banyak Kamar" —
@@ -198,6 +199,7 @@ export default function Dashboard() {
     }
     setActionRoom(room);
     setStatusForm({ status: room.status, nama_tamu: room.info?.nama_tamu || "", catatan: room.info?.catatan || "" });
+    setHkPetugas(user?.nama || "");
   };
 
   const cancelBookingDetail = async () => {
@@ -353,8 +355,9 @@ export default function Dashboard() {
   };
 
   const housekeepingDone = async () => {
+    if (!hkPetugas.trim()) { toast.error("Nama petugas wajib diisi"); return; }
     try {
-      await api.post(`/rooms/${actionRoom.id}/housekeeping-done`, { petugas: user?.nama });
+      await api.post(`/rooms/${actionRoom.id}/housekeeping-done`, { petugas: hkPetugas.trim() });
       toast.success("Kamar selesai dibersihkan");
       setActionRoom(null); load();
     } catch (e) { toast.error(e?.response?.data?.detail || "Gagal"); }
@@ -636,7 +639,11 @@ export default function Dashboard() {
               </>
             )}
             {actionRoom?.status === "perlu_dibersihkan" && (
-              <p className="text-slate-600">Tekan tombol di bawah jika kamar sudah selesai dibersihkan.</p>
+              <div>
+                <p className="text-slate-600 mb-2">Isi nama petugas lalu tekan tombol di bawah jika kamar sudah selesai dibersihkan.</p>
+                <Label>Nama Petugas</Label>
+                <Input data-testid="hk-petugas" value={hkPetugas} onChange={(e) => setHkPetugas(e.target.value)} placeholder="Nama staff yang membersihkan" />
+              </div>
             )}
             {(actionRoom?.status === "menginap" || actionRoom?.status === "maintenance") && (
               <>
