@@ -642,6 +642,96 @@ function BatalkanPesananDialog({ bk, open, onOpenChange, onCancelled }) {
   );
 }
 
+// Dialog "Coba Bayar Lagi" — untuk booking yang otomatis dibatalkan karena pembayaran
+// expired/gagal (bukan dibatalkan mandiri tamu/staf). Membuka lagi booking (re-cek
+// ketersediaan kamar) lalu langsung lanjut ke pembuatan transaksi Tripay baru — dua
+// langkah backend (retry-bayar + create-transaction) digabung jadi satu submit supaya
+// tidak ada booking "menggantung" di status booking_pending tanpa transaksi aktif.
+function RetryBayarDialog({ bk, open, onOpenChange, channels }) {
+  const [opsi, setOpsi] = useState("dp50");
+  const [method, setMethod] = useState(channels[0]?.code || "");
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState("");
+  const nominal = opsi === "dp50" ? bk.dp_min : bk.total;
+
+  useEffect(() => {
+    if (open) { setMethod(channels[0]?.code || ""); setError(""); }
+  }, [open, channels]);
+
+  const bayarLagi = async () => {
+    if (!method) return;
+    setSubmitting(true);
+    setError("");
+    try {
+      await PUBLIC_API.post(`/public/bookings/${bk.id}/retry-bayar`);
+      const { data: tx } = await PUBLIC_API.post("/payments/tripay/create-transaction", {
+        booking_id: bk.id, payment_option: opsi, method,
+      });
+      window.location.href = tx.checkout_url;
+    } catch (e) {
+      setError(e?.response?.data?.detail || "Gagal membuka ulang booking untuk dibayar lagi");
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={(o) => { if (!submitting) onOpenChange(o); }}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle data-testid="retry-bayar-title">Coba Bayar Lagi {bk.kode}</DialogTitle>
+        </DialogHeader>
+        <div className="space-y-3 text-sm text-left">
+          <p className="text-slate-600 text-xs">Kamar akan dicek ulang ketersediaannya — kalau masih kosong, booking dibuka lagi dan Anda lanjut ke pembayaran.</p>
+          <div>
+            <Label>Channel Pembayaran</Label>
+            <select
+              data-testid="retry-channel"
+              value={method}
+              onChange={(e) => setMethod(e.target.value)}
+              className="w-full h-10 rounded-md border border-slate-300 px-3 bg-white mt-1.5 text-sm"
+            >
+              {channels.map((c) => <option key={c.code} value={c.code}>{c.name}</option>)}
+            </select>
+          </div>
+          <div>
+            <Label>Metode Bayar</Label>
+            <div className="grid grid-cols-2 gap-2 mt-1.5">
+              <button
+                type="button"
+                data-testid="retry-opsi-dp50"
+                onClick={() => setOpsi("dp50")}
+                className={`p-2.5 rounded-lg border-2 text-left text-xs ${opsi === "dp50" ? "border-blue-600 bg-blue-50" : "border-slate-200"}`}
+              >
+                <div className="font-semibold">DP 50%</div>
+                <div className="text-slate-500">{fmtRp(bk.dp_min)}</div>
+              </button>
+              <button
+                type="button"
+                data-testid="retry-opsi-full"
+                onClick={() => setOpsi("full")}
+                className={`p-2.5 rounded-lg border-2 text-left text-xs ${opsi === "full" ? "border-blue-600 bg-blue-50" : "border-slate-200"}`}
+              >
+                <div className="font-semibold">Lunas</div>
+                <div className="text-slate-500">{fmtRp(bk.total)}</div>
+              </button>
+            </div>
+          </div>
+          <div className="bg-slate-50 border border-slate-200 rounded p-2 flex justify-between">
+            <span className="font-bold">Total Ditagih</span><b className="text-blue-700">{fmtRp(nominal)}</b>
+          </div>
+          {error && <p className="text-red-600 text-xs" data-testid="retry-error">{error}</p>}
+        </div>
+        <DialogFooter>
+          <Button variant="ghost" onClick={() => onOpenChange(false)} disabled={submitting}>Tutup</Button>
+          <Button data-testid="retry-bayar-submit" onClick={bayarLagi} disabled={!method || submitting} className="bg-blue-700 hover:bg-blue-800">
+            {submitting ? "Memproses…" : "Bayar Sekarang"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 function SuccessView({ bookingId: bookingIdFromUrl }) {
   const nav = useNavigate();
   // Fallback kalau URL diakses tanpa :bookingId (mis. tamu menutup tab checkout Tripay lalu
@@ -651,10 +741,16 @@ function SuccessView({ bookingId: bookingIdFromUrl }) {
   const [bk, setBk] = useState(null);
   const [notFound, setNotFound] = useState(false);
   const [cancelOpen, setCancelOpen] = useState(false);
+  const [retryOpen, setRetryOpen] = useState(false);
+  const [channels, setChannels] = useState([]);
 
   useEffect(() => {
     if (!bookingIdFromUrl && bookingId) nav(`/book/sukses/${bookingId}`, { replace: true });
   }, [bookingIdFromUrl, bookingId, nav]);
+
+  useEffect(() => {
+    PUBLIC_API.get("/payments/tripay/channels").then(r => setChannels(r.data)).catch(() => setChannels([]));
+  }, []);
 
   useEffect(() => {
     if (!bookingId) { setNotFound(true); return; }
@@ -755,8 +851,18 @@ function SuccessView({ bookingId: bookingIdFromUrl }) {
           {isFailed && (
             <div data-testid="pb-payment-failed" className="bg-red-50 border-2 border-red-300 rounded-lg p-4 text-left text-xs space-y-2">
               <p className="font-bold text-red-900">✕ Kamar Sudah Dilepas Kembali</p>
-              <p className="text-red-800">Karena booking ini dibatalkan otomatis, kamar yang tadi dipesan sudah tersedia lagi untuk tamu lain. Silakan buat reservasi baru di bawah jika masih ingin menginap.</p>
+              <p className="text-red-800">Karena booking ini dibatalkan otomatis, kamar yang tadi dipesan sudah tersedia lagi untuk tamu lain. Kalau masih ingin menginap, coba bayar lagi di bawah (kamar akan dicek ulang) — atau buat reservasi baru kalau kamarnya sudah diambil tamu lain.</p>
             </div>
+          )}
+          {isFailed && (
+            <button
+              type="button"
+              data-testid="pb-coba-bayar-lagi"
+              onClick={() => setRetryOpen(true)}
+              className="print:hidden inline-flex items-center justify-center gap-2 w-full px-4 h-11 rounded-md bg-blue-700 hover:bg-blue-800 text-white text-sm font-bold"
+            >
+              Coba Bayar Lagi
+            </button>
           )}
           {isPending && (
             <div className="bg-amber-50 border-2 border-amber-300 rounded-lg p-4 text-left text-xs space-y-2">
@@ -811,6 +917,7 @@ function SuccessView({ bookingId: bookingIdFromUrl }) {
         </CardContent>
       </Card>
       <BatalkanPesananDialog bk={bk} open={cancelOpen} onOpenChange={setCancelOpen} onCancelled={setBk} />
+      {isFailed && <RetryBayarDialog bk={bk} open={retryOpen} onOpenChange={setRetryOpen} channels={channels} />}
     </div>
   );
 }

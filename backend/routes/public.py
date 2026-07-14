@@ -235,6 +235,52 @@ async def public_batalkan_booking(bid: str, body: CancelWithFeeBody = CancelWith
     }
 
 
+@api.post("/public/bookings/{bid}/retry-bayar")
+async def public_retry_bayar(bid: str):
+    """Buka lagi booking yang dibatalkan OTOMATIS karena pembayaran expired/gagal, supaya
+    tamu bisa coba bayar lagi tanpa isi ulang seluruh form booking dari awal (permintaan
+    user 2026-07-14, sebelumnya sengaja ditunda — dinilai aman karena dampaknya cuma UX).
+
+    HANYA berlaku untuk booking yang dibatalkan otomatis oleh webhook payment gateway
+    (Tripay/Midtrans) — dibedakan dari pembatalan mandiri tamu (`cancelled_by=
+    "guest_self_service"`), pembatalan staf, atau auto-cancel modifikasi OTA
+    (`cancelled_by="ai_email_parser"`) lewat absennya field `cancelled_by`: webhook
+    payment gateway (`routes/payments.py`, `routes/tripay.py`) tidak pernah mengisi field
+    itu saat set status ke cancelled. Kamar di-cek ulang ketersediaannya (anti-overbooking)
+    sebelum dibuka lagi — kalau sudah keburu dipesan tamu lain sejak dibatalkan, ditolak
+    dengan pesan jelas, bukan double-booking.
+    """
+    b = await db.bookings.find_one({"id": bid})
+    if not b:
+        raise HTTPException(404, "Booking tidak ditemukan")
+    if b.get("status") != "cancelled" or b.get("payment_status") not in ("expired", "failed") or b.get("cancelled_by"):
+        raise HTTPException(400, "Booking ini tidak bisa dibuka lagi untuk coba bayar (bukan dibatalkan otomatis karena gagal bayar)")
+
+    mulai = parse_iso(b["jam_mulai"], "jam_mulai")
+    selesai = parse_iso(b["jam_selesai"], "jam_selesai")
+    await check_room_available(b["room_id"], mulai, selesai)
+
+    now = now_iso()
+    await db.bookings.update_one({"id": bid}, {
+        "$set": {"status": "booking_pending", "payment_status": "pending", "updated_at": now},
+        "$unset": {"cancelled_at": "", "cancel_reason": "", "cancel_fee": "", "refund_amount": ""},
+    })
+    await db.audit_log.insert_one({
+        "id": str(uuid.uuid4()), "user_id": None, "username": "guest_self_service",
+        "action": "retry_bayar",
+        "detail": f"Tamu coba bayar lagi booking {b['kode']} yang sempat dibatalkan otomatis (expired/gagal bayar)",
+        "entity": b.get("room_nomor", ""), "timestamp": now,
+    })
+    updated = await db.bookings.find_one({"id": bid}, {"_id": 0})
+    safe = {k: updated.get(k) for k in [
+        "id", "kode", "room_nomor", "room_tipe", "tipe", "nama_tamu", "no_hp", "email",
+        "jumlah_tamu", "extra_bed_qty", "dengan_sarapan", "jam_mulai", "jam_selesai", "status", "payment_status",
+        "subtotal", "service_fee", "total", "dp_min", "invoice_id",
+    ]}
+    safe.update(status_bayar_booking(updated))
+    return safe
+
+
 @api.get("/public/bookings/{bid}")
 async def public_get_booking(bid: str):
     b = await db.bookings.find_one({"id": bid}, {"_id": 0})

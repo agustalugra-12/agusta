@@ -44,7 +44,7 @@ const TABS = [
   { value: "manual", label: "Proses Manual", icon: FileWarning },
 ];
 
-// Status koneksi Gmail — data tiruan. OAuth (Client ID/Secret) menyusul di task backend terpisah.
+// Status koneksi Gmail — data nyata dari /otomasi-email/gmail/status (OAuth aktif sejak 2026-07-11).
 function KoneksiGmail({ onFetched }) {
   const [connected, setConnected] = useState(false);
   const [email, setEmail] = useState("");
