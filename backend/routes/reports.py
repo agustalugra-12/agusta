@@ -20,13 +20,16 @@ async def booking_widgets(user: dict = Depends(get_current_user)):
         "paid_at": {"$gte": month_start.isoformat()},
     }, {"_id": 0, "total": 1, "amount_due": 1}).to_list(1000)
     pendapatan_online = sum(int(b.get("amount_due") or b.get("total", 0)) for b in online_paid)
-    # Total semua transaksi midtrans (lifetime). gross_amount disimpan sebagai string "61800.00"
-    mt_total = await db.payment_log.aggregate([
+    # Total semua transaksi payment gateway settlement (lifetime, gabungan riwayat Tripay +
+    # Midtrans lama — field ini TIDAK filter `gateway`, sengaja mencakup histori keduanya).
+    # gross_amount disimpan sebagai string "61800.00". "capture" = status khusus Midtrans lama
+    # (kartu kredit), tidak pernah dihasilkan Tripay lagi tapi tetap relevan utk histori.
+    payment_total = await db.payment_log.aggregate([
         {"$match": {"transaction_status": {"$in": ["settlement", "capture"]}}},
         {"$group": {"_id": None, "sum": {"$sum": {"$toDouble": "$gross_amount"}}, "count": {"$sum": 1}}},
     ]).to_list(1)
-    mt_sum = int(mt_total[0]["sum"]) if mt_total else 0
-    mt_count = mt_total[0]["count"] if mt_total else 0
+    payment_sum = int(payment_total[0]["sum"]) if payment_total else 0
+    payment_count = payment_total[0]["count"] if payment_total else 0
     # Walk-in vs Online (bulan ini)
     online_bulan = await db.bookings.count_documents({
         "source": "online", "created_at": {"$gte": month_start.isoformat()},
@@ -40,8 +43,8 @@ async def booking_widgets(user: dict = Depends(get_current_user)):
         "booking_pending": pending_count,
         "booking_paid": paid_count,
         "pendapatan_online_bulan": pendapatan_online,
-        "midtrans_total_count": mt_count,
-        "midtrans_total_sum": mt_sum,
+        "payment_total_count": payment_count,
+        "payment_total_sum": payment_sum,
         "booking_online_bulan": online_bulan,
         "booking_walkin_bulan": walk_bulan,
     }

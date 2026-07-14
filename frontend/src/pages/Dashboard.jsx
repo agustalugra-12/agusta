@@ -410,7 +410,7 @@ export default function Dashboard() {
         <MiniWidget label="Pending" value={widgets?.booking_pending ?? "—"} color="#F59E0B" testid="w-pending" />
         <MiniWidget label="Paid" value={widgets?.booking_paid ?? "—"} color="#10B981" testid="w-paid" />
         <MiniWidget label="Pendapatan Online" value={fmtRp(widgets?.pendapatan_online_bulan || 0)} color="#7C3AED" testid="w-rev-online" wide />
-        <MiniWidget label="Total Midtrans" value={`${widgets?.midtrans_total_count || 0} trx`} hint={fmtRp(widgets?.midtrans_total_sum || 0)} color="#0EA5E9" testid="w-mt-total" wide />
+        <MiniWidget label="Total Transaksi Bayar" value={`${widgets?.payment_total_count || 0} trx`} hint={fmtRp(widgets?.payment_total_sum || 0)} color="#0EA5E9" testid="w-mt-total" wide />
         <MiniWidget label="Online (Bulan)" value={widgets?.booking_online_bulan ?? "—"} color="#06B6D4" testid="w-online-month" />
         <MiniWidget label="Walk-In (Bulan)" value={widgets?.booking_walkin_bulan ?? "—"} color="#64748B" testid="w-walkin-month" />
       </div>

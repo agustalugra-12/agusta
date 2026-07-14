@@ -21,7 +21,6 @@ from typing import List, Optional, Dict, Any
 
 import jwt
 import bcrypt
-import midtransclient
 from fastapi import APIRouter, HTTPException, Depends, Request, Response, Query
 from motor.motor_asyncio import AsyncIOMotorClient
 from pydantic import BaseModel, Field
@@ -37,18 +36,7 @@ JWT_SECRET = os.environ.get("JWT_SECRET", "change-me")
 # ---- Shared APIRouter — every route module registers on this instance ----
 api = APIRouter(prefix="/api")
 
-# ---- Midtrans setup ----
-MIDTRANS_SERVER_KEY = os.environ.get("MIDTRANS_SERVER_KEY", "")
-MIDTRANS_CLIENT_KEY = os.environ.get("MIDTRANS_CLIENT_KEY", "")
-MIDTRANS_IS_PRODUCTION = os.environ.get("MIDTRANS_IS_PRODUCTION", "false").lower() == "true"
-
-snap_client = midtransclient.Snap(
-    is_production=MIDTRANS_IS_PRODUCTION,
-    server_key=MIDTRANS_SERVER_KEY,
-    client_key=MIDTRANS_CLIENT_KEY,
-)
-
-# ---- Tripay setup (menggantikan Midtrans — lihat routes/tripay.py) ----
+# ---- Tripay setup (menggantikan Midtrans, 2026-07-13 — lihat routes/tripay.py) ----
 # Kosong sampai kredensial (sandbox/production) diberikan lewat env var pms-backend.service;
 # endpoint callback tetap bisa didaftarkan di Tripay walau TRIPAY_PRIVATE_KEY belum diisi.
 TRIPAY_MERCHANT_CODE = os.environ.get("TRIPAY_MERCHANT_CODE", "")
@@ -409,10 +397,6 @@ class PublicBookingCreate(BaseModel):
     tanggal_checkout: Optional[str] = None  # YYYY-MM-DD, wajib jika tipe == "menginap"
     dengan_sarapan: bool = False  # hanya berlaku tipe menginap, +BREAKFAST_PRICE/malam, berlaku sama tiap kamar kalau grup
 
-class CreateSnapTokenBody(BaseModel):
-    booking_id: str
-    payment_option: str  # "dp50" atau "full"
-
 class TripayCreateTransactionBody(BaseModel):
     booking_id: str
     payment_option: str  # "dp50" atau "full"
@@ -436,7 +420,7 @@ class CollectBalanceBody(BaseModel):
 class PaymentStatusUpdateBody(BaseModel):
     """Body untuk ubah status pembayaran manual (halaman Pembayaran, Fase 3) — staf koreksi
     status transaksi payment_log secara manual (mis. bukti transfer dicek manual, atau
-    salah catat). Beda dari webhook Midtrans (otomatis) — perubahan ini dicatat sumbernya."""
+    salah catat). Beda dari webhook Tripay (otomatis) — perubahan ini dicatat sumbernya."""
     status: str  # settlement | pending | expire | deny | cancel | refund
     alasan: Optional[str] = ""
 

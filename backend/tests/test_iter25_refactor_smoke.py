@@ -88,14 +88,6 @@ class TestPublic:
         assert r.status_code == 200
 
 
-# ---- MIDTRANS ----
-class TestMidtrans:
-    def test_config_no_auth(self):
-        r = requests.get(f"{BASE_URL}/api/payments/midtrans/config")
-        assert r.status_code == 200
-        j = r.json()
-        assert "client_key" in j
-        assert j["client_key"]  # non-empty
 
 
 # ---- REPORTS ----

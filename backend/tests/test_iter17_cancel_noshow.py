@@ -206,7 +206,7 @@ class TestSmoke:
         assert r.status_code == 200
         d = r.json()
         for k in ("booking_hari_ini", "booking_pending", "booking_paid",
-                  "midtrans_total_count", "booking_online_bulan", "booking_walkin_bulan"):
+                  "payment_total_count", "booking_online_bulan", "booking_walkin_bulan"):
             assert k in d
 
     def test_rooms_list(self, headers):

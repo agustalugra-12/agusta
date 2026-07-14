@@ -37,22 +37,22 @@ class TestBookingWidgets:
         data = r.json()
         expected_keys = [
             "booking_hari_ini", "booking_pending", "booking_paid",
-            "pendapatan_online_bulan", "midtrans_total_count", "midtrans_total_sum",
+            "pendapatan_online_bulan", "payment_total_count", "payment_total_sum",
             "booking_online_bulan", "booking_walkin_bulan",
         ]
         for k in expected_keys:
             assert k in data, f"missing key {k}"
             assert isinstance(data[k], (int, float)), f"{k} not numeric: {type(data[k])}"
 
-    def test_midtrans_sum_uses_todouble(self, api_client):
+    def test_payment_sum_uses_todouble(self, api_client):
         """Validate that gross_amount stored as string '61800.00' is summed correctly via $toDouble."""
         r = api_client.get(f"{BASE_URL}/api/reports/booking-widgets", timeout=15)
         assert r.status_code == 200
         data = r.json()
         # Either there is data or it's 0; in both cases must be int-like (no string)
-        assert isinstance(data["midtrans_total_sum"], (int, float))
-        assert data["midtrans_total_sum"] >= 0
-        assert data["midtrans_total_count"] >= 0
+        assert isinstance(data["payment_total_sum"], (int, float))
+        assert data["payment_total_sum"] >= 0
+        assert data["payment_total_count"] >= 0
 
 
 # ============== Module 2: POST /api/bookings/{id}/cancel-with-fee ==============
