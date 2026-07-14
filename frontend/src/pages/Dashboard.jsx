@@ -1,7 +1,7 @@
 import { useEffect, useState, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
-import api, { fmtRp, statusLabel, statusColor, bookingConfirmationWaLink } from "@/lib/apiClient";
+import api, { fmtRp, statusLabel, statusColor, bookingConfirmationWaLink, statusBayarOf, STATUS_BAYAR_LABEL, STATUS_BAYAR_BADGE_CLASS } from "@/lib/apiClient";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import {
@@ -629,6 +629,11 @@ export default function Dashboard() {
                   bookingDetail.status === "booking_pending" ? "bg-amber-100 text-amber-800" :
                   "bg-slate-100 text-slate-700"
                 }`}>{bookingDetail.status}</span>
+                {(() => { const sb = statusBayarOf(bookingDetail); return (
+                  <span data-testid="booking-detail-status-bayar" className={`text-[10px] uppercase font-bold px-2 py-1 rounded ${STATUS_BAYAR_BADGE_CLASS[sb.status_bayar]}`}>
+                    {STATUS_BAYAR_LABEL[sb.status_bayar]}
+                  </span>
+                ); })()}
                 {bookingDetail.source === "online" && <span className="text-[10px] uppercase font-bold px-2 py-1 rounded bg-violet-100 text-violet-800">Online</span>}
               </div>
               <div><span className="text-slate-500">Tamu:</span> <b data-testid="booking-detail-nama">{bookingDetail.nama_tamu}</b></div>
@@ -637,20 +642,25 @@ export default function Dashboard() {
               {bookingDetail.jumlah_tamu && <div><span className="text-slate-500">Jumlah Tamu:</span> {bookingDetail.jumlah_tamu}</div>}
               <div><span className="text-slate-500">Jam Mulai:</span> {new Date(bookingDetail.jam_mulai).toLocaleString("id-ID")}</div>
               <div><span className="text-slate-500">Jam Selesai:</span> {new Date(bookingDetail.jam_selesai).toLocaleString("id-ID")}</div>
-              {(bookingDetail.total != null) && (
-                <div className="bg-slate-50 border border-slate-200 rounded p-2 text-xs space-y-1 mt-2">
-                  <div className="flex justify-between"><span className="text-slate-500">Subtotal</span><b>{fmtRp(bookingDetail.subtotal || 0)}</b></div>
-                  <div className="flex justify-between"><span className="text-slate-500">Service Fee 3%</span><b>{fmtRp(bookingDetail.service_fee || 0)}</b></div>
-                  <div className="flex justify-between border-t pt-1 mt-1"><span className="font-bold">Total</span><b className="text-blue-700">{fmtRp(bookingDetail.total)}</b></div>
-                  {bookingDetail.amount_due > 0 && <div className="flex justify-between"><span className="text-slate-500">Sudah dibayar</span><b className="text-emerald-700">{fmtRp(bookingDetail.amount_due)}</b></div>}
-                  {bookingDetail.status === "booking_paid" && Number(bookingDetail.total || 0) - Number(bookingDetail.amount_due || 0) > 0 && (
-                    <div className="flex justify-between pt-1 border-t border-amber-300 bg-amber-50 -mx-2 -mb-1 mt-1 px-2 pb-1 rounded-b">
-                      <span className="font-bold text-amber-800">SISA harus dibayar</span>
-                      <b className="text-amber-900">{fmtRp(Number(bookingDetail.total || 0) - Number(bookingDetail.amount_due || 0))}</b>
-                    </div>
-                  )}
-                </div>
-              )}
+              {(bookingDetail.total != null) && (() => {
+                const sb = statusBayarOf(bookingDetail);
+                return (
+                  <div className="bg-slate-50 border border-slate-200 rounded p-2 text-xs space-y-1 mt-2" data-testid="booking-detail-status-pembayaran">
+                    <div className="flex justify-between"><span className="text-slate-500">Subtotal</span><b>{fmtRp(bookingDetail.subtotal || 0)}</b></div>
+                    <div className="flex justify-between"><span className="text-slate-500">Service Fee 3%</span><b>{fmtRp(bookingDetail.service_fee || 0)}</b></div>
+                    <div className="flex justify-between border-t pt-1 mt-1"><span className="font-bold">Total Booking</span><b className="text-blue-700">{fmtRp(bookingDetail.total)}</b></div>
+                    <div className="flex justify-between"><span className="text-slate-500">Status Pembayaran</span><b>{STATUS_BAYAR_LABEL[sb.status_bayar]}</b></div>
+                    {sb.jumlah_dibayar > 0 && <div className="flex justify-between"><span className="text-slate-500">Sudah Dibayar</span><b className="text-emerald-700">{fmtRp(sb.jumlah_dibayar)}</b></div>}
+                    {sb.sisa_tagihan > 0 && (
+                      <div className="flex justify-between pt-1 border-t border-amber-300 bg-amber-50 -mx-2 -mb-1 mt-1 px-2 pb-1 rounded-b">
+                        <span className="font-bold text-amber-800">Sisa</span>
+                        <b className="text-amber-900">{fmtRp(sb.sisa_tagihan)}</b>
+                      </div>
+                    )}
+                    {sb.status_bayar === "dp" && <div className="text-slate-500">Pelunasan: Bayar saat Check-in</div>}
+                  </div>
+                );
+              })()}
               {bookingDetail.catatan && <div className="italic text-slate-600">&ldquo;{bookingDetail.catatan}&rdquo;</div>}
               <div className="text-[10px] text-slate-400">Dibuat oleh {bookingDetail.created_by}</div>
             </div>

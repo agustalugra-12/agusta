@@ -80,6 +80,11 @@ async def list_bookings(status: Optional[str] = None, tipe: Optional[str] = None
         q["jam_mulai"] = {"$lt": day_end.isoformat()}
         q["jam_selesai"] = {"$gte": day_start.isoformat()}
     items = await db.bookings.find(q, {"_id": 0}).sort("jam_mulai", 1).to_list(1000)
+    # status_bayar (belum_bayar/dp/lunas) + jumlah_dibayar/sisa_tagihan — sama seperti
+    # GET /payments/bookings-status, supaya Dashboard & Reservasi tidak baca payment_status
+    # mentah (yang tidak bedakan DP dari lunas) dan berujung salah label ke staf.
+    for b in items:
+        b.update(status_bayar_booking(b))
     return items
 
 @api.post("/bookings/{bid}/cancel-with-fee")
@@ -331,6 +336,7 @@ async def get_booking(bid: str, user: dict = Depends(get_current_user)):
     b = await db.bookings.find_one({"id": bid}, {"_id": 0})
     if not b:
         raise HTTPException(404, "Booking tidak ditemukan")
+    b.update(status_bayar_booking(b))
     return b
 
 @api.put("/bookings/{bid}")

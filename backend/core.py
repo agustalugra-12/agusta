@@ -229,7 +229,7 @@ def status_bayar_booking(b: dict) -> dict:
         status_bayar = "belum_bayar"
     else:
         status_bayar = "lunas" if total > 0 and terkumpul >= total else "dp"
-    return {"status_bayar": status_bayar, "sisa_tagihan": max(0, total - terkumpul)}
+    return {"status_bayar": status_bayar, "jumlah_dibayar": terkumpul, "sisa_tagihan": max(0, total - terkumpul)}
 
 def parse_iso(s: str, field: str) -> datetime:
     try:

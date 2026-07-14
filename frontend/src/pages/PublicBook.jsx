@@ -8,7 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
-import { bookingConfirmationWaLink, waLink } from "@/lib/apiClient";
+import { bookingConfirmationWaLink, waLink, STATUS_BAYAR_LABEL } from "@/lib/apiClient";
 import { ExtraBedSelector } from "@/pages/PermintaanKhususExtraBed";
 import {
   BedDouble, Wifi, Snowflake, Tv, Droplets, Bath, Trees, CheckCircle2, XCircle,
@@ -805,7 +805,6 @@ function SuccessView({ bookingId: bookingIdFromUrl }) {
   // yang cuma tahu "paid" (settlement gateway) tanpa peduli itu DP atau bayar penuh.
   const statusBayar = bk.status_bayar || (isPaid ? "lunas" : "belum_bayar");
   const isDp = isPaid && statusBayar === "dp";
-  const STATUS_BAYAR_LABEL = { belum_bayar: "BELUM BAYAR", dp: "DP — BELUM LUNAS", lunas: "LUNAS" };
   return (
     <div className={`min-h-screen grid place-items-center p-4 bg-gradient-to-b print:bg-white print:block print:p-0 ${isPaid ? "from-emerald-50 via-white to-blue-50" : isFailed ? "from-red-50 via-white to-blue-50" : "from-amber-50 via-white to-blue-50"}`}>
       <Card className={`max-w-md w-full print:max-w-none print:shadow-none print:border-0 ${isPaid ? "border-emerald-200" : isFailed ? "border-red-200" : "border-amber-200"}`}>

@@ -325,7 +325,11 @@ async def buat_reservasi_otomatis(log_id: str, data: dict, sumber: str, subjek: 
         # email RedDoorz nyatanya selalu "Belum Bayar" walau tamu sudah bayar), jadi booking
         # baru dari RedDoorz selalu langsung dianggap lunas supaya terhitung di laporan
         # pemasukan (yang filter payment_status=paid & paid_at).
-        update_fields.update({"payment_status": "paid", "status": "aktif", "paid_at": now_iso()})
+        # amount_due wajib diisi = total supaya status_bayar_booking() (dipakai Dashboard/
+        # Reservasi/PDF) menyimpulkan "lunas", bukan "dp" — booking OTA tidak pernah lewat
+        # payment_option/create-transaction (yang biasanya isi amount_due), jadi kalau
+        # dibiarkan kosong dianggap belum ada nominal terkumpul sama sekali.
+        update_fields.update({"payment_status": "paid", "status": "aktif", "paid_at": now_iso(), "amount_due": total})
     await db.bookings.update_one({"id": booking["id"]}, {"$set": update_fields})
     await db.email_logs.update_one({"id": log_id}, {"$set": {"reservation_id": booking["id"], "aksi": "reservasi_baru_dibuat"}})
 

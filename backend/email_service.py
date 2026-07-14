@@ -83,8 +83,7 @@ def generate_voucher_pdf(b: dict) -> bytes:
     # status_bayar (belum_bayar/dp/lunas) + sisa_tagihan — bukan `payment_status` mentah,
     # yang cuma tahu "paid" (settlement gateway) tanpa bedakan itu DP atau bayar penuh.
     sb = status_bayar_booking(b)
-    sudah_dibayar = int(b.get("amount_due") or 0) if b.get("payment_status") == "paid" else 0
-    baris("Sudah Dibayar", _fmt_rp(sudah_dibayar))
+    baris("Sudah Dibayar", _fmt_rp(sb["jumlah_dibayar"]))
     baris("Sisa Dibayar di Lokasi", _fmt_rp(sb["sisa_tagihan"]), bold=sb["sisa_tagihan"] > 0)
     baris("Status Pembayaran", STATUS_BAYAR_LABEL.get(sb["status_bayar"], sb["status_bayar"]), bold=True)
 

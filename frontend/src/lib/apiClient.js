@@ -65,6 +65,35 @@ export function statusColor(s) {
   })[s] || "#94A3B8";
 }
 
+// Label & warna status bayar (belum_bayar/dp/lunas) — satu sumber dipakai bersama oleh
+// Dashboard, Reservasi, dan halaman booking publik, supaya labelnya selalu identik di
+// semua permukaan (Booking Success, PDF, Dashboard, Reservasi) sesuai field status_bayar
+// yang di-derive backend (status_bayar_booking(), backend/core.py) — bukan payment_status
+// mentah yang tidak bedakan DP dari lunas.
+export const STATUS_BAYAR_LABEL = { belum_bayar: "BELUM BAYAR", dp: "DP — BELUM LUNAS", lunas: "LUNAS" };
+export const STATUS_BAYAR_BADGE_CLASS = {
+  belum_bayar: "bg-slate-100 text-slate-700",
+  dp: "bg-amber-100 text-amber-800",
+  lunas: "bg-emerald-100 text-emerald-800",
+};
+
+/**
+ * Ambil {status_bayar, jumlah_dibayar, sisa_tagihan} dari booking. Utamakan field yang
+ * sudah di-derive backend (GET /bookings, GET /bookings/{id}, GET /public/bookings/{id}
+ * semua sudah menyertakan ini) — fallback hitung sendiri di client HANYA untuk booking
+ * object lama yang belum melewati endpoint yang sudah diperbarui (jaga-jaga, bukan jalur utama).
+ */
+export function statusBayarOf(b) {
+  if (!b) return { status_bayar: "belum_bayar", jumlah_dibayar: 0, sisa_tagihan: 0 };
+  if (b.status_bayar) {
+    return { status_bayar: b.status_bayar, jumlah_dibayar: Number(b.jumlah_dibayar || 0), sisa_tagihan: Number(b.sisa_tagihan || 0) };
+  }
+  const total = Number(b.total || 0);
+  const terkumpul = b.payment_status === "paid" ? Number(b.amount_due || 0) : 0;
+  const status_bayar = b.payment_status !== "paid" ? "belum_bayar" : (total > 0 && terkumpul >= total ? "lunas" : "dp");
+  return { status_bayar, jumlah_dibayar: terkumpul, sisa_tagihan: Math.max(0, total - terkumpul) };
+}
+
 export function waLink(phone, message = "") {
   if (!phone) return "#";
   let n = phone.replace(/\D/g, "");
@@ -101,16 +130,20 @@ export function buildBookingConfirmationMessage(b) {
   const nights = isMenginap && dt && dtOut ? Math.max(1, Math.round((dtOut - dt) / 86400000)) : null;
   const total = Number(b.total || 0);
   const dpMin = Number(b.dp_min || 0);
-  const sisa = Math.max(0, total - dpMin);
-  const isPaid = b.payment_status === "paid";
+  const { status_bayar, jumlah_dibayar, sisa_tagihan } = statusBayarOf(b);
+  const isLunas = status_bayar === "lunas";
+  const isDp = status_bayar === "dp";
+  const sisa = isDp ? sisa_tagihan : Math.max(0, total - dpMin);
 
   const lines = [
     `Halo *${nama}*,`,
     "",
     "Terima kasih telah melakukan reservasi di *Pelangi Homestay*.",
     "",
-    isPaid
+    isLunas
       ? "\u2705 *Booking Anda telah LUNAS & terkonfirmasi.*"
+      : isDp
+      ? "\u2705 *Booking Anda DP diterima & terkonfirmasi.*"
       : "\u23F3 *Booking Anda menunggu pembayaran.*",
     "",
     "\uD83D\uDCCC *Detail Reservasi*",
@@ -130,14 +163,17 @@ export function buildBookingConfirmationMessage(b) {
   if (total > 0) {
     lines.push("\uD83D\uDCB3 *Detail Pembayaran*");
     lines.push(`\u2022 Total Tagihan: *${fmtRp(total)}*`);
-    if (isPaid) {
+    if (isLunas) {
       lines.push(`\u2022 \u2705 Status Pembayaran: *LUNAS*`);
+    } else if (isDp) {
+      lines.push(`\u2022 \u2705 DP Diterima: *${fmtRp(jumlah_dibayar)}*`);
+      lines.push(`\u2022 Sisa saat check-in: *${fmtRp(sisa)}*`);
     } else {
       lines.push(`\u2022 DP Minimum yang perlu dibayar: *${fmtRp(dpMin)}*`);
       lines.push(`\u2022 Sisa saat check-in: *${fmtRp(sisa)}*`);
     }
     lines.push("");
-    if (!isPaid && sisa > 0) {
+    if (!isLunas && sisa > 0) {
       lines.push("\uD83D\uDCCD Sisa pelunasan dapat dilakukan saat check-in di lokasi Pelangi Homestay.");
       lines.push("");
     }

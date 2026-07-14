@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { toast } from "sonner";
-import api, { fmtDateTime, fmtRp, waLink, bookingConfirmationWaLink } from "@/lib/apiClient";
+import api, { fmtDateTime, fmtRp, waLink, bookingConfirmationWaLink, statusBayarOf, STATUS_BAYAR_LABEL, STATUS_BAYAR_BADGE_CLASS } from "@/lib/apiClient";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -13,8 +13,12 @@ import { Search, X, Ban, CreditCard, MessageCircle, Phone, History } from "lucid
 const toLocalInput = (iso) => { const d = new Date(iso); d.setMinutes(d.getMinutes() - d.getTimezoneOffset()); return d.toISOString().slice(0, 16); };
 
 const STATUS_OPTIONS = ["Semua", "aktif", "booking_pending", "booking_paid", "checked_in", "cancelled", "no_show"];
+// Label status LIFECYCLE booking (aktif/pending/dst) — beda dari status BAYAR (Belum
+// Bayar/DP/Lunas, lihat STATUS_BAYAR_LABEL di apiClient.js). "booking_paid" cuma berarti
+// "sudah ada pembayaran masuk & terkonfirmasi", BUKAN otomatis lunas (bisa DP) — makanya
+// labelnya "Terkonfirmasi", bukan "Lunas", supaya tidak tumpang tindih dengan badge bayar.
 const STATUS_LABEL = {
-  aktif: "Aktif", booking_pending: "Menunggu Bayar", booking_paid: "Lunas",
+  aktif: "Aktif", booking_pending: "Menunggu Bayar", booking_paid: "Terkonfirmasi",
   checked_in: "Sudah Check-In", cancelled: "Dibatalkan", no_show: "No-Show",
 };
 const STATUS_BADGE = {
@@ -137,10 +141,13 @@ function ReservasiTab() {
                 <th className="text-left p-3">Check-out</th>
                 <th className="text-left p-3">Sumber</th>
                 <th className="text-left p-3">Status</th>
+                <th className="text-left p-3">Status Bayar</th>
               </tr>
             </thead>
             <tbody>
-              {reservations.map((r) => (
+              {reservations.map((r) => {
+                const sb = statusBayarOf(r);
+                return (
                 <tr key={r.id} data-testid={`reservasi-row-${r.kode}`} onClick={() => setSelected(r)} className="border-t border-slate-100 cursor-pointer hover:bg-slate-50">
                   <td className="p-3 font-bold">{r.kode}</td>
                   <td className="p-3">{r.nama_tamu}</td>
@@ -149,10 +156,12 @@ function ReservasiTab() {
                   <td className="p-3">{fmtDateTime(r.jam_selesai)}</td>
                   <td className="p-3"><span className={`inline-flex px-2 py-1 rounded-md text-xs font-medium ${SOURCE_BADGE[r.source] || "bg-slate-100 text-slate-700"}`}>{r.source === "online" ? "Online" : "Walk-in"}</span></td>
                   <td className="p-3"><span className={`inline-flex px-2 py-1 rounded-md text-xs font-medium ${STATUS_BADGE[r.status] || "bg-slate-100 text-slate-700"}`}>{STATUS_LABEL[r.status] || r.status}</span></td>
+                  <td className="p-3"><span data-testid={`reservasi-status-bayar-${r.kode}`} className={`inline-flex px-2 py-1 rounded-md text-xs font-medium ${STATUS_BAYAR_BADGE_CLASS[sb.status_bayar]}`}>{STATUS_BAYAR_LABEL[sb.status_bayar]}</span></td>
                 </tr>
-              ))}
+                );
+              })}
               {reservations.length === 0 && (
-                <tr><td colSpan={7} className="p-6 text-center text-slate-500">Tidak ada reservasi yang cocok dengan pencarian/filter</td></tr>
+                <tr><td colSpan={8} className="p-6 text-center text-slate-500">Tidak ada reservasi yang cocok dengan pencarian/filter</td></tr>
               )}
             </tbody>
           </table>
@@ -167,6 +176,9 @@ function ReservasiTab() {
               <div className="flex items-center gap-2 flex-wrap">
                 <span className={`text-[10px] uppercase font-bold px-2 py-1 rounded ${selected.tipe === "menginap" ? "bg-blue-700 text-white" : "bg-orange-100 text-orange-800"}`}>{selected.tipe === "menginap" ? "Menginap" : "Day Use"}</span>
                 <span className={`text-[10px] uppercase font-bold px-2 py-1 rounded ${STATUS_BADGE[selected.status] || "bg-slate-100 text-slate-700"}`}>{STATUS_LABEL[selected.status] || selected.status}</span>
+                {(() => { const sb = statusBayarOf(selected); return (
+                  <span data-testid="reservasi-detail-status-bayar" className={`text-[10px] uppercase font-bold px-2 py-1 rounded ${STATUS_BAYAR_BADGE_CLASS[sb.status_bayar]}`}>{STATUS_BAYAR_LABEL[sb.status_bayar]}</span>
+                ); })()}
                 <span className={`text-[10px] uppercase font-bold px-2 py-1 rounded ${SOURCE_BADGE[selected.source] || "bg-slate-100 text-slate-700"}`}>{selected.source === "online" ? "Online" : "Walk-in"}</span>
               </div>
               <div><span className="text-slate-500">Tamu:</span> <b>{selected.nama_tamu}</b></div>
@@ -175,13 +187,24 @@ function ReservasiTab() {
               <div><span className="text-slate-500">Jumlah Tamu:</span> {selected.jumlah_tamu}</div>
               <div><span className="text-slate-500">Check-in:</span> {fmtDateTime(selected.jam_mulai)}</div>
               <div><span className="text-slate-500">Check-out:</span> {fmtDateTime(selected.jam_selesai)}</div>
-              {selected.total != null && (
-                <div className="bg-slate-50 border border-slate-200 rounded p-2 mt-2 text-xs space-y-1">
-                  <div className="flex justify-between"><span className="text-slate-500">Subtotal</span><b>{fmtRp(selected.subtotal || 0)}</b></div>
-                  <div className="flex justify-between"><span className="text-slate-500">Service Fee 3%</span><b>{fmtRp(selected.service_fee || 0)}</b></div>
-                  <div className="flex justify-between border-t pt-1 mt-1"><span className="font-bold">Total</span><b className="text-blue-700">{fmtRp(selected.total)}</b></div>
-                </div>
-              )}
+              {selected.total != null && (() => {
+                const sb = statusBayarOf(selected);
+                return (
+                  <div className="bg-slate-50 border border-slate-200 rounded p-2 mt-2 text-xs space-y-1">
+                    <div className="flex justify-between"><span className="text-slate-500">Subtotal</span><b>{fmtRp(selected.subtotal || 0)}</b></div>
+                    <div className="flex justify-between"><span className="text-slate-500">Service Fee 3%</span><b>{fmtRp(selected.service_fee || 0)}</b></div>
+                    <div className="flex justify-between border-t pt-1 mt-1"><span className="font-bold">Total Booking</span><b className="text-blue-700">{fmtRp(selected.total)}</b></div>
+                    {sb.jumlah_dibayar > 0 && <div className="flex justify-between"><span className="text-slate-500">Sudah Dibayar</span><b className="text-emerald-700">{fmtRp(sb.jumlah_dibayar)}</b></div>}
+                    {sb.sisa_tagihan > 0 && (
+                      <div className="flex justify-between pt-1 border-t border-amber-300 bg-amber-50 -mx-2 -mb-1 mt-1 px-2 pb-1 rounded-b">
+                        <span className="font-bold text-amber-800">Sisa</span>
+                        <b className="text-amber-900">{fmtRp(sb.sisa_tagihan)}</b>
+                      </div>
+                    )}
+                    {sb.status_bayar === "dp" && <div className="text-slate-500">Pelunasan: Bayar saat Check-in</div>}
+                  </div>
+                );
+              })()}
               {selected.catatan && <div className="italic text-slate-600">&ldquo;{selected.catatan}&rdquo;</div>}
               <div className="text-[10px] text-slate-400 pt-1">Dibuat oleh {selected.created_by}</div>
             </div>
