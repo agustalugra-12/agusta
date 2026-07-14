@@ -26,34 +26,7 @@ async def create_checkin(body: CheckinCreate, user: dict = Depends(get_current_u
         rooms.append(r)
 
     # Save / upsert guest — 1 data tamu dipakai bersama untuk semua kamar dalam grup ini.
-    guest = None
-    if body.no_identitas:
-        guest = await db.guests.find_one({"no_identitas": body.no_identitas})
-    if not guest and body.no_hp:
-        guest = await db.guests.find_one({"no_hp": body.no_hp})
-    if guest:
-        await db.guests.update_one({"id": guest["id"]}, {
-            "$set": {
-                "nama": body.nama_tamu,
-                "no_hp": body.no_hp,
-                "kendaraan": body.kendaraan,
-                "last_visit": now_iso(),
-            },
-            "$inc": {"total_kunjungan": 1},
-        })
-        guest_id = guest["id"]
-    else:
-        guest_id = str(uuid.uuid4())
-        await db.guests.insert_one({
-            "id": guest_id,
-            "nama": body.nama_tamu,
-            "no_hp": body.no_hp,
-            "no_identitas": body.no_identitas,
-            "kendaraan": body.kendaraan,
-            "total_kunjungan": 1,
-            "last_visit": now_iso(),
-            "created_at": now_iso(),
-        })
+    guest_id = await upsert_guest(body.nama_tamu, body.no_hp, body.no_identitas, body.kendaraan)
     # parse jam_checkin
     jam_ci_iso = now_iso()
     if body.jam_checkin:

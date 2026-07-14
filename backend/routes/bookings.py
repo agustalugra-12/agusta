@@ -193,7 +193,7 @@ async def collect_balance(bid: str, body: CollectBalanceBody, user: dict = Depen
     return {"ok": True, "amount_collected": body.nominal, "total_paid": new_paid, "remaining": max(0, total - new_paid), "booking_kode": b["kode"]}
 
 @api.post("/bookings/{bid}/checkin")
-async def checkin_from_booking(bid: str, user: dict = Depends(get_current_user)):
+async def checkin_from_booking(bid: str, body: CheckinFromBookingBody = CheckinFromBookingBody(), user: dict = Depends(get_current_user)):
     """Check-in tamu dari booking (booking_paid ATAU aktif → checked_in). `aktif` ditambahkan
     2026-07-14 — sebelumnya cuma `booking_paid` (booking online tamu yang lunas via Tripay)
     yang bisa di-check-in, jadi booking OTA (RedDoorz, selalu status `aktif`) dan booking
@@ -201,11 +201,20 @@ async def checkin_from_booking(bid: str, user: dict = Depends(get_current_user))
     "tamu sudah tiba" — kamarnya pun tidak pernah lepas dari hitungan "Kosong" di ringkasan
     Dashboard walau sudah ada booking utk hari itu (lihat report_summary, backend/routes/reports.py).
 
+    Nomor HP tamu WAJIB terisi sebelum check-in (ditambahkan 2026-07-14) — booking dari email
+    OTA (RedDoorz) tidak pernah membawa nomor HP tamu, jadi staf harus menanyakan langsung ke
+    tamu saat kedatangan dan mengisinya lewat `body.no_hp`. Kalau `booking.no_hp` sudah terisi
+    (mis. booking walk-in/publik yang sudah mengisi saat pesan), tidak perlu diisi ulang.
+
     Untuk tipe `menginap`, TIDAK dibuatkan dokumen `checkins` terpisah (field durasi_jam/
     overtime_jam di situ memang semantik Day Use) — cukup tandai kamar `menginap` dan booking
     `checked_in`, sama seperti alur Quick Book staf untuk menginap. Untuk tipe `day_use`,
     tetap buat dokumen `checkins` seperti sebelumnya (perbaikan bug: dulu SELALU di-set
     "day_use" walau booking-nya menginap).
+
+    Di kedua cabang, data tamu di-upsert ke `db.guests` (perbaikan bug: sebelumnya cabang ini
+    sama sekali tidak menyentuh `db.guests`, beda dari alur `/checkins` langsung — jadi tamu
+    dari booking OTA/dashboard tidak pernah muncul di tab "Data Tamu" Reservasi).
     """
     b = await db.bookings.find_one({"id": bid})
     if not b:
@@ -218,10 +227,19 @@ async def checkin_from_booking(bid: str, user: dict = Depends(get_current_user))
     if r["status"] != "kosong":
         raise HTTPException(400, f"Kamar {r['nomor']} sedang dipakai (status: {r['status']})")
 
+    no_hp = (b.get("no_hp") or "").strip() or (body.no_hp or "").strip()
+    if not no_hp:
+        raise HTTPException(400, "Nomor telepon tamu wajib diisi sebelum check-in")
+    if no_hp != (b.get("no_hp") or ""):
+        await db.bookings.update_one({"id": bid}, {"$set": {"no_hp": no_hp}})
+        b["no_hp"] = no_hp
+
     total = int(b.get("total") or 0)
     paid = int(b.get("amount_due") or 0)
     sisa = max(0, total - paid)
     now = now_iso()
+
+    guest_id = await upsert_guest(b.get("nama_tamu", ""), no_hp, b.get("no_identitas", ""), b.get("kendaraan", ""))
 
     if b.get("tipe") == "menginap":
         await db.rooms.update_one({"id": b["room_id"]}, {"$set": {
@@ -240,9 +258,9 @@ async def checkin_from_booking(bid: str, user: dict = Depends(get_current_user))
     ci_doc = {
         "id": str(uuid.uuid4()),
         "trx_no": trx_no,
-        "guest_id": None,
+        "guest_id": guest_id,
         "nama_tamu": b.get("nama_tamu", ""),
-        "no_hp": b.get("no_hp", ""),
+        "no_hp": no_hp,
         "no_identitas": b.get("no_identitas", ""),
         "kendaraan": b.get("kendaraan", ""),
         "jumlah_tamu": b.get("jumlah_tamu", 1),

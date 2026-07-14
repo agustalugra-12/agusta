@@ -142,6 +142,42 @@ async def log_availability_change(room_id: str, room_tipe: str, stock_change: in
     })
     await push_sync_event("ketersediaan", f"Stok {room_tipe} berubah ({stock_change:+d}): {reason}")
 
+async def upsert_guest(nama: str, no_hp: str = "", no_identitas: str = "", kendaraan: str = "") -> str:
+    """Catat/perbarui 1 data tamu di `db.guests` — dipanggil dari SEMUA jalur yang menghasilkan
+    tamu ter-check-in (check-in Day Use langsung `/checkins`, maupun check-in dari booking
+    `/bookings/{id}/checkin` baik yang asalnya walk-in staf maupun email OTA), supaya tab
+    "Data Tamu" di Reservasi lengkap terlepas dari sumber booking-nya. Dicari dulu berdasarkan
+    no_identitas, lalu no_hp; kalau tidak ketemu keduanya, buat data tamu baru.
+    """
+    guest = None
+    if no_identitas:
+        guest = await db.guests.find_one({"no_identitas": no_identitas})
+    if not guest and no_hp:
+        guest = await db.guests.find_one({"no_hp": no_hp})
+    if guest:
+        await db.guests.update_one({"id": guest["id"]}, {
+            "$set": {
+                "nama": nama,
+                "no_hp": no_hp or guest.get("no_hp", ""),
+                "kendaraan": kendaraan or guest.get("kendaraan", ""),
+                "last_visit": now_iso(),
+            },
+            "$inc": {"total_kunjungan": 1},
+        })
+        return guest["id"]
+    guest_id = str(uuid.uuid4())
+    await db.guests.insert_one({
+        "id": guest_id,
+        "nama": nama,
+        "no_hp": no_hp,
+        "no_identitas": no_identitas,
+        "kendaraan": kendaraan,
+        "total_kunjungan": 1,
+        "last_visit": now_iso(),
+        "created_at": now_iso(),
+    })
+    return guest_id
+
 
 async def push_sync_event(data_type: str, detail: str) -> None:
     """Dorong notifikasi perubahan data Pelangi PMS ke bot WhatsApp (Sinkronisasi Data
@@ -416,6 +452,9 @@ class ManualMarkPaidBody(BaseModel):
 class CollectBalanceBody(BaseModel):
     nominal: int
     metode: str = "cash"  # cash / qris
+
+class CheckinFromBookingBody(BaseModel):
+    no_hp: Optional[str] = None  # wajib diisi kalau booking.no_hp masih kosong (mis. booking OTA)
 
 class PaymentStatusUpdateBody(BaseModel):
     """Body untuk ubah status pembayaran manual (halaman Pembayaran, Fase 3) — staf koreksi

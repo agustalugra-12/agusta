@@ -163,6 +163,10 @@ export default function Dashboard() {
   const [moveDialog, setMoveDialog] = useState(null); // { fromRoom }
   const [moveTargetId, setMoveTargetId] = useState("");
   const [moveAlasan, setMoveAlasan] = useState("");
+  // Check-in dialog state — minta no_hp tamu sebelum check-in bisa dilakukan
+  const [checkinDialog, setCheckinDialog] = useState(null); // { booking, no_hp }
+  // Collect sisa pelunasan dialog state
+  const [collectDialog, setCollectDialog] = useState(null); // { booking, sisa, nominal, metode }
 
   const handleRoomClick = (room, upcomingBk) => {
     // Jika tanggal yang dilihat punya booking di room ini → buka detail booking
@@ -216,43 +220,52 @@ export default function Dashboard() {
     } catch (e) { toast.error(e?.response?.data?.detail || "Gagal"); }
   };
 
-  // Collect sisa pelunasan (DP 50% yang belum lunas)
-  const collectBalance = async () => {
+  // Collect sisa pelunasan (DP 50% yang belum lunas) — buka dialog form
+  const openCollectDialog = () => {
     if (!bookingDetail) return;
     const total = Number(bookingDetail.total || 0);
     const paid = Number(bookingDetail.amount_due || 0);
     const sisa = Math.max(0, total - paid);
     if (sisa <= 0) { toast.info("Booking sudah lunas"); return; }
-    const metode = window.prompt(`Metode pembayaran sisa Rp ${sisa.toLocaleString("id-ID")}: ketik 'cash' atau 'qris'`, "cash");
-    if (!metode) return;
-    const m = metode.trim().toLowerCase();
-    if (m !== "cash" && m !== "qris") { toast.error("Metode harus cash atau qris"); return; }
-    const nomStr = window.prompt(`Nominal yang diterima (default: Rp ${sisa.toLocaleString("id-ID")}):`, sisa);
-    if (!nomStr) return;
-    const nominal = Number(nomStr) || sisa;
+    setCollectDialog({ booking: bookingDetail, sisa, nominal: String(sisa), metode: "cash" });
+  };
+
+  const submitCollectBalance = async () => {
+    if (!collectDialog) return;
+    const nominal = Number(collectDialog.nominal);
+    if (!nominal || nominal <= 0) { toast.error("Nominal harus > 0"); return; }
     try {
-      const { data } = await api.post(`/bookings/${bookingDetail.id}/collect-balance`, { nominal, metode: m });
+      const { data } = await api.post(`/bookings/${collectDialog.booking.id}/collect-balance`, { nominal, metode: collectDialog.metode });
+      const m = collectDialog.metode.toUpperCase();
       const msg = data.remaining > 0
-        ? `Diterima Rp ${data.amount_collected.toLocaleString("id-ID")} (${m.toUpperCase()}). Sisa Rp ${data.remaining.toLocaleString("id-ID")}.`
-        : `Pelunasan diterima Rp ${data.amount_collected.toLocaleString("id-ID")} (${m.toUpperCase()}). Booking LUNAS.`;
+        ? `Diterima Rp ${data.amount_collected.toLocaleString("id-ID")} (${m}). Sisa Rp ${data.remaining.toLocaleString("id-ID")}.`
+        : `Pelunasan diterima Rp ${data.amount_collected.toLocaleString("id-ID")} (${m}). Booking LUNAS.`;
       toast.success(msg);
-      setBookingDetail(null); load();
+      setCollectDialog(null); setBookingDetail(null); load();
     } catch (e) { toast.error(e?.response?.data?.detail || "Gagal"); }
   };
 
-  // Check-in tamu dari booking (booking_paid → checked_in)
-  const checkinFromBooking = async () => {
+  // Check-in tamu dari booking (booking_paid/aktif → checked_in) — buka dialog minta no_hp dulu
+  const openCheckinDialog = () => {
     if (!bookingDetail) return;
-    const total = Number(bookingDetail.total || 0);
-    const paid = Number(bookingDetail.amount_due || 0);
+    setCheckinDialog({ booking: bookingDetail, no_hp: bookingDetail.no_hp || "" });
+  };
+
+  const submitCheckin = async () => {
+    if (!checkinDialog) return;
+    const b = checkinDialog.booking;
+    const no_hp = (checkinDialog.no_hp || "").trim();
+    if (!no_hp) { toast.error("Nomor telepon tamu wajib diisi sebelum check-in"); return; }
+    const total = Number(b.total || 0);
+    const paid = Number(b.amount_due || 0);
     const sisa = Math.max(0, total - paid);
     const warn = sisa > 0 ? `\nPERHATIAN: Sisa pembayaran Rp ${sisa.toLocaleString("id-ID")} belum di-collect. Lanjutkan check-in?` : "";
-    if (!window.confirm(`Check-in tamu ${bookingDetail.nama_tamu} (kamar ${bookingDetail.room_nomor})?${warn}`)) return;
+    if (!window.confirm(`Check-in tamu ${b.nama_tamu} (kamar ${b.room_nomor})?${warn}`)) return;
     try {
-      const { data } = await api.post(`/bookings/${bookingDetail.id}/checkin`, {});
+      const { data } = await api.post(`/bookings/${b.id}/checkin`, { no_hp });
       const trxLabel = data.trx_no ? `Check-in OK. TRX ${data.trx_no}` : `Check-in OK, kamar ditandai terisi`;
       toast.success(`${trxLabel}${data.remaining > 0 ? ` (sisa Rp ${data.remaining.toLocaleString("id-ID")})` : ""}`);
-      setBookingDetail(null); load();
+      setCheckinDialog(null); setBookingDetail(null); load();
     } catch (e) { toast.error(e?.response?.data?.detail || "Gagal"); }
   };
 
@@ -736,7 +749,7 @@ export default function Dashboard() {
           <DialogFooter className="flex-wrap gap-2">
             {!rescheduleMode && bookingDetail?.status === "aktif" && (
               <>
-                <Button data-testid="bd-checkin-aktif" onClick={checkinFromBooking} className="bg-emerald-600 hover:bg-emerald-700 text-white">
+                <Button data-testid="bd-checkin-aktif" onClick={openCheckinDialog} className="bg-emerald-600 hover:bg-emerald-700 text-white">
                   Check-in Tamu
                 </Button>
                 <Button data-testid="bd-reschedule" variant="outline" onClick={() => setRescheduleMode(true)}>Reschedule</Button>
@@ -764,11 +777,11 @@ export default function Dashboard() {
             )}
             {!rescheduleMode && bookingDetail?.status === "booking_paid" && (
               <>
-                <Button data-testid="bd-checkin" onClick={checkinFromBooking} className="bg-emerald-600 hover:bg-emerald-700 text-white">
+                <Button data-testid="bd-checkin" onClick={openCheckinDialog} className="bg-emerald-600 hover:bg-emerald-700 text-white">
                   Check-in Tamu
                 </Button>
                 {Number(bookingDetail.total || 0) - Number(bookingDetail.amount_due || 0) > 0 && (
-                  <Button data-testid="bd-collect" variant="outline" onClick={collectBalance} className="text-blue-700 border-blue-400 hover:bg-blue-50">
+                  <Button data-testid="bd-collect" variant="outline" onClick={openCollectDialog} className="text-blue-700 border-blue-400 hover:bg-blue-50">
                     Collect Sisa Rp {(Number(bookingDetail.total || 0) - Number(bookingDetail.amount_due || 0)).toLocaleString("id-ID")}
                   </Button>
                 )}
@@ -820,6 +833,86 @@ export default function Dashboard() {
           <DialogFooter>
             <Button variant="ghost" onClick={() => setMoveDialog(null)}>Batal</Button>
             <Button data-testid="move-submit" onClick={submitMoveRoom} className="bg-blue-700 hover:bg-blue-800">Pindahkan</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Check-in Dialog — wajib isi no_hp tamu sebelum check-in bisa dilakukan */}
+      <Dialog open={!!checkinDialog} onOpenChange={(o) => { if (!o) setCheckinDialog(null); }}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Check-in Tamu</DialogTitle>
+          </DialogHeader>
+          {checkinDialog && (
+            <div className="space-y-3 text-sm">
+              <div>
+                <span className="text-slate-500">Tamu:</span> <b>{checkinDialog.booking.nama_tamu}</b>
+                {" — "}Kamar {checkinDialog.booking.room_nomor}
+              </div>
+              <div>
+                <Label htmlFor="checkin-no-hp">Nomor Telepon Tamu *</Label>
+                <Input
+                  id="checkin-no-hp" data-testid="checkin-no-hp-input" placeholder="08xxxxxxxxxx"
+                  value={checkinDialog.no_hp}
+                  onChange={(e) => setCheckinDialog((d) => ({ ...d, no_hp: e.target.value }))}
+                  className="mt-1.5"
+                />
+                <p className="text-xs text-slate-400 mt-1">Wajib diisi — check-in tidak bisa dilakukan tanpa nomor telepon tamu.</p>
+              </div>
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setCheckinDialog(null)}>Batal</Button>
+            <Button
+              data-testid="checkin-confirm-submit"
+              disabled={!checkinDialog?.no_hp?.trim()}
+              onClick={submitCheckin}
+              className="bg-emerald-600 hover:bg-emerald-700 text-white"
+            >
+              Check-in
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Collect Sisa Pelunasan Dialog */}
+      <Dialog open={!!collectDialog} onOpenChange={(o) => { if (!o) setCollectDialog(null); }}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Collect Sisa Pelunasan</DialogTitle>
+          </DialogHeader>
+          {collectDialog && (
+            <div className="space-y-3 text-sm">
+              <div><span className="text-slate-500">Booking:</span> <b>{collectDialog.booking.kode}</b></div>
+              <div><span className="text-slate-500">Sisa Tagihan:</span> <b className="text-blue-700">Rp {collectDialog.sisa.toLocaleString("id-ID")}</b></div>
+              <div>
+                <Label htmlFor="collect-nominal">Nominal Diterima</Label>
+                <Input
+                  id="collect-nominal" data-testid="collect-nominal-input" type="number"
+                  value={collectDialog.nominal}
+                  onChange={(e) => setCollectDialog((d) => ({ ...d, nominal: e.target.value }))}
+                  className="mt-1.5"
+                />
+              </div>
+              <div>
+                <Label htmlFor="collect-metode">Metode Pembayaran</Label>
+                <select
+                  id="collect-metode" data-testid="collect-metode-select"
+                  value={collectDialog.metode}
+                  onChange={(e) => setCollectDialog((d) => ({ ...d, metode: e.target.value }))}
+                  className="w-full h-10 rounded-md border border-slate-300 px-3 bg-white mt-1.5"
+                >
+                  <option value="cash">Cash</option>
+                  <option value="qris">QRIS</option>
+                </select>
+              </div>
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setCollectDialog(null)}>Batal</Button>
+            <Button data-testid="collect-confirm-submit" onClick={submitCollectBalance} className="bg-blue-700 hover:bg-blue-800">
+              Konfirmasi Terima
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
