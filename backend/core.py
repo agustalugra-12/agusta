@@ -12,6 +12,7 @@ ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
 
 import os
+import re
 import uuid
 import hashlib
 import logging
@@ -203,6 +204,32 @@ def calc_tagihan(tarif_dasar: int, jam_checkin: datetime, jam_checkout: datetime
         "service_fee": service_fee, "service_fee_pct": SERVICE_FEE_PCT,
         "total": total,
     }
+
+_ORDER_ID_SUFFIX_RE = re.compile(r"^(.+)-(\d{6}[0-9A-F]{3})$")
+
+def guess_booking_kode_from_order_id(order_id: str) -> Optional[str]:
+    """Tebak kode booking dari order_id/merchant_ref Midtrans & Tripay, keduanya dibentuk
+    `f"{kode}-{HHMMSS}{uuid4hex[:3].upper()}"` (create-snap-token/create-transaction) — dipakai
+    webhook sebagai fallback kalau payment_log yang seharusnya dibuat saat create-transaction
+    ternyata tidak ada (mis. proses sempat gagal di antara panggilan ke gateway dan insert log),
+    supaya booking tetap ter-update & voucher tetap terkirim alih-alih diam-diam jadi entri yatim."""
+    m = _ORDER_ID_SUFFIX_RE.match(order_id or "")
+    return m.group(1) if m else None
+
+def status_bayar_booking(b: dict) -> dict:
+    """Derive status bayar 3-keadaan (belum_bayar/dp/lunas) + sisa tagihan dari booking.
+    `payment_status` di skema booking cuma 2 keadaan gateway-level (pending/paid/dst) —
+    itu TIDAK cukup untuk bedakan tamu yang baru bayar DP vs bayar lunas, karena webhook
+    Midtrans/Tripay sama-sama set payment_status="paid" begitu ada settlement, apapun
+    payment_option-nya. Dipakai bersama oleh halaman staf (Pembayaran) dan permukaan tamu
+    (voucher PDF, email, /public/bookings/{id}) supaya konsisten."""
+    total = int(b.get("total") or 0)
+    terkumpul = int(b.get("amount_due") or 0) if b.get("payment_status") == "paid" else 0
+    if b.get("payment_status") != "paid":
+        status_bayar = "belum_bayar"
+    else:
+        status_bayar = "lunas" if total > 0 and terkumpul >= total else "dp"
+    return {"status_bayar": status_bayar, "sisa_tagihan": max(0, total - terkumpul)}
 
 def parse_iso(s: str, field: str) -> datetime:
     try:

@@ -37,8 +37,11 @@ daftar ini ringkasan untuk manusia, bisa sedikit basi — cek CLI kalau ragu.
 ### Integrasi Pembayaran — backend LENGKAP (2026-07-11)
 - [x] `GET /api/payments/log/by-booking/{booking_kode}` — riwayat semua percobaan pembayaran (payment_log) per reservasi, dipakai panel "Riwayat Pembayaran" di `Pembayaran.jsx` (sudah disambungkan, bukan mock lagi untuk panel ini).
 - [x] `PUT /api/payments/log/{log_id}/status` — koreksi status transaksi manual oleh staf (mis. cek bukti transfer manual), ikut update `status`/`payment_status` booking terkait dengan pemetaan sama seperti webhook Midtrans, kirim voucher otomatis kalau jadi lunas — disambungkan ke tombol "Ubah Status" di `Pembayaran.jsx`.
-- [x] `GET /api/payments/bookings-status` — daftar reservasi dengan status bayar terderivasi (`belum_bayar`/`dp`/`lunas` dari `payment_status`+`amount_due` vs `total`), filter `status_bayar`/`search` — `backend/routes/payments.py`. Belum disambungkan ke UI (tabel utama `Pembayaran.jsx` masih data tiruan, endpoint list payment_log belum ada — tugas menyusul kalau muncul di plan).
+- [x] `GET /api/payments/bookings-status` — daftar reservasi dengan status bayar terderivasi (`belum_bayar`/`dp`/`lunas` dari `payment_status`+`amount_due` vs `total`), filter `status_bayar`/`search` — `backend/routes/payments.py`.
 - [x] Fix bug: field `metode` sempat "kecuri" dari `CollectBalanceBody` gara-gara class baru ke-insert di tengah — dibetulkan di `backend/core.py`.
+- [x] `GET /api/payments/log` (2026-07-14) — daftar semua transaksi payment_log lintas booking (join `nama_tamu`, filter status/search), dipakai tabel utama `Pembayaran.jsx` (sekarang bukan mock lagi). Dialog "Buat Tagihan Baru" masih simulasi (belum panggil Tripay sungguhan, butuh UI pilih channel dulu).
+- [x] Status bayar DP vs Lunas untuk tamu publik (2026-07-14, laporan user) — helper `status_bayar_booking()` (`backend/core.py`) dipasang di `/public/bookings/{id}`, voucher PDF & email konfirmasi supaya tamu yang baru DP tidak lagi melihat "PAID"/lunas keliru, dan tahu sisa yang harus dibayar di lokasi.
+- [x] Fallback resolusi webhook Tripay/Midtrans (2026-07-14) — `guess_booking_kode_from_order_id()` (`backend/core.py`) supaya callback yang `payment_log`-nya tidak ketemu tetap bisa update booking + kirim voucher, bukan jadi entri yatim yang bikin email tidak terkirim.
 
 ### Log Aktivitas (Audit Trail) — SUDAH LENGKAP (diverifikasi 2026-07-11, hampir tanpa kode baru)
 - [x] Skema `AuditLog` didokumentasikan di `backend/core.py` (Mongo schemaless, tidak ada migrasi terpisah) — koleksi `audit_log` sudah dipakai luas sejak awal proyek.
@@ -85,9 +88,9 @@ daftar ini ringkasan untuk manusia, bisa sedikit basi — cek CLI kalau ragu.
 - [x] Pengaturan sinkronisasi data ke bot (toggle + frekuensi) tersimpan di `wa_sync_settings`
 - [x] Ketiga halaman (`KonfigurasiWebhook.jsx`, `PesanWhatsAppOtomatis.jsx`, `PemantauanStatusWA.jsx`) disambungkan penuh, tidak ada lagi data tiruan
 
-### Integrasi Pembayaran Midtrans
-- [x] Halaman utama "Pembayaran" (daftar transaksi, mock) — catatan: checkout tamu sudah nyata di PublicBook.jsx, ini cuma monitoring admin
-- [x] Buat Tagihan Baru (simulasi Snap + pilihan metode bayar, mock)
+### Integrasi Pembayaran (Tripay, sebelumnya Midtrans)
+- [x] Halaman utama "Pembayaran" (daftar transaksi) — sekarang nyata via `GET /payments/log` (2026-07-14), bukan mock lagi.
+- [x] Buat Tagihan Baru (simulasi + pilihan metode bayar, mock) — masih sengaja simulasi, lihat catatan di Fase 3 Integrasi Pembayaran.
 - [x] Penanganan status pembayaran gagal/kedaluwarsa di PublicBook.jsx (nyata, bukan mock)
 - [x] Navigasi Daftar Reservasi -> Pembayaran (filter kode otomatis)
 - [ ] **Backend (perlu keputusan bisnis, ditunda atas persetujuan user 2026-07-11):** izinkan booking `cancelled` (karena expired/gagal bayar) dibuka lagi untuk retry Snap — perlu re-cek ketersediaan kamar saat retry supaya tidak double-booking. Frontend "Coba Bayar Lagi" sengaja belum dibuat sampai ini selesai. **Dinilai ulang 2026-07-12** (atas permintaan user, "kerjakan jika memang penting"): dicek kodenya, dampaknya cuma UX (tamu isi form ulang) — kamar otomatis lepas lagi & tamu diberi tahu jelas, tidak ada kerugian bisnis/data. Tetap ditunda, prioritas rendah.

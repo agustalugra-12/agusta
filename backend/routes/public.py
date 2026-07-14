@@ -246,6 +246,10 @@ async def public_get_booking(bid: str):
         "jumlah_tamu", "extra_bed_qty", "dengan_sarapan", "jam_mulai", "jam_selesai", "status", "payment_status",
         "subtotal", "service_fee", "total", "dp_min", "invoice_id",
     ]}
+    # status_bayar (belum_bayar/dp/lunas) + sisa_tagihan — bedakan DP dari lunas untuk
+    # halaman /book/sukses & voucher, karena payment_status mentah cuma tahu "paid" (gateway
+    # settlement) tanpa peduli itu DP atau bayar penuh.
+    safe.update(status_bayar_booking(b))
     return safe
 
 

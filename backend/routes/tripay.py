@@ -3,6 +3,14 @@ from email_service import generate_voucher_pdf, send_voucher_email
 import hmac
 import httpx
 
+# Tripay pakai vocab status sendiri (uppercase); payment_log.transaction_status
+# dinormalisasi ke gaya Midtrans (lowercase) supaya satu field bisa dipakai lintas
+# gateway — lihat tripay_callback().
+TRIPAY_STATUS_MAP = {
+    "PAID": "settlement", "UNPAID": "pending", "EXPIRED": "expire",
+    "FAILED": "deny", "REFUND": "refund",
+}
+
 @api.get("/payments/tripay/channels")
 async def tripay_channels():
     """Daftar metode pembayaran aktif dari Tripay (VA/e-wallet/QRIS/retail dst) — dipakai
@@ -90,7 +98,7 @@ async def tripay_create_transaction(body: TripayCreateTransactionBody):
         "order_id": merchant_ref, "gateway": "tripay",
         "reference": trx.get("reference"), "checkout_url": trx.get("checkout_url"),
         "gross_amount": str(amount), "payment_option": body.payment_option,
-        "transaction_status": "UNPAID", "status_code": None,
+        "transaction_status": "pending", "status_code": None,
         "payment_type": body.method, "fraud_status": None,
         "created_at": now_iso(), "updated_at": now_iso(),
         "tripay_response": trx,
@@ -145,7 +153,11 @@ async def tripay_callback(request: Request):
     payload = await request.json()
     merchant_ref = payload.get("merchant_ref")
     reference = payload.get("reference")
-    status = payload.get("status")  # PAID | EXPIRED | FAILED | REFUND | UNPAID
+    status_raw = payload.get("status")  # PAID | EXPIRED | FAILED | REFUND | UNPAID
+    # payment_log.transaction_status dipakai bersama Midtrans, jadi dinormalisasi ke
+    # vocab Midtrans (lowercase) di sini — biar tabel Pembayaran & VALID_PAYMENT_STATUSES
+    # cuma perlu paham satu vocab, bukan dua asal gateway berbeda.
+    status = TRIPAY_STATUS_MAP.get(status_raw, (status_raw or "").lower())
     total_amount = payload.get("total_amount")
     payment_method = payload.get("payment_method")
     if not merchant_ref:
@@ -164,10 +176,21 @@ async def tripay_callback(request: Request):
         await db.payment_log.update_one({"_id": log["_id"]}, {"$set": log_fields})
         booking_id = log.get("booking_id")
     else:
-        new_log = {"id": str(uuid.uuid4()), "order_id": merchant_ref, "booking_id": None,
-                   "booking_kode": None, "created_at": now_iso(), **log_fields}
+        # payment_log seharusnya sudah ada dari create-transaction — kalau tidak ketemu,
+        # tebak booking dari pola order_id supaya booking tetap ter-update & voucher tetap
+        # terkirim, bukan diam-diam jadi entri yatim (lihat guess_booking_kode_from_order_id).
+        kode_guess = guess_booking_kode_from_order_id(merchant_ref)
+        b_guess = await db.bookings.find_one({"kode": kode_guess}) if kode_guess else None
+        booking_id = b_guess["id"] if b_guess else None
+        if not b_guess:
+            logging.getLogger("tripay").warning(
+                "Callback Tripay untuk order_id %s tidak ketemu payment_log maupun booking tebakan (%s)",
+                merchant_ref, kode_guess,
+            )
+        new_log = {"id": str(uuid.uuid4()), "order_id": merchant_ref, "booking_id": booking_id,
+                   "booking_kode": b_guess["kode"] if b_guess else None,
+                   "created_at": now_iso(), **log_fields}
         await db.payment_log.insert_one(new_log)
-        booking_id = None
 
     if booking_id:
         b = await db.bookings.find_one({"id": booking_id})
@@ -175,14 +198,14 @@ async def tripay_callback(request: Request):
             new_status = b.get("status")
             new_payment = b.get("payment_status", "pending")
             now = now_iso()
-            if status == "PAID":
+            if status == "settlement":
                 new_status, new_payment = "booking_paid", "paid"
-            elif status == "UNPAID":
+            elif status == "pending":
                 new_payment = "pending"
-            elif status in ("EXPIRED", "FAILED"):
+            elif status in ("expire", "deny"):
                 new_status = "cancelled"
-                new_payment = "expired" if status == "EXPIRED" else "failed"
-            elif status == "REFUND":
+                new_payment = "expired" if status == "expire" else "failed"
+            elif status == "refund":
                 new_payment = "refunded"
             was_paid = b.get("payment_status") == "paid"
             await db.bookings.update_one({"id": booking_id}, {"$set": {

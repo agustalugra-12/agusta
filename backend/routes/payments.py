@@ -107,11 +107,21 @@ async def midtrans_notification(request: Request):
         await db.payment_log.update_one({"_id": log["_id"]}, {"$set": log_fields})
         booking_id = log.get("booking_id")
     else:
-        # fallback insert (jarang terjadi)
-        new_log = {"id": str(uuid.uuid4()), "order_id": order_id,
+        # payment_log seharusnya sudah ada dari create-snap-token — kalau tidak ketemu, tebak
+        # booking dari pola order_id supaya booking tetap ter-update & voucher tetap terkirim,
+        # bukan diam-diam jadi entri yatim (lihat guess_booking_kode_from_order_id).
+        kode_guess = guess_booking_kode_from_order_id(order_id)
+        b_guess = await db.bookings.find_one({"kode": kode_guess}) if kode_guess else None
+        booking_id = b_guess["id"] if b_guess else None
+        if not b_guess:
+            logging.getLogger("payments").warning(
+                "Notifikasi Midtrans untuk order_id %s tidak ketemu payment_log maupun booking tebakan (%s)",
+                order_id, kode_guess,
+            )
+        new_log = {"id": str(uuid.uuid4()), "order_id": order_id, "booking_id": booking_id,
+                   "booking_kode": b_guess["kode"] if b_guess else None,
                    "created_at": now_iso(), **log_fields}
         await db.payment_log.insert_one(new_log)
-        booking_id = None
     # update booking
     if booking_id:
         b = await db.bookings.find_one({"id": booking_id})
@@ -223,6 +233,32 @@ async def update_payment_status_manual(log_id: str, body: PaymentStatusUpdateBod
                        (f" ({body.alasan})" if body.alasan else ""))
     return {"ok": True, "order_id": log.get("order_id"), "transaction_status": body.status}
 
+@api.get("/payments/log")
+async def list_payment_log(search: Optional[str] = None, status: Optional[str] = None,
+                            user: dict = Depends(get_current_user)):
+    """Daftar semua transaksi payment_log (Midtrans & Tripay, vocab transaction_status
+    sudah dinormalisasi ke gaya Midtrans lowercase) untuk tabel utama halaman Pembayaran.
+    nama_tamu di-join dari booking terkait karena payment_log sendiri tidak menyimpannya."""
+    pipeline: List[Dict[str, Any]] = []
+    if status:
+        pipeline.append({"$match": {"transaction_status": status}})
+    pipeline += [
+        {"$sort": {"created_at": -1}},
+        {"$limit": 500},
+        {"$lookup": {"from": "bookings", "localField": "booking_kode",
+                      "foreignField": "kode", "as": "_booking"}},
+        {"$addFields": {"nama_tamu": {"$arrayElemAt": ["$_booking.nama_tamu", 0]}}},
+        {"$project": {"_id": 0, "midtrans_response": 0, "notification_payload": 0,
+                       "tripay_response": 0, "_booking": 0}},
+    ]
+    items = await db.payment_log.aggregate(pipeline).to_list(500)
+    if search:
+        q = search.lower()
+        items = [i for i in items if q in (i.get("booking_kode") or "").lower()
+                 or q in (i.get("nama_tamu") or "").lower()
+                 or q in (i.get("order_id") or "").lower()]
+    return items
+
 @api.get("/payments/log/by-booking/{booking_kode}")
 async def get_payment_log_by_booking(booking_kode: str, user: dict = Depends(get_current_user)):
     """Riwayat semua percobaan pembayaran (payment_log) untuk satu reservasi — dipakai
@@ -233,18 +269,6 @@ async def get_payment_log_by_booking(booking_kode: str, user: dict = Depends(get
         {"_id": 0, "midtrans_response": 0, "notification_payload": 0},
     ).sort("created_at", 1).to_list(200)
     return logs
-
-def _status_bayar(b: dict) -> str:
-    """Derive status bayar 3-keadaan (PRD: Belum Bayar/DP/Lunas) dari payment_status booking.
-    `amount_due` di skema booking sekarang ini isinya kumulatif nominal yang sudah confirmed
-    terkumpul (diisi saat create-snap-token, ditambah tiap collect-balance) — bukan "belum
-    dibayar" seperti nama fieldnya menyesatkan.
-    """
-    if b.get("payment_status") != "paid":
-        return "belum_bayar"
-    total = int(b.get("total") or 0)
-    terkumpul = int(b.get("amount_due") or 0)
-    return "lunas" if total > 0 and terkumpul >= total else "dp"
 
 @api.get("/payments/bookings-status")
 async def list_bookings_status_bayar(status_bayar: Optional[str] = None, search: Optional[str] = None,
@@ -265,8 +289,7 @@ async def list_bookings_status_bayar(status_bayar: Optional[str] = None, search:
               "amount_due": 1, "dp_min": 1, "created_at": 1, "paid_at": 1}
     items = await db.bookings.find(q, fields).sort("created_at", -1).to_list(1000)
     for b in items:
-        b["status_bayar"] = _status_bayar(b)
-        b["sisa_tagihan"] = max(0, int(b.get("total") or 0) - int(b.get("amount_due") or 0))
+        b.update(status_bayar_booking(b))
     if status_bayar:
         items = [b for b in items if b["status_bayar"] == status_bayar]
     return items

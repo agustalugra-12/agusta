@@ -14,7 +14,12 @@ from reportlab.lib.pagesizes import A5
 from reportlab.lib.units import mm
 from reportlab.pdfgen import canvas
 
-from core import db, os, uuid, now_iso, parse_iso, timezone, timedelta, BREVO_API_KEY, BREVO_FROM_EMAIL, BREVO_FROM_NAME
+from core import (
+    db, os, uuid, now_iso, parse_iso, timezone, timedelta,
+    BREVO_API_KEY, BREVO_FROM_EMAIL, BREVO_FROM_NAME, status_bayar_booking,
+)
+
+STATUS_BAYAR_LABEL = {"belum_bayar": "BELUM BAYAR", "dp": "DP (BELUM LUNAS)", "lunas": "LUNAS"}
 
 logger = logging.getLogger("email_service")
 
@@ -75,15 +80,13 @@ def generate_voucher_pdf(b: dict) -> bytes:
     baris("Subtotal", _fmt_rp(b.get("subtotal")))
     baris("Service Fee", _fmt_rp(b.get("service_fee")))
     baris("Total", _fmt_rp(b.get("total")), bold=True)
-    # `amount_due` = nominal kumulatif yang sudah confirmed terkumpul (diisi saat create-snap-token,
-    # ditambah tiap collect-balance staf) — sama seperti dipakai `_status_bayar`/`sisa_tagihan` di
-    # routes/payments.py, bukan cuma DP awal kalau sudah ada pelunasan susulan.
-    total = int(b.get("total") or 0)
-    sudah_dibayar = int(b.get("amount_due") or 0)
-    sisa_bayar = max(0, total - sudah_dibayar)
-    baris("Sudah Dibayar (DP)", _fmt_rp(sudah_dibayar))
-    baris("Sisa Bayar", _fmt_rp(sisa_bayar), bold=sisa_bayar > 0)
-    baris("Status Pembayaran", (b.get("payment_status") or "").upper(), bold=True)
+    # status_bayar (belum_bayar/dp/lunas) + sisa_tagihan — bukan `payment_status` mentah,
+    # yang cuma tahu "paid" (settlement gateway) tanpa bedakan itu DP atau bayar penuh.
+    sb = status_bayar_booking(b)
+    sudah_dibayar = int(b.get("amount_due") or 0) if b.get("payment_status") == "paid" else 0
+    baris("Sudah Dibayar", _fmt_rp(sudah_dibayar))
+    baris("Sisa Dibayar di Lokasi", _fmt_rp(sb["sisa_tagihan"]), bold=sb["sisa_tagihan"] > 0)
+    baris("Status Pembayaran", STATUS_BAYAR_LABEL.get(sb["status_bayar"], sb["status_bayar"]), bold=True)
 
     y -= 5 * mm
     c.setFont("Helvetica-Oblique", 8)
@@ -95,11 +98,18 @@ def generate_voucher_pdf(b: dict) -> bytes:
 
 
 def _voucher_email_html(b: dict) -> str:
+    sb = status_bayar_booking(b)
+    sisa_html = (
+        f"<p><b>Status: DP diterima.</b> Sisa <b>{_fmt_rp(sb['sisa_tagihan'])}</b> harap dilunasi saat check-in di lokasi.</p>"
+        if sb["status_bayar"] == "dp" else
+        "<p><b>Status: LUNAS.</b> Tidak ada sisa pembayaran.</p>"
+    )
     return f"""
     <div style="font-family:sans-serif;max-width:480px;margin:0 auto;color:#222">
       <h2 style="margin-bottom:4px">Terima kasih, {b.get('nama_tamu', 'Tamu')}!</h2>
       <p>Reservasi Anda di <b>Pelangi Homestay</b> dengan kode <b>{b.get('kode', '')}</b> sudah dikonfirmasi.</p>
       <p>Kamar {b.get('room_nomor', '')} ({b.get('room_tipe', '')}) — Check-in {_fmt_tanggal(b.get('jam_mulai', ''))}.</p>
+      {sisa_html}
       <p>Voucher/bukti reservasi terlampir dalam bentuk PDF. Mohon tunjukkan voucher ini saat kedatangan.</p>
       <p style="margin-top:24px">Sampai jumpa!<br/>Pelangi Homestay</p>
     </div>
