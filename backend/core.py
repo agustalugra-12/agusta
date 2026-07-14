@@ -399,14 +399,15 @@ class PublicBookingCreate(BaseModel):
     no_identitas: str = ""
     jumlah_tamu: int = 1
     kendaraan: str = ""
-    room_id: str
+    room_id: Optional[str] = None  # 1 kamar (alur lama) — diabaikan kalau room_ids diisi
+    room_ids: Optional[List[str]] = None  # >1 kamar sekaligus (tamu pilih beberapa kamar dalam 1 transaksi/pembayaran)
     tanggal: str  # YYYY-MM-DD
     jam_checkin: str  # HH:mm (24h)
     catatan: str = ""
-    extra_bed_qty: int = 0  # maks divalidasi di public_create_booking (EXTRA_BED_MAX)
+    extra_bed_qty: int = 0  # maks divalidasi di public_create_booking (EXTRA_BED_MAX), berlaku sama tiap kamar kalau grup
     tipe: str = "day_use"  # "day_use" | "menginap"
     tanggal_checkout: Optional[str] = None  # YYYY-MM-DD, wajib jika tipe == "menginap"
-    dengan_sarapan: bool = False  # hanya berlaku tipe menginap, +BREAKFAST_PRICE/malam
+    dengan_sarapan: bool = False  # hanya berlaku tipe menginap, +BREAKFAST_PRICE/malam, berlaku sama tiap kamar kalau grup
 
 class CreateSnapTokenBody(BaseModel):
     booking_id: str

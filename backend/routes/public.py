@@ -105,11 +105,21 @@ async def public_availability(tanggal: str, tipe: Optional[str] = None, checkout
 
 @api.post("/public/bookings")
 async def public_create_booking(body: PublicBookingCreate):
-    """Booking publik (tanpa login). Membuat booking dengan status 'booking_pending'.
-    Tarif = tarif kamar (x malam untuk menginap) + 3% service fee. Wajib bayar (DP 50%
-    min) via Midtrans Snap. Day use: 6 jam dari jam check-in (default lama, tidak berubah).
-    Menginap: check-out fixed jam 12:00 WIB, harga dihitung per malam (termasuk extra bed).
+    """Booking publik (tanpa login) — 1 kamar (`room_id`, alur lama) atau beberapa kamar
+    sekaligus dalam 1 transaksi (`room_ids`, mis. rombongan) dengan tanggal/tipe/data tamu
+    yang sama. Tiap kamar tetap dihitung harganya SENDIRI dari tarifnya masing-masing (bukan
+    dibagi dari satu total gabungan — grup bisa campur Standard+Cottage), tapi berbagi
+    `group_id` supaya bisa dibayar dalam SATU transaksi Tripay (lihat tripay.py) dan
+    ditampilkan bersama di halaman sukses/voucher. Membuat booking dengan status
+    'booking_pending'. Wajib bayar (DP 50% min) via Tripay. Day use: 6 jam dari jam
+    check-in. Menginap: check-out fixed jam 12:00 WIB, harga per malam (termasuk extra bed).
+    Response tetap 1 dict datar (backward compatible) kalau cuma 1 kamar; jadi
+    `{"group_id", "bookings": [...]}` kalau lebih dari 1.
     """
+    room_ids = body.room_ids if body.room_ids else ([body.room_id] if body.room_id else [])
+    room_ids = list(dict.fromkeys(room_ids))
+    if not room_ids:
+        raise HTTPException(400, "room_id atau room_ids wajib diisi")
     if body.tipe not in ("day_use", "menginap"):
         raise HTTPException(400, "Tipe booking tidak valid")
     # Validasi email wajib (untuk kirim bukti pembayaran)
@@ -123,7 +133,8 @@ async def public_create_booking(body: PublicBookingCreate):
         raise HTTPException(400, "Format tanggal/jam tidak valid")
     start = local_in.astimezone(timezone.utc)
 
-    harga_override = None
+    nights = 1
+    local_out = None
     if body.tipe == "menginap":
         if not body.tanggal_checkout:
             raise HTTPException(400, "Booking menginap wajib mengisi tanggal check-out")
@@ -135,31 +146,52 @@ async def public_create_booking(body: PublicBookingCreate):
         if end <= start:
             raise HTTPException(400, "Tanggal check-out harus setelah tanggal check-in")
         nights = max(1, (local_out.date() - local_in.date()).days)
-        r = await db.rooms.find_one({"id": body.room_id})
-        if not r:
-            raise HTTPException(404, "Kamar tidak ditemukan")
-        extra_bed_qty = max(0, min(EXTRA_BED_MAX, int(body.extra_bed_qty or 0)))
-        tarif_per_malam = r["tarif_menginap"] + (BREAKFAST_PRICE if body.dengan_sarapan else 0)
-        subtotal = tarif_per_malam * nights + extra_bed_qty * EXTRA_BED_PRICE * nights
-        service_fee = round(subtotal * SERVICE_FEE_PCT)
-        total = subtotal + service_fee
-        harga_override = {"subtotal": subtotal, "service_fee": service_fee, "total": total, "dp_min": round(total * 0.5)}
     else:
         end = start + timedelta(hours=6)  # day use 6 jam default
 
-    data = {
-        "room_id": body.room_id,
-        "nama_tamu": body.nama_tamu, "no_hp": body.no_hp,
-        "email": email,
-        "no_identitas": body.no_identitas, "kendaraan": body.kendaraan,
-        "jumlah_tamu": body.jumlah_tamu, "extra_bed_qty": body.extra_bed_qty,
-        "jam_mulai": start, "jam_selesai": end,
-        "catatan": body.catatan,
-        "created_by": body.nama_tamu,
-        "tipe": body.tipe,
-        "dengan_sarapan": body.dengan_sarapan,
-    }
-    return await create_reservation(data, source="online", harga_override=harga_override)
+    # Cek semua kamar dulu SEBELUM membuat satupun dokumen — all-or-nothing untuk grup,
+    # tamu sedang menunggu live di halaman checkout, tidak boleh ada kamar yang setengah
+    # jalan ter-booking kalau salah satu ternyata bentrok (sama seperti Quick Book staf).
+    rooms = []
+    for rid in room_ids:
+        r = await db.rooms.find_one({"id": rid})
+        if not r:
+            raise HTTPException(404, f"Kamar tidak ditemukan (id {rid})")
+        await check_room_available(rid, start, end)
+        rooms.append(r)
+
+    extra_bed_qty = max(0, min(EXTRA_BED_MAX, int(body.extra_bed_qty or 0)))
+    group_id = str(uuid.uuid4()) if len(rooms) > 1 else None
+    created = []
+    for r in rooms:
+        harga_override = None
+        if body.tipe == "menginap":
+            tarif_per_malam = r["tarif_menginap"] + (BREAKFAST_PRICE if body.dengan_sarapan else 0)
+            subtotal = tarif_per_malam * nights + extra_bed_qty * EXTRA_BED_PRICE * nights
+            service_fee = round(subtotal * SERVICE_FEE_PCT)
+            total = subtotal + service_fee
+            harga_override = {"subtotal": subtotal, "service_fee": service_fee, "total": total, "dp_min": round(total * 0.5)}
+        data = {
+            "room_id": r["id"],
+            "nama_tamu": body.nama_tamu, "no_hp": body.no_hp,
+            "email": email,
+            "no_identitas": body.no_identitas, "kendaraan": body.kendaraan,
+            "jumlah_tamu": body.jumlah_tamu, "extra_bed_qty": body.extra_bed_qty,
+            "jam_mulai": start, "jam_selesai": end,
+            "catatan": body.catatan,
+            "created_by": body.nama_tamu,
+            "tipe": body.tipe,
+            "dengan_sarapan": body.dengan_sarapan,
+        }
+        booking = await create_reservation(data, source="online", harga_override=harga_override)
+        if group_id:
+            await db.bookings.update_one({"id": booking["id"]}, {"$set": {"group_id": group_id}})
+            booking["group_id"] = group_id
+        created.append(booking)
+
+    if len(created) == 1:
+        return created[0]
+    return {"group_id": group_id, "bookings": created}
 
 def _batas_jam_bebas_biaya(tipe: str) -> int:
     return 72 if tipe == "menginap" else 24  # H-3 menginap, H-1 day use
@@ -281,21 +313,36 @@ async def public_retry_bayar(bid: str):
     return safe
 
 
+_PUBLIC_BOOKING_FIELDS = [
+    "id", "kode", "room_nomor", "room_tipe", "tipe", "nama_tamu", "no_hp", "email",
+    "jumlah_tamu", "extra_bed_qty", "dengan_sarapan", "jam_mulai", "jam_selesai", "status", "payment_status",
+    "subtotal", "service_fee", "total", "dp_min", "invoice_id",
+]
+
+
 @api.get("/public/bookings/{bid}")
 async def public_get_booking(bid: str):
     b = await db.bookings.find_one({"id": bid}, {"_id": 0})
     if not b:
         raise HTTPException(404, "Booking tidak ditemukan")
     # batasi field yang dikembalikan ke publik
-    safe = {k: b.get(k) for k in [
-        "id", "kode", "room_nomor", "room_tipe", "tipe", "nama_tamu", "no_hp", "email",
-        "jumlah_tamu", "extra_bed_qty", "dengan_sarapan", "jam_mulai", "jam_selesai", "status", "payment_status",
-        "subtotal", "service_fee", "total", "dp_min", "invoice_id",
-    ]}
+    safe = {k: b.get(k) for k in _PUBLIC_BOOKING_FIELDS}
     # status_bayar (belum_bayar/dp/lunas) + sisa_tagihan — bedakan DP dari lunas untuk
     # halaman /book/sukses & voucher, karena payment_status mentah cuma tahu "paid" (gateway
     # settlement) tanpa peduli itu DP atau bayar penuh.
     safe.update(status_bayar_booking(b))
+    # Kalau booking ini bagian dari GRUP (>1 kamar dibayar dalam 1 checkout), sertakan kamar
+    # lain dalam grup yang sama supaya halaman sukses bisa menampilkan semuanya sekaligus,
+    # bukan cuma kamar yang kebetulan ada di URL.
+    if b.get("group_id"):
+        siblings = await db.bookings.find(
+            {"group_id": b["group_id"], "id": {"$ne": bid}}, {"_id": 0}
+        ).to_list(20)
+        safe["group_id"] = b["group_id"]
+        safe["group_bookings"] = [
+            {**{k: s.get(k) for k in _PUBLIC_BOOKING_FIELDS}, **status_bayar_booking(s)}
+            for s in siblings
+        ]
     return safe
 
 

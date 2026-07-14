@@ -59,7 +59,7 @@ function BookingForm() {
   const [checkoutDate, setCheckoutDate] = useState(addDays(todayStr(), 1));
   const [availability, setAvailability] = useState({ rooms: [] });
   const [step, setStep] = useState(1);            // 1 = pilih kamar, 2 = form
-  const [selectedRoom, setSelectedRoom] = useState(null); // {id, nomor, tipe, tarif}
+  const [selectedRooms, setSelectedRooms] = useState([]); // [{id, nomor, tipe, tarif, tarif_menginap}, ...] — bisa >1 kamar sekaligus
   const [form, setForm] = useState({
     nama_tamu: "", no_hp: "", email: "", no_identitas: "", jumlah_tamu: 1, kendaraan: "",
     jam_checkin: "13:00", catatan: "",
@@ -102,21 +102,39 @@ function BookingForm() {
     return Math.max(1, Math.round((b - a) / 86400000));
   }, [bookingTipe, tanggal, checkoutDate]);
 
-  const summary = useMemo(() => {
-    if (!selectedRoom) return null;
+  // Ringkasan harga per kamar (extra bed & sarapan berlaku sama untuk tiap kamar yang
+  // dipilih), dijumlah untuk grand total kalau tamu pilih >1 kamar sekaligus.
+  const perRoomSummaries = useMemo(() => {
     const isMenginap = bookingTipe === "menginap";
-    const breakfastTotal = isMenginap && denganSarapan ? BREAKFAST_PRICE * nights : 0;
-    const extraBedTotal = extraBedQty * EXTRA_BED_PRICE * (isMenginap ? nights : 1);
-    const tarifDasar = isMenginap ? selectedRoom.tarif_menginap : selectedRoom.tarif;
-    const tarifKamar = tarifDasar * (isMenginap ? nights : 1);
-    const subtotal = tarifKamar + breakfastTotal + extraBedTotal;
-    const svc = Math.round(subtotal * 0.03);
-    const total = subtotal + svc;
-    return { tarifKamar, breakfastTotal, extraBedTotal, subtotal, service_fee: svc, total, dp_min: Math.round(total * 0.5), nights };
-  }, [selectedRoom, extraBedQty, denganSarapan, bookingTipe, nights]);
+    return selectedRooms.map((room) => {
+      const breakfastTotal = isMenginap && denganSarapan ? BREAKFAST_PRICE * nights : 0;
+      const extraBedTotal = extraBedQty * EXTRA_BED_PRICE * (isMenginap ? nights : 1);
+      const tarifDasar = isMenginap ? room.tarif_menginap : room.tarif;
+      const tarifKamar = tarifDasar * (isMenginap ? nights : 1);
+      const subtotal = tarifKamar + breakfastTotal + extraBedTotal;
+      const svc = Math.round(subtotal * 0.03);
+      const total = subtotal + svc;
+      return { room, tarifKamar, breakfastTotal, extraBedTotal, subtotal, service_fee: svc, total };
+    });
+  }, [selectedRooms, extraBedQty, denganSarapan, bookingTipe, nights]);
 
-  const onSelectRoom = (room) => {
-    setSelectedRoom(room);
+  const summary = useMemo(() => {
+    if (perRoomSummaries.length === 0) return null;
+    const sum = (key) => perRoomSummaries.reduce((a, s) => a + s[key], 0);
+    return {
+      tarifKamar: sum("tarifKamar"), breakfastTotal: sum("breakfastTotal"), extraBedTotal: sum("extraBedTotal"),
+      subtotal: sum("subtotal"), service_fee: sum("service_fee"), total: sum("total"),
+      dp_min: Math.round(sum("total") * 0.5), nights,
+    };
+  }, [perRoomSummaries, nights]);
+
+  const toggleRoom = (room) => {
+    setSelectedRooms((rooms) => rooms.some((r) => r.id === room.id)
+      ? rooms.filter((r) => r.id !== room.id)
+      : [...rooms, room]);
+  };
+  const lanjutkanPilihKamar = () => {
+    if (selectedRooms.length === 0) return;
     setExtraBedQty(0);
     // denganSarapan TIDAK direset di sini — tamu sudah memilihnya di katalog (step 1)
     // lewat tombol harga Tanpa/Dengan Sarapan, harus terbawa ke ringkasan step 2.
@@ -135,31 +153,36 @@ function BookingForm() {
       toast.error("Email wajib diisi dengan format yang valid — untuk menerima bukti pembayaran");
       return;
     }
-    if (!selectedRoom) { toast.error("Pilih kamar dulu"); return; }
+    if (selectedRooms.length === 0) { toast.error("Pilih kamar dulu"); return; }
     if (!method) { toast.error("Pilih metode pembayaran dulu"); return; }
     setSubmitting(true);
     try {
-      // 1. Buat booking
-      const { data: bk } = await PUBLIC_API.post("/public/bookings", {
+      // 1. Buat booking — 1 kamar (room_id) atau beberapa sekaligus (room_ids, 1 grup 1
+      // transaksi pembayaran). Response beda bentuk: dict datar kalau 1 kamar, {group_id,
+      // bookings:[...]} kalau lebih dari 1 (lihat public_create_booking, backend/routes/public.py).
+      const { data: resp } = await PUBLIC_API.post("/public/bookings", {
         nama_tamu: form.nama_tamu.trim(),
         no_hp: form.no_hp.trim(),
         email: emailTrimmed,
         no_identitas: form.no_identitas.trim(),
         jumlah_tamu: Number(form.jumlah_tamu) || 1,
         kendaraan: form.kendaraan.trim(),
-        room_id: selectedRoom.id,
+        room_ids: selectedRooms.map((r) => r.id),
         tanggal, jam_checkin: form.jam_checkin,
         catatan: form.catatan.trim(),
         extra_bed_qty: extraBedQty,
         tipe: bookingTipe,
         ...(bookingTipe === "menginap" ? { tanggal_checkout: checkoutDate, dengan_sarapan: denganSarapan } : {}),
       });
-      localStorage.setItem(LAST_BOOKING_ID_KEY, bk.id);
+      const primaryBooking = resp.bookings ? resp.bookings[0] : resp;
+      localStorage.setItem(LAST_BOOKING_ID_KEY, primaryBooking.id);
       // 2. Buat transaksi Tripay untuk metode yang dipilih, lalu redirect ke halaman
       // instruksi bayar ter-hosted Tripay (checkout_url) — beda dari Snap Midtrans yang
       // dulu buka popup, Tripay tidak punya widget popup jadi tamu diarahkan ke tab ini juga.
+      // Kalau primaryBooking bagian dari grup, backend otomatis menagih TOTAL GABUNGAN semua
+      // kamar dalam grup itu dalam 1 transaksi (lihat tripay_create_transaction).
       const { data: tx } = await PUBLIC_API.post("/payments/tripay/create-transaction", {
-        booking_id: bk.id, payment_option: paymentOption, method,
+        booking_id: primaryBooking.id, payment_option: paymentOption, method,
       });
       toast.dismiss();
       window.location.href = tx.checkout_url;
@@ -301,16 +324,19 @@ function BookingForm() {
                           {availOfTipe.length === 0 && (
                             <span className="text-xs text-red-600">Coba pilih tanggal lain</span>
                           )}
-                          {availOfTipe.map((r) => (
-                            <button
-                              key={r.id}
-                              data-testid={`pb-room-${r.nomor}`}
-                              onClick={() => onSelectRoom(r)}
-                              className="px-3 py-1.5 text-xs font-bold border-2 border-blue-200 hover:border-blue-600 hover:bg-blue-50 rounded-md transition-colors"
-                            >
-                              Kamar {r.nomor}
-                            </button>
-                          ))}
+                          {availOfTipe.map((r) => {
+                            const dipilih = selectedRooms.some((sr) => sr.id === r.id);
+                            return (
+                              <button
+                                key={r.id}
+                                data-testid={`pb-room-${r.nomor}`}
+                                onClick={() => toggleRoom(r)}
+                                className={`px-3 py-1.5 text-xs font-bold border-2 rounded-md transition-colors ${dipilih ? "border-blue-600 bg-blue-600 text-white" : "border-blue-200 hover:border-blue-600 hover:bg-blue-50"}`}
+                              >
+                                {dipilih ? "✓ " : ""}Kamar {r.nomor}
+                              </button>
+                            );
+                          })}
                         </div>
                       </div>
                     </CardContent>
@@ -321,10 +347,28 @@ function BookingForm() {
                 <div className="col-span-full text-center text-slate-500 py-10">Memuat katalog...</div>
               )}
             </div>
+
+            {selectedRooms.length > 0 && (
+              <div data-testid="pb-selected-bar" className="sticky bottom-4 z-10">
+                <Card className="border-blue-200 shadow-lg bg-blue-50/95 backdrop-blur">
+                  <CardContent className="p-3 sm:p-4 flex items-center justify-between gap-3 flex-wrap">
+                    <div className="text-sm text-blue-900">
+                      <b>{selectedRooms.length} kamar dipilih</b>: {selectedRooms.map((r) => r.nomor).join(", ")}
+                    </div>
+                    <div className="flex gap-2">
+                      <Button variant="ghost" size="sm" onClick={() => setSelectedRooms([])}>Batal</Button>
+                      <Button data-testid="pb-lanjutkan" className="bg-blue-700 hover:bg-blue-800" onClick={lanjutkanPilihKamar}>
+                        Lanjutkan ({selectedRooms.length} Kamar)
+                      </Button>
+                    </div>
+                  </CardContent>
+                </Card>
+              </div>
+            )}
           </>
         )}
 
-        {step === 2 && selectedRoom && summary && (
+        {step === 2 && selectedRooms.length > 0 && summary && (
           <div className="grid md:grid-cols-[1fr_360px] gap-6">
             {/* Form */}
             <Card className="border-slate-200">
@@ -380,7 +424,7 @@ function BookingForm() {
                 )}
                 <div>
                   <Label className="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-1.5 block">Permintaan Khusus</Label>
-                  <ExtraBedSelector value={extraBedQty} onChange={setExtraBedQty} max={EXTRA_BED_MAX} harga={EXTRA_BED_PRICE} satuan="pemesanan" />
+                  <ExtraBedSelector value={extraBedQty} onChange={setExtraBedQty} max={EXTRA_BED_MAX} harga={EXTRA_BED_PRICE} satuan={selectedRooms.length > 1 ? "kamar" : "pemesanan"} />
                 </div>
                 <div>
                   <Label className="text-xs font-semibold uppercase tracking-wider text-slate-500">Catatan (opsional)</Label>
@@ -394,7 +438,11 @@ function BookingForm() {
               <CardContent className="p-5 space-y-4">
                 <div>
                   <div className="text-xs uppercase tracking-wider text-slate-500">Booking Anda</div>
-                  <div className="font-extrabold text-lg">{selectedRoom.tipe} • Kamar {selectedRoom.nomor}</div>
+                  {selectedRooms.length === 1 ? (
+                    <div className="font-extrabold text-lg">{selectedRooms[0].tipe} • Kamar {selectedRooms[0].nomor}</div>
+                  ) : (
+                    <div className="font-extrabold text-lg" data-testid="pb-multi-room-summary">{selectedRooms.length} Kamar: {selectedRooms.map((r) => `${r.nomor} (${r.tipe})`).join(", ")}</div>
+                  )}
                 </div>
                 <div className="space-y-2 text-sm border-t border-slate-100 pt-3">
                   <Row icon={Calendar} label="Check-In" value={new Date(`${tanggal}T00:00:00`).toLocaleDateString("id-ID", { weekday: "short", day: "2-digit", month: "long", year: "numeric" })} />
@@ -406,15 +454,15 @@ function BookingForm() {
                   ) : (
                     <Row icon={Clock} label="Jam Check-In" value={`${form.jam_checkin} (6 jam)`} />
                   )}
-                  <Row icon={Building2} label="Tipe" value={selectedRoom.tipe} />
+                  {selectedRooms.length === 1 && <Row icon={Building2} label="Tipe" value={selectedRooms[0].tipe} />}
                 </div>
                 <div className="space-y-1.5 border-t border-slate-100 pt-3 text-sm">
-                  <div className="flex justify-between"><span className="text-slate-600">Tarif Kamar{bookingTipe === "menginap" ? ` × ${summary.nights} malam` : ""}</span><b>{fmtRp(summary.tarifKamar)}</b></div>
+                  <div className="flex justify-between"><span className="text-slate-600">Tarif Kamar{bookingTipe === "menginap" ? ` × ${summary.nights} malam` : ""}{selectedRooms.length > 1 ? ` × ${selectedRooms.length} kamar` : ""}</span><b>{fmtRp(summary.tarifKamar)}</b></div>
                   {summary.breakfastTotal > 0 && (
-                    <div className="flex justify-between" data-testid="pb-breakfast-fee"><span className="text-slate-600">Sarapan Pagi × {summary.nights} malam</span><b>{fmtRp(summary.breakfastTotal)}</b></div>
+                    <div className="flex justify-between" data-testid="pb-breakfast-fee"><span className="text-slate-600">Sarapan Pagi × {summary.nights} malam{selectedRooms.length > 1 ? ` × ${selectedRooms.length} kamar` : ""}</span><b>{fmtRp(summary.breakfastTotal)}</b></div>
                   )}
                   {extraBedQty > 0 && (
-                    <div className="flex justify-between" data-testid="pb-extra-bed-fee"><span className="text-slate-600">Extra Bed &times;{extraBedQty}</span><b>{fmtRp(summary.extraBedTotal)}</b></div>
+                    <div className="flex justify-between" data-testid="pb-extra-bed-fee"><span className="text-slate-600">Extra Bed &times;{extraBedQty}{selectedRooms.length > 1 ? ` × ${selectedRooms.length} kamar` : ""}</span><b>{fmtRp(summary.extraBedTotal)}</b></div>
                   )}
                   <div className="flex justify-between"><span className="text-slate-600">Service Fee (3%)</span><b data-testid="pb-service-fee">{fmtRp(summary.service_fee)}</b></div>
                   <div className="flex justify-between text-base pt-1.5 border-t border-slate-200 mt-1.5"><span className="font-bold">Total</span><b className="text-blue-700" data-testid="pb-total">{fmtRp(summary.total)}</b></div>
@@ -805,6 +853,13 @@ function SuccessView({ bookingId: bookingIdFromUrl }) {
   // yang cuma tahu "paid" (settlement gateway) tanpa peduli itu DP atau bayar penuh.
   const statusBayar = bk.status_bayar || (isPaid ? "lunas" : "belum_bayar");
   const isDp = isPaid && statusBayar === "dp";
+  // Kalau booking ini bagian dari grup (>1 kamar dibayar dalam 1 checkout, lihat group_id di
+  // public_create_booking), gabungkan angka semua kamar dalam grup untuk ringkasan total.
+  const groupRooms = bk.group_bookings || [];
+  const isGrouped = groupRooms.length > 0;
+  const groupTotal = bk.total + groupRooms.reduce((a, g) => a + (g.total || 0), 0);
+  const groupDpMin = bk.dp_min + groupRooms.reduce((a, g) => a + (g.dp_min || 0), 0);
+  const groupSisa = (bk.sisa_tagihan || 0) + groupRooms.reduce((a, g) => a + (g.sisa_tagihan || 0), 0);
   return (
     <div className={`min-h-screen grid place-items-center p-4 bg-gradient-to-b print:bg-white print:block print:p-0 ${isPaid ? "from-emerald-50 via-white to-blue-50" : isFailed ? "from-red-50 via-white to-blue-50" : "from-amber-50 via-white to-blue-50"}`}>
       <Card className={`max-w-md w-full print:max-w-none print:shadow-none print:border-0 ${isPaid ? "border-emerald-200" : isFailed ? "border-red-200" : "border-amber-200"}`}>
@@ -827,24 +882,33 @@ function SuccessView({ bookingId: bookingIdFromUrl }) {
           <div className="bg-slate-50 border border-slate-200 rounded-lg p-4 text-left space-y-2 text-sm">
             <div className="flex justify-between"><span className="text-slate-500">Nomor Booking</span><b data-testid="pb-success-kode">{bk.kode}</b></div>
             <div className="flex justify-between"><span className="text-slate-500">Nama</span><b>{bk.nama_tamu}</b></div>
-            <div className="flex justify-between"><span className="text-slate-500">Kamar</span><b>{bk.room_nomor} ({bk.room_tipe})</b></div>
+            {isGrouped ? (
+              <div data-testid="pb-success-group-rooms">
+                <div className="flex justify-between"><span className="text-slate-500">Kamar ({1 + groupRooms.length})</span><b>{bk.room_nomor} ({bk.room_tipe})</b></div>
+                {groupRooms.map((g) => (
+                  <div key={g.id} className="flex justify-between pl-3"><span className="text-slate-400">+</span><b>{g.room_nomor} ({g.room_tipe})</b></div>
+                ))}
+              </div>
+            ) : (
+              <div className="flex justify-between"><span className="text-slate-500">Kamar</span><b>{bk.room_nomor} ({bk.room_tipe})</b></div>
+            )}
             <div className="flex justify-between"><span className="text-slate-500">Check-In</span><b>{new Date(bk.jam_mulai).toLocaleString("id-ID", { dateStyle: "medium", timeStyle: "short" })}</b></div>
             {bk.jam_selesai && (
               <div className="flex justify-between" data-testid="pb-success-checkout"><span className="text-slate-500">Check-Out</span><b>{new Date(bk.jam_selesai).toLocaleString("id-ID", { dateStyle: "medium", timeStyle: "short" })}</b></div>
             )}
             {bk.dengan_sarapan && (
-              <div className="flex justify-between" data-testid="pb-success-sarapan"><span className="text-slate-500">Paket Kamar</span><b>Termasuk Sarapan Pagi</b></div>
+              <div className="flex justify-between" data-testid="pb-success-sarapan"><span className="text-slate-500">Paket Kamar</span><b>Termasuk Sarapan Pagi{isGrouped ? " (semua kamar)" : ""}</b></div>
             )}
             {bk.extra_bed_qty > 0 && (
-              <div className="flex justify-between" data-testid="pb-success-extra-bed"><span className="text-slate-500">Permintaan Khusus</span><b>Extra Bed &times;{bk.extra_bed_qty}</b></div>
+              <div className="flex justify-between" data-testid="pb-success-extra-bed"><span className="text-slate-500">Permintaan Khusus</span><b>Extra Bed &times;{bk.extra_bed_qty}{isGrouped ? " / kamar" : ""}</b></div>
             )}
-            <div className="flex justify-between border-t pt-2 mt-2"><span className="text-slate-500">Total</span><b className="text-blue-700">{fmtRp(bk.total)}</b></div>
-            <div className="flex justify-between"><span className="text-slate-500">DP Minimum</span><b>{fmtRp(bk.dp_min)}</b></div>
+            <div className="flex justify-between border-t pt-2 mt-2"><span className="text-slate-500">Total{isGrouped ? " Semua Kamar" : ""}</span><b className="text-blue-700">{fmtRp(groupTotal)}</b></div>
+            <div className="flex justify-between"><span className="text-slate-500">DP Minimum</span><b>{fmtRp(groupDpMin)}</b></div>
             <div className="flex justify-between"><span className="text-slate-500">Status Pembayaran</span>
               <b data-testid="pb-success-paystatus" className={isDp ? "text-amber-600" : isPaid ? "text-emerald-600" : isFailed ? "text-red-600" : "text-amber-600"}>{STATUS_BAYAR_LABEL[statusBayar] || bk.payment_status?.toUpperCase()}</b>
             </div>
-            {isDp && bk.sisa_tagihan > 0 && (
-              <div className="flex justify-between" data-testid="pb-success-sisa"><span className="text-slate-500">Sisa Dibayar di Lokasi</span><b className="text-amber-600">{fmtRp(bk.sisa_tagihan)}</b></div>
+            {isDp && groupSisa > 0 && (
+              <div className="flex justify-between" data-testid="pb-success-sisa"><span className="text-slate-500">Sisa Dibayar di Lokasi</span><b className="text-amber-600">{fmtRp(groupSisa)}</b></div>
             )}
           </div>
           {isFailed && (
