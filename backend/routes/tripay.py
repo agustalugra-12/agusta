@@ -34,18 +34,21 @@ async def tripay_channels():
 
 @api.post("/payments/tripay/create-transaction")
 async def tripay_create_transaction(body: TripayCreateTransactionBody):
-    """Buat transaksi closed-payment Tripay untuk booking publik. No-auth (tamu publik).
-    Pengganti /payments/midtrans/create-snap-token — beda dari Snap, Tripay butuh `method`
-    (channel spesifik) di-set duluan, hasilnya `checkout_url` (halaman instruksi bayar
-    ter-hosted Tripay) untuk di-redirect, bukan token untuk popup JS.
+    """Buat transaksi closed-payment Tripay. No-auth di level endpoint karena juga dipakai
+    booking publik (tamu, status booking_pending) — TAPI juga dipakai staf lewat dialog
+    "Buat Tagihan Baru" (Pembayaran.jsx) untuk reservasi telepon/WA yang masuk lewat Quick
+    Book (status `aktif`, belum ada pembayaran online). Pengganti
+    /payments/midtrans/create-snap-token — beda dari Snap, Tripay butuh `method` (channel
+    spesifik) di-set duluan, hasilnya `checkout_url` (halaman instruksi bayar ter-hosted
+    Tripay) untuk di-redirect/dikirim ke tamu, bukan token untuk popup JS.
     """
     if not (TRIPAY_MERCHANT_CODE and TRIPAY_API_KEY and TRIPAY_PRIVATE_KEY):
         raise HTTPException(503, "Tripay belum dikonfigurasi")
     b = await db.bookings.find_one({"id": body.booking_id})
     if not b:
         raise HTTPException(404, "Booking tidak ditemukan")
-    if b.get("status") not in ("booking_pending",):
-        raise HTTPException(400, f"Booking tidak dapat dibayar (status: {b.get('status')})")
+    if b.get("status") not in ("booking_pending", "aktif") or b.get("payment_status") == "paid":
+        raise HTTPException(400, f"Booking tidak dapat dibayar (status: {b.get('status')}, sudah lunas: {b.get('payment_status') == 'paid'})")
     total = int(b.get("total", 0))
     if body.payment_option == "dp50":
         amount = int(b.get("dp_min") or round(total * 0.5))

@@ -9,13 +9,6 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "
 import { Search, X, CreditCard, Plus, Copy, ExternalLink } from "lucide-react";
 import api, { fmtDateTime, fmtRp } from "@/lib/apiClient";
 
-// Data tiruan (stub) — booking yang belum lunas dan perlu ditagih staf (mis. reservasi
-// yang masuk lewat telepon/WA, bukan lewat form publik yang sudah otomatis pakai Snap).
-const MOCK_UNPAID_BOOKINGS = [
-  { id: "b1", kode: "RSV-1044", nama_tamu: "Fitri Handayani", total: 240000, dp_min: 120000 },
-  { id: "b2", kode: "RSV-1045", nama_tamu: "Yusuf Pratama", total: 130000, dp_min: 65000 },
-];
-
 const STATUS_META = {
   settlement: { label: "Lunas", cls: "bg-emerald-100 text-emerald-800" },
   capture: { label: "Lunas", cls: "bg-emerald-100 text-emerald-800" },
@@ -30,107 +23,154 @@ const STATUS_META = {
 const STATUS_OPTIONS = ["Semua", "settlement", "pending", "expire", "deny", "cancel", "refund"];
 const UBAH_STATUS_OPTIONS = ["settlement", "pending", "expire", "deny", "cancel", "refund"];
 
-// Dialog "Buat Tagihan Baru" — simulasi alur bayar dari sisi staf (bukan tamu): pilih
-// booking yang belum lunas + metode bayar (DP50/Lunas), hasilnya link pembayaran tiruan
-// yang bisa "dikirim" ke tamu. Ini melengkapi alur checkout tamu di PublicBook.jsx (yang
-// sudah nyata pakai Tripay) untuk kasus reservasi yang masuk lewat telepon/WA. Belum
-// dipanggilkan ke POST /payments/tripay/create-transaction sungguhan karena endpoint itu
-// juga butuh pilihan channel Tripay spesifik (QRIS/VA/dst) yang belum ada UI-nya di sini.
+// Dialog "Buat Tagihan Baru" — alur bayar dari sisi staf (bukan tamu): pilih booking yang
+// belum lunas (mis. reservasi telepon/WA yang dicatat lewat Quick Book, atau booking publik
+// yang belum sempat bayar) + channel Tripay + opsi DP50/Lunas, lalu benar-benar memanggil
+// POST /payments/tripay/create-transaction — hasilnya link pembayaran Tripay sungguhan
+// (checkout_url) yang bisa dikirim ke tamu lewat WA. Kredensial Tripay saat ini masih
+// sandbox (lihat GET /payments/tripay/config); begitu Tripay approve kredensial produksi,
+// staf ops tinggal ganti env var di server — tidak ada perubahan kode di sini.
 function BuatTagihanDialog({ open, onOpenChange, onCreated }) {
-  const [bookingId, setBookingId] = useState(MOCK_UNPAID_BOOKINGS[0]?.id || "");
+  const [bookings, setBookings] = useState([]);
+  const [channels, setChannels] = useState([]);
+  const [loadingOpts, setLoadingOpts] = useState(false);
+  const [bookingId, setBookingId] = useState("");
+  const [method, setMethod] = useState("");
   const [opsi, setOpsi] = useState("dp50");
   const [hasil, setHasil] = useState(null);
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState("");
 
-  const booking = MOCK_UNPAID_BOOKINGS.find((b) => b.id === bookingId);
-  const nominal = booking ? (opsi === "dp50" ? booking.dp_min : booking.total) : 0;
+  useEffect(() => {
+    if (!open) return;
+    setLoadingOpts(true);
+    setError("");
+    Promise.all([
+      api.get("/payments/bookings-status", { params: { status_bayar: "belum_bayar" } }),
+      api.get("/payments/tripay/channels"),
+    ])
+      .then(([bRes, cRes]) => {
+        setBookings(bRes.data);
+        setBookingId(bRes.data[0]?.id || "");
+        setChannels(cRes.data);
+        setMethod(cRes.data[0]?.code || "");
+      })
+      .catch((e) => setError(e?.response?.data?.detail || "Gagal memuat daftar booking/channel Tripay"))
+      .finally(() => setLoadingOpts(false));
+  }, [open]);
 
-  const buatTagihan = () => {
-    const orderId = `${booking.kode}-${Date.now().toString().slice(-8)}SIM`;
-    const trx = {
-      id: orderId,
-      order_id: orderId,
-      booking_kode: booking.kode,
-      nama_tamu: booking.nama_tamu,
-      gross_amount: nominal,
-      payment_option: opsi,
-      payment_type: null,
-      transaction_status: "pending",
-      created_at: new Date().toISOString(),
-      redirect_url: `https://pelangihomestay.com/book/simulasi-tagihan/${orderId}`,
-    };
-    setHasil(trx);
-    onCreated(trx);
+  const booking = bookings.find((b) => b.id === bookingId);
+  const dpMin = booking ? (booking.dp_min || Math.round(booking.total * 0.5)) : 0;
+  const nominal = booking ? (opsi === "dp50" ? dpMin : booking.total) : 0;
+
+  const buatTagihan = async () => {
+    if (!booking || !method) return;
+    setSubmitting(true);
+    setError("");
+    try {
+      const { data } = await api.post("/payments/tripay/create-transaction", {
+        booking_id: booking.id, payment_option: opsi, method,
+      });
+      setHasil(data);
+      onCreated();
+    } catch (e) {
+      setError(e?.response?.data?.detail || "Gagal membuat tagihan Tripay");
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   const salinLink = () => {
-    navigator.clipboard?.writeText(hasil.redirect_url);
+    navigator.clipboard?.writeText(hasil.checkout_url);
     toast.success("Link pembayaran disalin");
   };
 
-  const tutup = () => { setHasil(null); onOpenChange(false); };
+  const tutup = () => { setHasil(null); setError(""); onOpenChange(false); };
 
   return (
     <Dialog open={open} onOpenChange={(o) => { if (!o) tutup(); }}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle data-testid="buat-tagihan-title">Buat Tagihan Baru (Simulasi)</DialogTitle>
+          <DialogTitle data-testid="buat-tagihan-title">Buat Tagihan Baru</DialogTitle>
         </DialogHeader>
         {!hasil ? (
           <div className="space-y-3 text-sm">
-            <div>
-              <Label>Booking</Label>
-              <select
-                data-testid="tagihan-booking"
-                value={bookingId}
-                onChange={(e) => setBookingId(e.target.value)}
-                className="w-full h-10 rounded-md border border-slate-300 px-3 bg-white mt-1.5"
-              >
-                {MOCK_UNPAID_BOOKINGS.map((b) => <option key={b.id} value={b.id}>{b.kode} — {b.nama_tamu}</option>)}
-              </select>
-            </div>
-            <div>
-              <Label>Metode Bayar</Label>
-              <div className="grid grid-cols-2 gap-2 mt-1.5">
-                <button
-                  type="button"
-                  data-testid="tagihan-opsi-dp50"
-                  onClick={() => setOpsi("dp50")}
-                  className={`p-2.5 rounded-lg border-2 text-left text-xs ${opsi === "dp50" ? "border-blue-600 bg-blue-50" : "border-slate-200"}`}
-                >
-                  <div className="font-semibold">DP 50%</div>
-                  <div className="text-slate-500">{booking && fmtRp(booking.dp_min)}</div>
-                </button>
-                <button
-                  type="button"
-                  data-testid="tagihan-opsi-full"
-                  onClick={() => setOpsi("full")}
-                  className={`p-2.5 rounded-lg border-2 text-left text-xs ${opsi === "full" ? "border-blue-600 bg-blue-50" : "border-slate-200"}`}
-                >
-                  <div className="font-semibold">Lunas</div>
-                  <div className="text-slate-500">{booking && fmtRp(booking.total)}</div>
-                </button>
-              </div>
-            </div>
-            <div className="bg-slate-50 border border-slate-200 rounded p-2 flex justify-between">
-              <span className="font-bold">Total Ditagih</span><b className="text-blue-700">{fmtRp(nominal)}</b>
-            </div>
+            {loadingOpts ? (
+              <p className="text-slate-400 text-xs">Memuat daftar booking &amp; channel Tripay…</p>
+            ) : bookings.length === 0 ? (
+              <p className="text-slate-500 text-xs">Tidak ada reservasi yang belum bayar saat ini.</p>
+            ) : (
+              <>
+                <div>
+                  <Label>Booking</Label>
+                  <select
+                    data-testid="tagihan-booking"
+                    value={bookingId}
+                    onChange={(e) => setBookingId(e.target.value)}
+                    className="w-full h-10 rounded-md border border-slate-300 px-3 bg-white mt-1.5"
+                  >
+                    {bookings.map((b) => <option key={b.id} value={b.id}>{b.kode} — {b.nama_tamu}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <Label>Channel Pembayaran</Label>
+                  <select
+                    data-testid="tagihan-channel"
+                    value={method}
+                    onChange={(e) => setMethod(e.target.value)}
+                    className="w-full h-10 rounded-md border border-slate-300 px-3 bg-white mt-1.5"
+                  >
+                    {channels.map((c) => <option key={c.code} value={c.code}>{c.name}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <Label>Metode Bayar</Label>
+                  <div className="grid grid-cols-2 gap-2 mt-1.5">
+                    <button
+                      type="button"
+                      data-testid="tagihan-opsi-dp50"
+                      onClick={() => setOpsi("dp50")}
+                      className={`p-2.5 rounded-lg border-2 text-left text-xs ${opsi === "dp50" ? "border-blue-600 bg-blue-50" : "border-slate-200"}`}
+                    >
+                      <div className="font-semibold">DP 50%</div>
+                      <div className="text-slate-500">{booking && fmtRp(dpMin)}</div>
+                    </button>
+                    <button
+                      type="button"
+                      data-testid="tagihan-opsi-full"
+                      onClick={() => setOpsi("full")}
+                      className={`p-2.5 rounded-lg border-2 text-left text-xs ${opsi === "full" ? "border-blue-600 bg-blue-50" : "border-slate-200"}`}
+                    >
+                      <div className="font-semibold">Lunas</div>
+                      <div className="text-slate-500">{booking && fmtRp(booking.total)}</div>
+                    </button>
+                  </div>
+                </div>
+                <div className="bg-slate-50 border border-slate-200 rounded p-2 flex justify-between">
+                  <span className="font-bold">Total Ditagih</span><b className="text-blue-700">{fmtRp(nominal)}</b>
+                </div>
+              </>
+            )}
+            {error && <p className="text-red-600 text-xs">{error}</p>}
           </div>
         ) : (
           <div className="space-y-3 text-sm" data-testid="tagihan-hasil">
-            <p className="text-emerald-700 bg-emerald-50 border border-emerald-200 rounded p-2">Tagihan dibuat — kirim tautan ini ke tamu untuk membayar.</p>
+            <p className="text-emerald-700 bg-emerald-50 border border-emerald-200 rounded p-2">Tagihan Tripay dibuat — kirim tautan ini ke tamu untuk membayar.</p>
             <div className="flex items-center gap-2">
-              <Input readOnly value={hasil.redirect_url} className="font-mono text-xs" data-testid="tagihan-link" />
+              <Input readOnly value={hasil.checkout_url} className="font-mono text-xs" data-testid="tagihan-link" />
               <Button variant="outline" size="icon" onClick={salinLink} data-testid="tagihan-salin-link"><Copy className="w-3.5 h-3.5" /></Button>
               <Button variant="outline" size="icon" asChild data-testid="tagihan-buka-link">
-                <a href={hasil.redirect_url} target="_blank" rel="noreferrer"><ExternalLink className="w-3.5 h-3.5" /></a>
+                <a href={hasil.checkout_url} target="_blank" rel="noreferrer"><ExternalLink className="w-3.5 h-3.5" /></a>
               </Button>
             </div>
-            <p className="text-[11px] text-slate-400">Simulasi — belum memanggil Tripay sungguhan.</p>
+            <p className="text-[11px] text-slate-400">Order ID: <span className="font-mono">{hasil.order_id}</span></p>
           </div>
         )}
         <DialogFooter>
           {!hasil ? (
-            <Button data-testid="tagihan-buat" onClick={buatTagihan} disabled={!booking} className="bg-blue-700 hover:bg-blue-800">Buat Tagihan</Button>
+            <Button data-testid="tagihan-buat" onClick={buatTagihan} disabled={!booking || !method || submitting} className="bg-blue-700 hover:bg-blue-800">
+              {submitting ? "Membuat…" : "Buat Tagihan"}
+            </Button>
           ) : (
             <Button data-testid="tagihan-selesai" onClick={tutup} className="bg-blue-700 hover:bg-blue-800">Selesai</Button>
           )}
@@ -370,7 +410,6 @@ export default function Pembayaran() {
                 )}
               </div>
 
-              <p className="text-[11px] text-slate-400 pt-1">Dialog "Buat Tagihan Baru" masih simulasi (belum memanggil Tripay sungguhan) — daftar transaksi, riwayat pembayaran &amp; ubah status di atas sudah data nyata.</p>
             </div>
           )}
         </DialogContent>
@@ -379,9 +418,9 @@ export default function Pembayaran() {
       <BuatTagihanDialog
         open={tagihanOpen}
         onOpenChange={setTagihanOpen}
-        onCreated={(trx) => {
-          setTransactions((ts) => [trx, ...ts]);
-          toast.success(`Tagihan ${trx.order_id} dibuat`);
+        onCreated={() => {
+          muatTransaksi();
+          toast.success("Tagihan Tripay dibuat");
         }}
       />
     </div>
