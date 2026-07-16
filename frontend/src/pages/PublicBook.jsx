@@ -24,12 +24,14 @@ const EXTRA_BED_PRICE = 50000;
 const EXTRA_BED_MAX = 2;
 // Sama dengan BREAKFAST_PRICE di backend/core.py — hanya berlaku untuk booking menginap.
 const BREAKFAST_PRICE = 25000;
-const CS_WHATSAPP = "0895356644644";
+const CS_WHATSAPP = "0851-1945-9269";
+const CS_EMAIL = "pelangihomestay9@gmail.com";
+const JAM_OPERASIONAL = "07.00 – 22.00 WITA";
 // Disimpan begitu booking dibuat, dipakai SuccessView sebagai fallback kalau URL /book/sukses
 // diakses tanpa :bookingId (mis. tamu menutup tab checkout Tripay lalu balik lewat riwayat
 // browser, bukan lewat return_url yang sudah disisipi ID booking).
 const LAST_BOOKING_ID_KEY = "pelangi_last_booking_id";
-const ALAMAT_HOMESTAY = "Jl. Kebun Raya Bedugul, Desa Candikuning, Kec. Baturiti, Tabanan - Bali";
+const ALAMAT_HOMESTAY = "Jl. Kebun Raya Bedugul, Candikuning, Kecamatan Baturiti, Kabupaten Tabanan, Bali 82191, Indonesia";
 const addDays = (dateStr, n) => {
   const d = new Date(`${dateStr}T00:00:00`);
   d.setDate(d.getDate() + n);
@@ -263,21 +265,43 @@ function BookingForm() {
             <div className="grid sm:grid-cols-2 gap-4 sm:gap-6">
               {catalog.map((c) => {
                 const availOfTipe = availability.rooms.filter(r => r.tipe === c.tipe);
+                const isSoldOut = availOfTipe.length === 0;
                 return (
                   <Card key={c.tipe} data-testid={`pb-catalog-${c.tipe}`} className="bg-paper border-teal-deep/10 rounded-2xl overflow-hidden shadow-paper-sm hover:shadow-paper hover:-translate-y-0.5 transition-all">
+                    {c.image && (
+                      <div className="relative aspect-[4/3] overflow-hidden bg-teal-deep/5">
+                        <img src={c.image} alt={`${c.tipe} — Pelangi Homestay`} className="w-full h-full object-cover" loading="lazy" />
+                        {isSoldOut && (
+                          <div className="absolute inset-0 bg-teal-deep/70 flex items-center justify-center">
+                            <span className="bg-cream text-teal-deep font-display font-bold px-4 py-2 rounded-full text-sm rotate-[-6deg] shadow-paper-sm">Sold Out</span>
+                          </div>
+                        )}
+                        {bookingTipe !== "menginap" && (
+                          <div className="absolute top-3 right-3 bg-mustard text-teal-deep px-3 py-1 rounded-full text-xs font-bold shadow-paper-sm">
+                            {fmtRp(c.tarif)} <span className="font-normal text-teal-deep/70">/ 6 jam</span>
+                          </div>
+                        )}
+                      </div>
+                    )}
                     <CardContent className="p-5 space-y-4">
                       <div className="flex items-start justify-between gap-3">
                         <div>
                           <div className="text-[10px] uppercase tracking-[0.25em] text-mustard-deep font-semibold">Kamar</div>
                           <h3 className="font-display text-xl font-bold text-teal-deep">{c.tipe}</h3>
+                          {c.size && (
+                            <p className="text-xs text-teal-deep/60 mt-0.5">📐 {c.size} &middot; 👥 {c.capacity}</p>
+                          )}
                         </div>
-                        {bookingTipe !== "menginap" && (
+                        {bookingTipe !== "menginap" && !c.image && (
                           <div className="text-right">
                             <div className="font-display text-2xl font-bold text-teal-deep">{fmtRp(c.tarif)}</div>
                             <div className="text-[10px] uppercase tracking-wider text-teal-deep/60">/ 6 jam</div>
                           </div>
                         )}
                       </div>
+                      {c.description && (
+                        <p className="text-sm text-teal-deep/75 leading-relaxed">{c.description}</p>
+                      )}
                       {bookingTipe === "menginap" && (
                         <div className="grid grid-cols-2 gap-2" data-testid={`pb-sarapan-pilihan-${c.tipe}`}>
                           <button
@@ -528,6 +552,13 @@ function BookingForm() {
         <footer className="text-center text-xs text-teal-deep/60 pt-8 border-t border-teal-deep/10 space-y-2">
           <p className="font-semibold text-teal-deep">Pelangi Homestay &middot; Bersantai di kaki Bedugul, Bali</p>
           <p className="max-w-md mx-auto">{ALAMAT_HOMESTAY}</p>
+          <p className="flex items-center justify-center gap-1.5">
+            <Clock className="w-3.5 h-3.5" /> Jam Operasional: {JAM_OPERASIONAL}
+          </p>
+          <p className="flex items-center justify-center gap-1.5">
+            <Mail className="w-3.5 h-3.5" />
+            <a href={`mailto:${CS_EMAIL}`} className="hover:text-teal-deep">{CS_EMAIL}</a>
+          </p>
           <a
             href={waLink(CS_WHATSAPP, "Halo, saya ingin bertanya tentang booking di Pelangi Homestay.")}
             target="_blank" rel="noreferrer"

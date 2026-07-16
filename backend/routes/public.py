@@ -25,14 +25,35 @@ async def public_rooms_catalog():
     """
     rooms = await db.rooms.find({}, {"_id": 0}).to_list(500)
     rooms.sort(key=lambda r: (0 if r["tipe"] == "Standard" else 1, int(r["nomor"]) if r["nomor"].isdigit() else 9999))
+    # Foto & deskripsi per tipe kamar — statis (bukan dari DB) karena semua kamar
+    # dalam 1 tipe memakai foto yang sama. File-nya ada di frontend/public/assets/.
+    META = {
+        "Standard": {
+            "image": "/assets/std-5.webp",
+            "size": "3 × 3 m",
+            "capacity": "2 Dewasa + 1 Anak",
+            "description": "Kamar hangat dan efisien untuk berdua, dengan teras pribadi dan kamar mandi bersih.",
+        },
+        "Cottage": {
+            "image": "/assets/cot-2.webp",
+            "size": "5 × 3,5 m",
+            "capacity": "2 Dewasa + 1 Anak",
+            "description": "Fasilitas identik dengan Standard Room, namun jauh lebih lapang — cocok untuk keluarga kecil atau honeymoon.",
+        },
+    }
     grouped: Dict[str, Any] = {}
     for r in rooms:
         t = r["tipe"]
         if t not in grouped:
+            m = META.get(t, {})
             grouped[t] = {
                 "tipe": t,
                 "tarif": r["tarif"],  # harga Day Use (flat per 6 jam)
                 "tarif_menginap": r["tarif_menginap"],  # harga Menginap per malam, tanpa sarapan
+                "image": m.get("image", ""),
+                "size": m.get("size", ""),
+                "capacity": m.get("capacity", ""),
+                "description": m.get("description", ""),
                 "fasilitas": [
                     "AC", "Wi-Fi gratis", "TV LED", "Kamar mandi dalam",
                     "Air panas", "Handuk & toiletries",
