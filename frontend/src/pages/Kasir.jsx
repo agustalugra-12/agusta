@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
-import api, { fmtRp } from "@/lib/apiClient";
+import api, { fmtRp, fmtDateTime } from "@/lib/apiClient";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -8,6 +8,52 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ShoppingCart, Plus, Minus, Trash2, Printer } from "lucide-react";
+
+const HOMESTAY_NAMA = "Pelangi Homestay";
+const HOMESTAY_ALAMAT = "Jl. Kebun Raya Bedugul, Candikuning, Kec. Baturiti, Tabanan - Bali";
+const METODE_LABEL = { tunai: "Tunai", transfer: "Transfer", qris: "QRIS" };
+
+// Struk kasir — hanya terlihat saat print (hidden print:block), supaya window.print()
+// tidak ikut mencetak sidebar/katalog produk/keranjang seperti sebelumnya.
+function Receipt({ trx }) {
+  if (!trx) return null;
+  return (
+    <div className="hidden print:block font-mono text-xs max-w-xs mx-auto">
+      <div className="text-center space-y-0.5 mb-2">
+        <div className="font-bold text-sm">{HOMESTAY_NAMA}</div>
+        <div>{HOMESTAY_ALAMAT}</div>
+      </div>
+      <div className="border-t border-dashed border-black my-1" />
+      <div className="flex justify-between"><span>No. Transaksi</span><span>{trx.trx_no}</span></div>
+      <div className="flex justify-between"><span>Tanggal</span><span>{fmtDateTime(trx.timestamp)}</span></div>
+      <div className="flex justify-between"><span>Kasir</span><span>{trx.petugas}</span></div>
+      <div className="flex justify-between"><span>Customer</span><span>Walk In</span></div>
+      <div className="border-t border-dashed border-black my-1" />
+      {trx.items.map((it, i) => (
+        <div key={i} className="mb-0.5">
+          <div>{it.qty} x {it.nama}</div>
+          <div className="flex justify-between"><span>&nbsp;</span><span>{fmtRp(it.subtotal)}</span></div>
+        </div>
+      ))}
+      <div className="border-t border-dashed border-black my-1" />
+      <div className="flex justify-between"><span>Subtotal</span><span>{fmtRp(trx.subtotal)}</span></div>
+      {trx.diskon > 0 && <div className="flex justify-between"><span>Diskon</span><span>-{fmtRp(trx.diskon)}</span></div>}
+      <div className="flex justify-between font-bold"><span>Total</span><span>{fmtRp(trx.total)}</span></div>
+      <div className="border-t border-dashed border-black my-1" />
+      {trx.pembayaran.map((p, i) => (
+        <div key={i} className="flex justify-between"><span>Bayar ({METODE_LABEL[p.metode] || p.metode})</span><span>{fmtRp(p.jumlah)}</span></div>
+      ))}
+      {trx.catatan && (
+        <>
+          <div className="border-t border-dashed border-black my-1" />
+          <div>Catatan: {trx.catatan}</div>
+        </>
+      )}
+      <div className="border-t border-dashed border-black my-1" />
+      <div className="text-center mt-2">Terima kasih.</div>
+    </div>
+  );
+}
 
 const CATS = [
   { key: "", label: "Semua" },
@@ -72,7 +118,7 @@ export default function Kasir() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="no-print flex items-center justify-between">
         <div>
           <p className="text-xs uppercase tracking-[0.25em] text-slate-500">Kasir</p>
           <h1 className="text-3xl sm:text-4xl font-extrabold">Point of Sale</h1>
@@ -83,7 +129,7 @@ export default function Kasir() {
         </Button>
       </div>
 
-      <div className="grid lg:grid-cols-[1fr_400px] gap-6">
+      <div className="no-print grid lg:grid-cols-[1fr_400px] gap-6">
         {/* Products */}
         <div className="space-y-4">
           <div className="flex flex-col sm:flex-row gap-3">
@@ -173,12 +219,14 @@ export default function Kasir() {
               <div className="font-bold">Transaksi {last.trx_no} berhasil</div>
               <div className="text-sm text-slate-600">{last.items.length} item • {fmtRp(last.total)}</div>
             </div>
-            <Button variant="outline" onClick={() => { window.print(); }}>
+            <Button data-testid="kasir-cetak-struk" variant="outline" onClick={() => { window.print(); }}>
               <Printer className="w-4 h-4 mr-2" /> Cetak Struk
             </Button>
           </CardContent>
         </Card>
       )}
+
+      <Receipt trx={last} />
     </div>
   );
 }

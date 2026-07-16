@@ -105,6 +105,25 @@ export default function Laporan() {
   );
 }
 
+function KasMetodeBayar({ from, to }) {
+  const [kas, setKas] = useState({ tunai: 0, qris: 0, transfer: 0, total: 0 });
+  useEffect(() => { api.get("/reports/kas-metode-bayar", { params: { from_date: from, to_date: to } }).then(r => setKas(r.data)); }, [from, to]);
+  return (
+    <Card className="border-slate-200">
+      <CardContent className="p-5">
+        <h3 className="font-bold">Kas per Metode Bayar</h3>
+        <p className="text-xs text-slate-500 mb-3">Dari Kasir (POS) & Check-In walk-in — untuk cocokkan uang fisik di laci. Tidak termasuk booking online/OTA (uang masuk lewat Tripay, bukan laci).</p>
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+          <Stat label="Tunai" value={fmtRp(kas.tunai)} color="#10B981" />
+          <Stat label="QRIS" value={fmtRp(kas.qris)} color="#3B82F6" />
+          <Stat label="Transfer" value={fmtRp(kas.transfer)} color="#F97316" />
+          <Stat label="Total" value={fmtRp(kas.total)} color="#1E40AF" />
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
 function Ringkasan({ from, to }) {
   const [rows, setRows] = useState([]);
   useEffect(() => { api.get("/reports/daily", { params: { from_date: from, to_date: to } }).then(r => setRows(r.data)); }, [from, to]);
@@ -124,6 +143,7 @@ function Ringkasan({ from, to }) {
         <Stat label="Laba Bersih" value={fmtRp(t.laba)} color="#10B981" />
         <Stat label="Hari" value={rows.length} color="#64748B" />
       </div>
+      <KasMetodeBayar from={from} to={to} />
       <Card className="border-slate-200"><CardContent className="p-5">
         <h3 className="font-bold mb-3">Grafik Pendapatan Harian</h3>
         <div className="h-72 w-full"><ResponsiveContainer>

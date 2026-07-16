@@ -366,6 +366,29 @@ async def report_daily(from_date: str = Query(...), to_date: str = Query(...),
         })
     return result
 
+@api.get("/reports/kas-metode-bayar")
+async def report_kas_metode_bayar(from_date: str = Query(...), to_date: str = Query(...),
+                                  user: dict = Depends(get_current_user)):
+    """Rekap uang masuk per metode bayar (Tunai/QRIS/Transfer) dari Kasir (POS) & Check-In
+    (walk-in) — supaya owner bisa cocokkan uang cash fisik yang harus ada di laci vs sistem.
+    SENGAJA tidak termasuk booking online/OTA (Tripay) karena uangnya masuk ke rekening/payment
+    gateway, tidak pernah melewati laci fisik — lihat /reports/daily untuk total pendapatan
+    kamar yang mencakup semua saluran."""
+    start = from_date
+    end = to_date + "T23:59:59"
+    totals = {"tunai": 0, "qris": 0, "transfer": 0}
+    ks = await db.kasir.find({"timestamp": {"$gte": start, "$lte": end}}, {"_id": 0, "pembayaran": 1}).to_list(5000)
+    ci = await db.checkins.find(
+        {"status": "selesai", "jam_checkout": {"$gte": start, "$lte": end}},
+        {"_id": 0, "pembayaran": 1},
+    ).to_list(5000)
+    for row in ks + ci:
+        for p in row.get("pembayaran") or []:
+            m = p.get("metode")
+            if m in totals:
+                totals[m] += int(p.get("jumlah") or 0)
+    return {**totals, "total": sum(totals.values())}
+
 @api.get("/reports/rooms")
 async def report_rooms(from_date: str = Query(...), to_date: str = Query(...),
                        user: dict = Depends(get_current_user)):

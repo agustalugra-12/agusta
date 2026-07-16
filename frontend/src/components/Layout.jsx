@@ -46,7 +46,7 @@ export default function Layout() {
   return (
     <div className="min-h-screen bg-slate-50">
       {/* Sidebar (desktop) */}
-      <aside className="hidden lg:flex fixed inset-y-0 left-0 w-64 bg-white border-r border-slate-200 flex-col z-30">
+      <aside className="no-print hidden lg:flex fixed inset-y-0 left-0 w-64 bg-white border-r border-slate-200 flex-col z-30">
         <div className="px-6 py-6 flex items-center gap-3 border-b border-slate-100">
           <div className="w-10 h-10 rounded-xl bg-blue-700 grid place-items-center text-white">
             <Hotel className="w-5 h-5" />
@@ -91,7 +91,7 @@ export default function Layout() {
       </aside>
 
       {/* Mobile top bar */}
-      <header className="lg:hidden sticky top-0 z-30 bg-white/90 backdrop-blur border-b border-slate-200">
+      <header className="no-print lg:hidden sticky top-0 z-30 bg-white/90 backdrop-blur border-b border-slate-200">
         <div className="flex items-center justify-between px-4 py-3">
           <Link to="/" className="flex items-center gap-2">
             <div className="w-9 h-9 rounded-lg bg-blue-700 grid place-items-center text-white">
@@ -110,7 +110,7 @@ export default function Layout() {
 
       {/* Mobile drawer */}
       {open && (
-        <div className="lg:hidden fixed inset-0 z-50 flex">
+        <div className="no-print lg:hidden fixed inset-0 z-50 flex">
           <div className="absolute inset-0 bg-black/40" onClick={() => setOpen(false)} />
           <div className="relative bg-white w-72 h-full flex flex-col">
             <Link to="/profil" data-testid="nav-profil-mobile" onClick={() => setOpen(false)} className="px-5 py-5 border-b border-slate-100 block hover:bg-slate-50">
@@ -142,14 +142,14 @@ export default function Layout() {
       )}
 
       {/* Main */}
-      <main className="lg:pl-64 pb-20 lg:pb-0">
-        <div className="p-4 sm:p-6 lg:p-8 max-w-7xl mx-auto">
+      <main className="lg:pl-64 pb-20 lg:pb-0 print:pl-0 print:pb-0">
+        <div className="p-4 sm:p-6 lg:p-8 max-w-7xl mx-auto print:p-0 print:max-w-none">
           <Outlet />
         </div>
       </main>
 
       {/* Bottom nav (mobile) */}
-      <nav className="lg:hidden fixed bottom-0 inset-x-0 z-30 bg-white/95 backdrop-blur border-t border-slate-200">
+      <nav className="no-print lg:hidden fixed bottom-0 inset-x-0 z-30 bg-white/95 backdrop-blur border-t border-slate-200">
         <div className="grid grid-cols-5">
           {items.slice(0, 5).map((it) => (
             <NavLink

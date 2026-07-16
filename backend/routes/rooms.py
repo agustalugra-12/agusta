@@ -90,6 +90,20 @@ async def change_room_status(room_id: str, body: RoomStatusUpdate, user: dict = 
         })
     return {"ok": True}
 
+@api.post("/rooms/{room_id}/housekeeping-mulai")
+async def housekeeping_mulai(room_id: str, user: dict = Depends(get_current_user)):
+    """Tandai kamar mulai dibersihkan (jam_mulai) — idempotent, tidak menimpa jam_mulai yang
+    sudah tercatat kalau tombol Mulai dipencet lebih dari sekali."""
+    r = await db.rooms.find_one({"id": room_id})
+    if not r:
+        raise HTTPException(404, "Kamar tidak ditemukan")
+    if r["status"] != "perlu_dibersihkan":
+        raise HTTPException(400, "Kamar tidak dalam status Perlu Dibersihkan")
+    pending = await db.housekeeping_log.find_one({"room_id": room_id, "status": "pending"}, sort=[("tanggal", -1)])
+    if pending and not pending.get("jam_mulai"):
+        await db.housekeeping_log.update_one({"id": pending["id"]}, {"$set": {"jam_mulai": now_iso()}})
+    return {"ok": True}
+
 @api.post("/rooms/{room_id}/housekeeping-done")
 async def housekeeping_done(room_id: str, body: HousekeepingDone, user: dict = Depends(get_current_user)):
     r = await db.rooms.find_one({"id": room_id})
