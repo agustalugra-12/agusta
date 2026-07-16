@@ -226,19 +226,75 @@ async def _balasan_ai_owner(pesan_masuk: str) -> str:
         return await _ringkasan_owner_fallback_text()
 
 
+async def _pendapatan_kamar_per_tipe_hari_ini() -> Dict[str, int]:
+    """Pendapatan kamar hari ini dipecah Menginap vs Day Use + jumlah kamar/transaksi.
+    Day Use SELALU lewat `checkins` (checkin langsung ATAU dari booking yang sudah check-in —
+    /checkins tidak pernah dipakai utk menginap, lihat docstring create_checkin) — booking
+    day_use yang lunas tapi BELUM check-in ditambah terpisah dari `bookings` (checkin_id belum
+    ada) supaya tidak dobel dengan yang sudah masuk checkins. Menginap SELALU lewat `bookings`
+    (checkins tidak pernah representasikan menginap sama sekali) — tidak ada risiko dobel hitung."""
+    today_iso = datetime.now(timezone.utc).date().isoformat()
+
+    co_today = await db.checkins.find(
+        {"jam_checkout": {"$gte": today_iso}, "status": "selesai"}, {"_id": 0, "total": 1}
+    ).to_list(500)
+    dayuse_total = sum(c.get("total", 0) for c in co_today)
+    dayuse_kamar = len(co_today)
+
+    dayuse_bk_belum_checkin = await db.bookings.find({
+        "tipe": "day_use", "payment_status": "paid", "paid_at": {"$gte": today_iso},
+        "checkin_id": {"$exists": False},
+    }, {"_id": 0, "total": 1}).to_list(200)
+    dayuse_total += sum(int(b.get("total") or 0) for b in dayuse_bk_belum_checkin)
+    dayuse_kamar += len(dayuse_bk_belum_checkin)
+
+    menginap_bk = await db.bookings.find({
+        "tipe": "menginap", "payment_status": "paid", "paid_at": {"$gte": today_iso},
+    }, {"_id": 0, "total": 1}).to_list(200)
+    menginap_total = sum(int(b.get("total") or 0) for b in menginap_bk)
+    menginap_kamar = len(menginap_bk)
+
+    return {
+        "dayuse_total": dayuse_total, "dayuse_kamar": dayuse_kamar,
+        "menginap_total": menginap_total, "menginap_kamar": menginap_kamar,
+    }
+
+
 async def _laporan_harian_text() -> str:
-    """Laporan akhir hari (dikirim otomatis jam 22:00 WIB ke owner & staff yang terhubung)."""
+    """Laporan akhir hari (dikirim otomatis jam 22:00 WIB ke owner & staff yang terhubung) —
+    rinci: pemasukan dipecah menginap/day use (+ jumlah kamar) & metode bayar, pengeluaran
+    dengan total DAN daftar detail per item."""
     s = await report_summary(user=_DUMMY_USER)
-    today = datetime.now(timezone.utc).date().isoformat()
-    kas = await report_kas_metode_bayar(from_date=today, to_date=today, user=_DUMMY_USER)
+    today_iso = datetime.now(timezone.utc).date().isoformat()
+    kas = await report_kas_metode_bayar(from_date=today_iso, to_date=today_iso, user=_DUMMY_USER)
+    kamar = await _pendapatan_kamar_per_tipe_hari_ini()
     tanggal = datetime.now(timezone.utc).astimezone(WIB).strftime("%d %B %Y")
+
+    total_pemasukan = kamar["dayuse_total"] + kamar["menginap_total"] + s["pendapatan_kasir_hari_ini"] + s["pendapatan_service_hari_ini"]
+
+    exp_today = await db.expenses.find(
+        {"tanggal": {"$gte": today_iso}}, {"_id": 0, "kategori": 1, "deskripsi": 1, "nominal": 1, "user": 1}
+    ).sort("nominal", -1).to_list(200)
+    total_pengeluaran = sum(e.get("nominal", 0) for e in exp_today)
+    if exp_today:
+        pengeluaran_detail = "\n".join(
+            f"  - {e.get('deskripsi', '-')} ({e.get('kategori', '-')}): {_rp(e['nominal'])} — {e.get('user', '-')}"
+            for e in exp_today
+        )
+    else:
+        pengeluaran_detail = "  Tidak ada pengeluaran hari ini."
+
     return (
         f"📋 Laporan Akhir Hari — {tanggal}\n\n"
-        f"Total Pendapatan: {_rp(s['pendapatan_hari_ini'])}\n"
-        f"  Tunai: {_rp(kas['tunai'])}\n"
-        f"  QRIS: {_rp(kas['qris'])}\n"
-        f"  Transfer: {_rp(kas['transfer'])}\n"
-        f"Total Service: {_rp(s['pendapatan_service_hari_ini'])}\n\n"
+        f"💰 PEMASUKAN: {_rp(total_pemasukan)}\n"
+        f"  🛏 Menginap: {_rp(kamar['menginap_total'])} ({kamar['menginap_kamar']} kamar)\n"
+        f"  ☀️ Day Use: {_rp(kamar['dayuse_total'])} ({kamar['dayuse_kamar']} kamar)\n"
+        f"  🛒 Kasir (POS): {_rp(s['pendapatan_kasir_hari_ini'])}\n"
+        f"  🧰 Service: {_rp(s['pendapatan_service_hari_ini'])}\n\n"
+        f"  Metode Bayar (Kasir & Check-In):\n"
+        f"    Tunai: {_rp(kas['tunai'])} · QRIS: {_rp(kas['qris'])} · Transfer: {_rp(kas['transfer'])}\n\n"
+        f"💸 PENGELUARAN: {_rp(total_pengeluaran)}\n"
+        f"{pengeluaran_detail}\n\n"
         f"Terima kasih atas kerja hari ini! 🙏"
     )
 
