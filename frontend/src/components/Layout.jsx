@@ -3,7 +3,7 @@ import { useAuth } from "@/context/AuthContext";
 import { Button } from "@/components/ui/button";
 import {
   LayoutDashboard, BedDouble, ShoppingCart, Boxes,
-  Wallet, Sparkles, BarChart3, UserCog, ShieldCheck, LogOut, Hotel, Menu, HandCoins, DoorOpen, ListChecks, Mail, RefreshCw, CreditCard, MessageSquare, Shuffle, BedSingle, Send, Wand2, Tag,
+  Wallet, Sparkles, BarChart3, UserCog, ShieldCheck, LogOut, Hotel, Menu, HandCoins, DoorOpen, ListChecks, Mail, RefreshCw, CreditCard, MessageSquare, Shuffle, BedSingle, Send, Wand2, Tag, AlertTriangle, Wrench,
 } from "lucide-react";
 import { useState } from "react";
 
@@ -26,6 +26,8 @@ const navItems = [
   { to: "/inventory", label: "Inventory", icon: Boxes, ownerOnly: true },
   { to: "/pengeluaran", label: "Pengeluaran", icon: Wallet, ownerOnly: true },
   { to: "/housekeeping", label: "Housekeeping", icon: Sparkles },
+  { to: "/komplain", label: "Komplain", icon: AlertTriangle },
+  { to: "/maintenance", label: "Maintenance", icon: Wrench },
   { to: "/laporan", label: "Laporan", icon: BarChart3 },
   { to: "/pengguna", label: "Pengguna", icon: UserCog, ownerOnly: true },
   { to: "/audit", label: "Audit Log", icon: ShieldCheck, ownerOnly: true },

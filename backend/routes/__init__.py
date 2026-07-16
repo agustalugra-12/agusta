@@ -26,3 +26,4 @@ from . import sinkronisasi_data_pms  # noqa: F401
 from . import laporan_analitik  # noqa: F401
 from . import rates  # noqa: F401
 from . import tripay  # noqa: F401
+from . import issues  # noqa: F401

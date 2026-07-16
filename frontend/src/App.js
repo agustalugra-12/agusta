@@ -28,6 +28,8 @@ import PemetaanTipeKamar from "@/pages/PemetaanTipeKamar";
 import PermintaanKhususExtraBed from "@/pages/PermintaanKhususExtraBed";
 import PengirimanVoucherOtomatis from "@/pages/PengirimanVoucherOtomatis";
 import RekomendasiCheckinDayUse from "@/pages/RekomendasiCheckinDayUse";
+import Komplain from "@/pages/Komplain";
+import Maintenance from "@/pages/Maintenance";
 import PublicBook from "@/pages/PublicBook";
 import "@/App.css";
 
@@ -72,6 +74,8 @@ function AppRoutes() {
         <Route path="/extra-bed" element={<PermintaanKhususExtraBed />} />
         <Route path="/pengiriman-voucher" element={<PengirimanVoucherOtomatis />} />
         <Route path="/rekomendasi-checkin" element={<RekomendasiCheckinDayUse />} />
+        <Route path="/komplain" element={<Komplain />} />
+        <Route path="/maintenance" element={<Maintenance />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

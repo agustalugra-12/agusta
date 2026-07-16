@@ -391,6 +391,16 @@ class HousekeepingDone(BaseModel):
     petugas: Optional[str] = ""
     catatan: Optional[str] = ""
 
+class IssueCreate(BaseModel):
+    tipe: str  # complaint | maintenance
+    room_id: Optional[str] = None
+    room_nomor: Optional[str] = ""
+    deskripsi: str
+
+class IssueStatusUpdate(BaseModel):
+    status: str  # open | in_progress | resolved
+    catatan_penyelesaian: Optional[str] = ""
+
 class MoveRoomBody(BaseModel):
     new_room_id: str
     alasan: Optional[str] = ""
