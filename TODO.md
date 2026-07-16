@@ -216,3 +216,14 @@ Layer **frontend** Fase 2 selesai 100% (30/30 task NgodingPakeAI, 2026-07-11). L
 - [x] Frontend `RekomendasiCheckinDayUse.jsx` disambungkan ke endpoint ini
 
 Fase 3 detail: lihat section "Fase 3 — Manajemen Sistem Internal" di atas — sudah selesai 100%.
+
+### Backlog P1/P2 — batch 2026-07-16 (instruksi user: P0 dibatalkan, P1 sync Sheets/Drive/restore dibatalkan karena sudah ada backup terpisah)
+- [x] Diagnosis bug "pengeluaran Telegram belum masuk PMS" — dikonfirmasi bukan bug kode (owner-side jalan normal, staff-side belum link akun Telegram). Lihat CHANGELOG.
+- [x] `/book/sukses` — hapus tombol download voucher PDF, tetap kirim detail booking (DP/Lunas) sebagai teks biasa via WA (tombol existing, tidak berubah).
+- [x] P2 (direvisi user — teks biasa, bukan PDF): kirim bukti transaksi via WhatsApp — Check-Out & Kasir.
+- [x] P2 (direvisi user — dukung KEDUANYA): cetak struk thermal Bluetooth (Web Bluetooth API, baru) berdampingan dengan cetak browser biasa (sudah ada).
+- [x] P2: Notifikasi push (PWA Notification/Push API) — booking baru, pembayaran diterima, komplain baru, kamar perlu dibersihkan.
+- [x] P1: Laporan shift (per petugas) — tab baru di `/laporan`, dirangkum dari data kasir/checkin/checkout/pengeluaran/housekeeping per petugas (sistem tidak punya clock-in/out asli).
+- [ ] ~~P1: Sinkronisasi otomatis ke Google Sheets~~ — dibatalkan atas instruksi user (2026-07-16).
+- [ ] ~~P1: Auto backup harian ke Google Drive~~ — dibatalkan, backup sudah di-setting terpisah (2026-07-16).
+- [ ] ~~P1: Restore data dari backup~~ — dibatalkan bersamaan dengan item backup di atas (2026-07-16).

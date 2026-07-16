@@ -46,21 +46,19 @@ Aplikasi web + Android PWA "Pelangi Homestay Management System" untuk operasiona
 - **(Feb 2026)** **Email Wajib di Public Booking**: Field baru `email` ditambahkan pada model `PublicBookingCreate` (backend) dan form `/book` (frontend, di antara Nomor WhatsApp & Nomor Identitas). Validasi ganda: client-side regex + server-side check (`@` dan domain valid) → 400 jika format salah, 422 jika missing. Email disimpan ke booking doc dan diteruskan ke Midtrans `customer_details.email` sehingga bukti pembayaran otomatis dikirim ke tamu oleh Midtrans. UI menampilkan note kuning "**Wajib diisi** — bukti pembayaran & konfirmasi booking akan dikirim ke email ini". Field `email` juga di-expose di `GET /api/public/bookings/{bid}` untuk future email notification/reminder flows.
 
 ## Backlog / Next Phase
-**P0**
-- Upload foto KTP/SIM/Paspor (kamera + galeri) ke Emergent object storage, link tersimpan di checkin.
-- Service worker offline-first lengkap (cache shell + IndexedDB queue untuk transaksi offline).
-- Cetak PDF struk (saat ini hanya browser print).
+**P0 — dibatalkan (keputusan user 2026-07-16)**
+- ~~Upload foto KTP/SIM/Paspor, service worker offline-first, cetak PDF struk~~ — tidak dikerjakan.
 
 **P1**
-- Sinkronisasi otomatis ke Google Sheets (USERS, KAMAR, TAMU, CHECKIN, TRANSAKSI, PEMBAYARAN, LAPORAN_HARIAN, LOG_AKTIVITAS, INVENTORY, PENGELUARAN, SHIFT, BACKUP_LOG, HOUSEKEEPING).
-- Auto backup harian ke Google Drive (sheets + foto + struk PDF).
-- Restore data dari backup.
-- Laporan shift (per petugas) — backend log sudah ada, perlu UI.
+- ~~Sinkronisasi otomatis ke Google Sheets~~ — dibatalkan (2026-07-16).
+- ~~Auto backup harian ke Google Drive~~ — dibatalkan, backup sudah di-setting terpisah (2026-07-16).
+- ~~Restore data dari backup~~ — dibatalkan bersamaan (2026-07-16).
+- **(Jul 2026) Laporan shift (per petugas)** — SELESAI. Tab baru "Laporan Shift" di `/laporan`, endpoint `GET /reports/shift`. Sistem tidak punya clock-in/out asli — dirangkum dari jejak petugas di kasir/check-in/check-out/pengeluaran/housekeeping, per tanggal+petugas.
 
 **P2**
-- Kirim bukti transaksi via WhatsApp dengan PDF attachment.
-- Cetak struk thermal Bluetooth (perlu native wrapper, contoh Capacitor + plugin).
-- Notifikasi push (PWA notification API).
+- **(Jul 2026) Kirim bukti transaksi via WhatsApp** — SELESAI, direvisi jadi teks biasa (bukan PDF attachment sesuai backlog awal). Check-Out & Kasir, helper `buildCheckoutReceiptMessage`/`buildKasirReceiptMessage` di `apiClient.js`.
+- **(Jul 2026) Cetak struk thermal Bluetooth** — SELESAI via Web Bluetooth API langsung dari browser (`frontend/src/lib/blePrinter.js`), TIDAK pakai native wrapper/Capacitor sesuai keputusan user — cukup Chrome Android/Desktop HTTPS. Berdampingan dengan cetak browser biasa (tetap ada, dukung keduanya).
+- **(Jul 2026) Notifikasi push (PWA)** — SELESAI. VAPID + `pywebpush`, collection `push_subscriptions`, route `backend/routes/push.py`, service worker `frontend/public/sw.js`, toggle di halaman Profil. Trigger: booking online baru, pembayaran Tripay diterima, komplain/maintenance baru, kamar perlu dibersihkan.
 
 ## Test Credentials
 Lihat `/app/memory/test_credentials.md`.
