@@ -12,7 +12,7 @@ import { bookingConfirmationWaLink, waLink, STATUS_BAYAR_LABEL } from "@/lib/api
 import { ExtraBedSelector } from "@/pages/PermintaanKhususExtraBed";
 import {
   BedDouble, Wifi, Snowflake, Tv, Droplets, Bath, Trees, CheckCircle2, XCircle,
-  Calendar, Clock, User, Phone, IdCard, Car, Users as UsersIcon, Building2, ArrowRight, Mail, Ban, Download,
+  Calendar, Clock, User, Phone, IdCard, Car, Users as UsersIcon, Building2, ArrowRight, Mail, Ban,
 } from "lucide-react";
 
 // API client tanpa auth (untuk endpoint /api/public/*)
@@ -971,14 +971,6 @@ function SuccessView({ bookingId: bookingIdFromUrl }) {
                 : "Mohon tunjukkan nomor booking saat kedatangan."}
             </p>
           )}
-          <button
-            type="button"
-            data-testid="pb-unduh-voucher"
-            onClick={() => window.open(`${PUBLIC_API.defaults.baseURL}/public/bookings/${bk.id}/voucher.pdf`, "_blank")}
-            className="print:hidden inline-flex items-center justify-center gap-2 w-full px-4 h-10 rounded-md border border-slate-300 text-slate-700 hover:bg-slate-50 text-sm font-medium"
-          >
-            <Download className="w-4 h-4" /> Unduh Voucher (PDF)
-          </button>
           {isPaid && bk.email && (
             <p data-testid="pb-voucher-email-status" className="print:hidden text-xs text-slate-500 bg-slate-50 border border-slate-200 rounded-md px-2.5 py-1.5 flex items-center justify-center gap-1.5">
               <Mail className="w-3.5 h-3.5" /> Voucher & bukti booking ini juga akan otomatis terkirim ke <b>{bk.email}</b>
