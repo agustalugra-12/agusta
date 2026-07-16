@@ -7,12 +7,36 @@ module.exports = {
   ],
   theme: {
     extend: {
+      fontFamily: {
+        display: ['"Fraunces"', "serif"],
+        sans: ['"DM Sans"', "system-ui", "sans-serif"],
+        script: ['"Caveat"', "cursive"],
+      },
+      boxShadow: {
+        paper: "6px 6px 0 rgba(11,46,42,0.12)",
+        "paper-sm": "3px 3px 0 rgba(11,46,42,0.10)",
+      },
       borderRadius: {
         lg: 'var(--radius)',
         md: 'calc(var(--radius) - 2px)',
         sm: 'calc(var(--radius) - 4px)'
       },
       colors: {
+        // Brand palette halaman /book, mengikuti web pelangihomestay.com
+        cream: "#F7F3EA",
+        paper: "#FBF7EE",
+        ink: "#0B2E2A",
+        teal: {
+          DEFAULT: "#0F4C5C",
+          deep: "#083D38",
+          soft: "#1F6A6E",
+        },
+        mustard: {
+          DEFAULT: "#E9A24B",
+          soft: "#F1C57C",
+          deep: "#C6852E",
+        },
+        leaf: "#4CAF50",
         background: 'hsl(var(--background))',
         foreground: 'hsl(var(--foreground))',
         card: {

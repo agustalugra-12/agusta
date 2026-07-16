@@ -193,29 +193,25 @@ function BookingForm() {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-b from-blue-50 via-white to-amber-50">
+    <div className="min-h-screen bg-cream text-ink font-sans">
       {/* Header */}
-      <header className="sticky top-0 z-10 bg-white/90 backdrop-blur border-b border-slate-200">
+      <header className="sticky top-0 z-10 bg-paper/95 backdrop-blur border-b border-teal-deep/10">
         <div className="max-w-5xl mx-auto px-4 sm:px-6 py-3 flex items-center justify-between">
           <div className="flex items-center gap-2.5">
-            <div className="w-9 h-9 rounded-lg bg-gradient-to-br from-blue-600 to-amber-500 grid place-items-center text-white font-extrabold">P</div>
-            <div>
-              <div className="text-xs uppercase tracking-[0.2em] text-slate-500">Pelangi</div>
-              <div className="font-extrabold leading-none">Homestay</div>
-            </div>
+            <img src="/pelangi-logo.png" alt="Pelangi Homestay" className="h-12 w-auto object-contain" />
           </div>
-          <Link to="/login" className="text-xs text-slate-500 hover:text-blue-700">Staff Login</Link>
+          <Link to="/login" className="text-xs text-teal-deep/60 hover:text-teal-deep font-medium">Staff Login</Link>
         </div>
       </header>
 
       <main className="max-w-5xl mx-auto px-4 sm:px-6 py-6 sm:py-10 space-y-8">
         {/* Hero */}
         <section className="text-center space-y-3">
-          <p className="text-xs uppercase tracking-[0.3em] text-amber-700">Reservasi Online</p>
-          <h1 className="text-3xl sm:text-5xl font-extrabold tracking-tight text-slate-900">
+          <p className="text-xs uppercase tracking-[0.3em] text-mustard-deep font-semibold">Reservasi Online</p>
+          <h1 className="font-display text-3xl sm:text-5xl font-bold tracking-tight text-teal-deep">
             Istirahat Sejenak di<br className="hidden sm:block" /> Sejuknya Bedugul
           </h1>
-          <p className="text-slate-600 max-w-xl mx-auto">
+          <p className="text-teal-deep/70 max-w-xl mx-auto">
             Day use untuk singgah sejenak, atau menginap menikmati udara pegunungan lebih lama —
             harga jujur, konfirmasi instan. Pilih tanggal, pilih kamar, selesai.
           </p>
@@ -224,41 +220,41 @@ function BookingForm() {
         {/* Step indicator */}
         <div className="flex items-center justify-center gap-2 text-xs">
           <StepDot active={step >= 1} done={step > 1} label="Pilih Kamar" />
-          <div className="w-6 h-px bg-slate-300" />
+          <div className="w-6 h-px bg-teal-deep/30" />
           <StepDot active={step >= 2} done={false} label="Isi Data & Bayar" />
         </div>
 
         {step === 1 && (
           <>
             {/* Date picker */}
-            <Card className="border-slate-200 shadow-sm">
+            <Card className="bg-paper border-teal-deep/15 shadow-paper-sm">
               <CardContent className="p-4 sm:p-5 space-y-4">
                 <div>
-                  <Label className="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-1.5 block">Jenis Kunjungan</Label>
+                  <Label className="text-xs font-semibold uppercase tracking-wider text-teal-deep/60 mb-1.5 block">Jenis Kunjungan</Label>
                   <div className="flex gap-2">
-                    <Button data-testid="pb-booking-tipe-dayuse" type="button" variant={bookingTipe === "day_use" ? "default" : "outline"} className={bookingTipe === "day_use" ? "h-12 flex-1 bg-blue-700" : "h-12 flex-1"} onClick={() => setBookingTipe("day_use")}>Day Use</Button>
-                    <Button data-testid="pb-booking-tipe-menginap" type="button" variant={bookingTipe === "menginap" ? "default" : "outline"} className={bookingTipe === "menginap" ? "h-12 flex-1 bg-blue-700" : "h-12 flex-1"} onClick={() => setBookingTipe("menginap")}>Menginap</Button>
+                    <Button data-testid="pb-booking-tipe-dayuse" type="button" variant={bookingTipe === "day_use" ? "default" : "outline"} className={bookingTipe === "day_use" ? "h-12 flex-1 rounded-full bg-teal-deep hover:bg-teal-deep/90 text-cream" : "h-12 flex-1 rounded-full border-2 border-teal-deep/25 text-teal-deep hover:bg-teal-deep/5"} onClick={() => setBookingTipe("day_use")}>Day Use</Button>
+                    <Button data-testid="pb-booking-tipe-menginap" type="button" variant={bookingTipe === "menginap" ? "default" : "outline"} className={bookingTipe === "menginap" ? "h-12 flex-1 rounded-full bg-teal-deep hover:bg-teal-deep/90 text-cream" : "h-12 flex-1 rounded-full border-2 border-teal-deep/25 text-teal-deep hover:bg-teal-deep/5"} onClick={() => setBookingTipe("menginap")}>Menginap</Button>
                   </div>
                 </div>
                 <div className="grid sm:grid-cols-[1fr_1fr_auto] gap-3 items-end">
                   <div>
-                    <Label className="text-xs font-semibold uppercase tracking-wider text-slate-500">{bookingTipe === "menginap" ? "Tanggal Check-In" : "Tanggal Kunjungan"}</Label>
-                    <Input data-testid="pb-tanggal" type="date" value={tanggal} min={todayStr()} onChange={(e) => setTanggal(e.target.value)} className="h-12 mt-1.5 text-base" />
+                    <Label className="text-xs font-semibold uppercase tracking-wider text-teal-deep/60">{bookingTipe === "menginap" ? "Tanggal Check-In" : "Tanggal Kunjungan"}</Label>
+                    <Input data-testid="pb-tanggal" type="date" value={tanggal} min={todayStr()} onChange={(e) => setTanggal(e.target.value)} className="h-12 mt-1.5 text-base rounded-full border-teal-deep/20 focus-visible:ring-mustard" />
                   </div>
                   {bookingTipe === "menginap" && (
                     <div>
-                      <Label className="text-xs font-semibold uppercase tracking-wider text-slate-500">Tanggal Check-Out</Label>
-                      <Input data-testid="pb-tanggal-checkout" type="date" value={checkoutDate} min={addDays(tanggal, 1)} onChange={(e) => setCheckoutDate(e.target.value)} className="h-12 mt-1.5 text-base" />
+                      <Label className="text-xs font-semibold uppercase tracking-wider text-teal-deep/60">Tanggal Check-Out</Label>
+                      <Input data-testid="pb-tanggal-checkout" type="date" value={checkoutDate} min={addDays(tanggal, 1)} onChange={(e) => setCheckoutDate(e.target.value)} className="h-12 mt-1.5 text-base rounded-full border-teal-deep/20 focus-visible:ring-mustard" />
                     </div>
                   )}
                   <div className="flex gap-2">
-                    <Button data-testid="pb-tipe-all" type="button" variant={tipe === "" ? "default" : "outline"} className={tipe === "" ? "h-12 bg-blue-700" : "h-12"} onClick={() => setTipe("")}>Semua</Button>
-                    <Button data-testid="pb-tipe-std" type="button" variant={tipe === "Standard" ? "default" : "outline"} className={tipe === "Standard" ? "h-12 bg-blue-700" : "h-12"} onClick={() => setTipe("Standard")}>Standard</Button>
-                    <Button data-testid="pb-tipe-cot" type="button" variant={tipe === "Cottage" ? "default" : "outline"} className={tipe === "Cottage" ? "h-12 bg-amber-600" : "h-12"} onClick={() => setTipe("Cottage")}>Cottage</Button>
+                    <Button data-testid="pb-tipe-all" type="button" variant={tipe === "" ? "default" : "outline"} className={tipe === "" ? "h-12 rounded-full bg-teal-deep hover:bg-teal-deep/90 text-cream" : "h-12 rounded-full border-2 border-teal-deep/25 text-teal-deep hover:bg-teal-deep/5"} onClick={() => setTipe("")}>Semua</Button>
+                    <Button data-testid="pb-tipe-std" type="button" variant={tipe === "Standard" ? "default" : "outline"} className={tipe === "Standard" ? "h-12 rounded-full bg-teal-deep hover:bg-teal-deep/90 text-cream" : "h-12 rounded-full border-2 border-teal-deep/25 text-teal-deep hover:bg-teal-deep/5"} onClick={() => setTipe("Standard")}>Standard</Button>
+                    <Button data-testid="pb-tipe-cot" type="button" variant={tipe === "Cottage" ? "default" : "outline"} className={tipe === "Cottage" ? "h-12 rounded-full bg-mustard hover:bg-mustard-deep text-teal-deep" : "h-12 rounded-full border-2 border-mustard/40 text-mustard-deep hover:bg-mustard/10"} onClick={() => setTipe("Cottage")}>Cottage</Button>
                   </div>
                 </div>
                 {bookingTipe === "menginap" && (
-                  <p className="text-xs text-slate-500">{nights} malam &middot; Check-out jam 12:00 siang</p>
+                  <p className="text-xs text-teal-deep/60">{nights} malam &middot; Check-out jam 12:00 siang</p>
                 )}
               </CardContent>
             </Card>
@@ -268,17 +264,17 @@ function BookingForm() {
               {catalog.map((c) => {
                 const availOfTipe = availability.rooms.filter(r => r.tipe === c.tipe);
                 return (
-                  <Card key={c.tipe} data-testid={`pb-catalog-${c.tipe}`} className="border-slate-200 overflow-hidden shadow-md hover:shadow-lg transition-shadow">
+                  <Card key={c.tipe} data-testid={`pb-catalog-${c.tipe}`} className="bg-paper border-teal-deep/10 rounded-2xl overflow-hidden shadow-paper-sm hover:shadow-paper hover:-translate-y-0.5 transition-all">
                     <CardContent className="p-5 space-y-4">
                       <div className="flex items-start justify-between gap-3">
                         <div>
-                          <div className="text-xs uppercase tracking-wider text-slate-500">Kamar</div>
-                          <h3 className="text-xl font-extrabold">{c.tipe}</h3>
+                          <div className="text-[10px] uppercase tracking-[0.25em] text-mustard-deep font-semibold">Kamar</div>
+                          <h3 className="font-display text-xl font-bold text-teal-deep">{c.tipe}</h3>
                         </div>
                         {bookingTipe !== "menginap" && (
                           <div className="text-right">
-                            <div className="text-2xl font-extrabold text-blue-700">{fmtRp(c.tarif)}</div>
-                            <div className="text-[10px] uppercase tracking-wider text-slate-500">/ 6 jam</div>
+                            <div className="font-display text-2xl font-bold text-teal-deep">{fmtRp(c.tarif)}</div>
+                            <div className="text-[10px] uppercase tracking-wider text-teal-deep/60">/ 6 jam</div>
                           </div>
                         )}
                       </div>
@@ -288,21 +284,21 @@ function BookingForm() {
                             type="button"
                             data-testid={`pb-harga-tanpa-sarapan-${c.tipe}`}
                             onClick={() => setDenganSarapan(false)}
-                            className={`p-2.5 rounded-lg border-2 text-left transition-colors ${!denganSarapan ? "border-blue-600 bg-blue-50" : "border-slate-200 hover:border-slate-300"}`}
+                            className={`p-2.5 rounded-lg border-2 text-left transition-colors ${!denganSarapan ? "border-teal-deep bg-teal-deep/8" : "border-teal-deep/15 hover:border-teal-deep/30"}`}
                           >
-                            <div className="text-[9px] uppercase tracking-wider text-slate-500 font-semibold">Tanpa Sarapan</div>
-                            <div className="font-extrabold text-blue-700">{fmtRp(c.tarif_menginap)}</div>
-                            <div className="text-[9px] text-slate-400">/ malam</div>
+                            <div className="text-[9px] uppercase tracking-wider text-teal-deep/60 font-semibold">Tanpa Sarapan</div>
+                            <div className="font-bold text-teal-deep">{fmtRp(c.tarif_menginap)}</div>
+                            <div className="text-[9px] text-teal-deep/50">/ malam</div>
                           </button>
                           <button
                             type="button"
                             data-testid={`pb-harga-dengan-sarapan-${c.tipe}`}
                             onClick={() => setDenganSarapan(true)}
-                            className={`p-2.5 rounded-lg border-2 text-left transition-colors ${denganSarapan ? "border-blue-600 bg-blue-50" : "border-slate-200 hover:border-slate-300"}`}
+                            className={`p-2.5 rounded-lg border-2 text-left transition-colors ${denganSarapan ? "border-teal-deep bg-teal-deep/8" : "border-teal-deep/15 hover:border-teal-deep/30"}`}
                           >
-                            <div className="text-[9px] uppercase tracking-wider text-slate-500 font-semibold">Dengan Sarapan</div>
-                            <div className="font-extrabold text-blue-700">{fmtRp(c.tarif_menginap + BREAKFAST_PRICE)}</div>
-                            <div className="text-[9px] text-slate-400">/ malam</div>
+                            <div className="text-[9px] uppercase tracking-wider text-teal-deep/60 font-semibold">Dengan Sarapan</div>
+                            <div className="font-bold text-teal-deep">{fmtRp(c.tarif_menginap + BREAKFAST_PRICE)}</div>
+                            <div className="text-[9px] text-teal-deep/50">/ malam</div>
                           </button>
                         </div>
                       )}
@@ -310,19 +306,19 @@ function BookingForm() {
                         {c.fasilitas.map((f) => {
                           const Ico = FACILITY_ICONS[f] || CheckCircle2;
                           return (
-                            <span key={f} className="inline-flex items-center gap-1 text-[11px] px-2 py-1 rounded-full bg-slate-100 text-slate-700">
+                            <span key={f} className="inline-flex items-center gap-1 text-[11px] px-2 py-1 rounded-full bg-teal-deep/8 text-teal-deep font-medium">
                               <Ico className="w-3 h-3" /> {f}
                             </span>
                           );
                         })}
                       </div>
-                      <div className="pt-2 border-t border-slate-100">
-                        <div className="text-xs text-slate-500 mb-2">
-                          {availOfTipe.length > 0 ? `${availOfTipe.length} kamar tersedia` : "Kamar habis di tanggal ini"}
+                      <div className="pt-2 border-t border-dashed border-teal-deep/20">
+                        <div className="text-xs text-teal-deep/60 mb-2 font-medium">
+                          {availOfTipe.length > 0 ? `✨ ${availOfTipe.length} kamar tersedia` : "Kamar habis di tanggal ini"}
                         </div>
                         <div className="flex flex-wrap gap-1.5">
                           {availOfTipe.length === 0 && (
-                            <span className="text-xs text-red-600">Coba pilih tanggal lain</span>
+                            <span className="text-xs text-red-700 italic">Coba pilih tanggal lain</span>
                           )}
                           {availOfTipe.map((r) => {
                             const dipilih = selectedRooms.some((sr) => sr.id === r.id);
@@ -331,7 +327,7 @@ function BookingForm() {
                                 key={r.id}
                                 data-testid={`pb-room-${r.nomor}`}
                                 onClick={() => toggleRoom(r)}
-                                className={`px-3 py-1.5 text-xs font-bold border-2 rounded-md transition-colors ${dipilih ? "border-blue-600 bg-blue-600 text-white" : "border-blue-200 hover:border-blue-600 hover:bg-blue-50"}`}
+                                className={`px-3 py-1.5 text-xs font-bold border-2 rounded-full transition-colors ${dipilih ? "border-teal-deep bg-teal-deep text-cream" : "border-teal-deep/25 hover:border-teal-deep hover:bg-teal-deep/5"}`}
                               >
                                 {dipilih ? "✓ " : ""}Kamar {r.nomor}
                               </button>
@@ -344,20 +340,20 @@ function BookingForm() {
                 );
               })}
               {catalog.length === 0 && (
-                <div className="col-span-full text-center text-slate-500 py-10">Memuat katalog...</div>
+                <div className="col-span-full text-center text-teal-deep/60 py-10 font-display italic">Memuat katalog...</div>
               )}
             </div>
 
             {selectedRooms.length > 0 && (
               <div data-testid="pb-selected-bar" className="sticky bottom-4 z-10">
-                <Card className="border-blue-200 shadow-lg bg-blue-50/95 backdrop-blur">
+                <Card className="border-teal-deep/20 shadow-paper bg-paper/95 backdrop-blur">
                   <CardContent className="p-3 sm:p-4 flex items-center justify-between gap-3 flex-wrap">
-                    <div className="text-sm text-blue-900">
+                    <div className="text-sm text-teal-deep">
                       <b>{selectedRooms.length} kamar dipilih</b>: {selectedRooms.map((r) => r.nomor).join(", ")}
                     </div>
                     <div className="flex gap-2">
-                      <Button variant="ghost" size="sm" onClick={() => setSelectedRooms([])}>Batal</Button>
-                      <Button data-testid="pb-lanjutkan" className="bg-blue-700 hover:bg-blue-800" onClick={lanjutkanPilihKamar}>
+                      <Button variant="ghost" size="sm" className="text-teal-deep hover:bg-teal-deep/5" onClick={() => setSelectedRooms([])}>Batal</Button>
+                      <Button data-testid="pb-lanjutkan" className="rounded-full bg-teal-deep hover:bg-teal-deep/90 text-cream" onClick={lanjutkanPilihKamar}>
                         Lanjutkan ({selectedRooms.length} Kamar)
                       </Button>
                     </div>
@@ -371,10 +367,10 @@ function BookingForm() {
         {step === 2 && selectedRooms.length > 0 && summary && (
           <div className="grid md:grid-cols-[1fr_360px] gap-6">
             {/* Form */}
-            <Card className="border-slate-200">
+            <Card className="bg-paper border-teal-deep/15 shadow-paper-sm">
               <CardContent className="p-5 sm:p-6 space-y-4">
-                <button onClick={() => setStep(1)} className="text-sm text-blue-700 hover:underline">&larr; Pilih kamar lain</button>
-                <h2 className="text-2xl font-extrabold">Data Tamu</h2>
+                <button onClick={() => setStep(1)} className="text-sm text-teal-deep hover:underline">&larr; Pilih kamar lain</button>
+                <h2 className="font-display text-2xl font-bold text-teal-deep">Data Tamu</h2>
                 <FieldIcon icon={User} label="Nama Lengkap"><Input data-testid="pb-nama" value={form.nama_tamu} onChange={(e) => setForm(f => ({ ...f, nama_tamu: e.target.value }))} className="h-12" /></FieldIcon>
                 <FieldIcon icon={Phone} label="Nomor WhatsApp"><Input data-testid="pb-hp" placeholder="08xxxxxxxxxx" value={form.no_hp} onChange={(e) => setForm(f => ({ ...f, no_hp: e.target.value }))} className="h-12" /></FieldIcon>
                 <div>
@@ -391,7 +387,7 @@ function BookingForm() {
                       required
                     />
                   </FieldIcon>
-                  <p className="mt-1.5 text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded-md px-2.5 py-1.5">
+                  <p className="mt-1.5 text-[11px] text-mustard-deep bg-mustard/10 border border-mustard/30 rounded-md px-2.5 py-1.5">
                     <span className="font-bold">Wajib diisi</span> — bukti pembayaran & konfirmasi booking akan dikirim ke email ini.
                   </p>
                 </div>
@@ -405,46 +401,46 @@ function BookingForm() {
                 </FieldIcon>
                 {bookingTipe === "menginap" && (
                   <div>
-                    <Label className="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-1.5 block">Paket Kamar</Label>
+                    <Label className="text-xs font-semibold uppercase tracking-wider text-teal-deep/60 mb-1.5 block">Paket Kamar</Label>
                     <button
                       type="button"
                       data-testid="pb-sarapan-toggle"
                       onClick={() => setDenganSarapan((v) => !v)}
-                      className={`w-full flex items-center justify-between border rounded-lg p-3 text-left transition-colors ${denganSarapan ? "border-blue-600 bg-blue-50" : "border-slate-200 hover:border-slate-300"}`}
+                      className={`w-full flex items-center justify-between border rounded-lg p-3 text-left transition-colors ${denganSarapan ? "border-teal-deep bg-teal-deep/8" : "border-teal-deep/15 hover:border-teal-deep/30"}`}
                     >
                       <div>
-                        <div className="font-medium text-sm">Sarapan Pagi</div>
-                        <div className="text-xs text-slate-500">{fmtRp(BREAKFAST_PRICE)} / malam per kamar (opsional)</div>
+                        <div className="font-medium text-sm text-teal-deep">Sarapan Pagi</div>
+                        <div className="text-xs text-teal-deep/60">{fmtRp(BREAKFAST_PRICE)} / malam per kamar (opsional)</div>
                       </div>
-                      <div className={`w-5 h-5 rounded border-2 grid place-items-center shrink-0 ${denganSarapan ? "border-blue-600 bg-blue-600" : "border-slate-300"}`}>
-                        {denganSarapan && <CheckCircle2 className="w-3.5 h-3.5 text-white" />}
+                      <div className={`w-5 h-5 rounded border-2 grid place-items-center shrink-0 ${denganSarapan ? "border-teal-deep bg-teal-deep" : "border-teal-deep/30"}`}>
+                        {denganSarapan && <CheckCircle2 className="w-3.5 h-3.5 text-cream" />}
                       </div>
                     </button>
                   </div>
                 )}
                 <div>
-                  <Label className="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-1.5 block">Permintaan Khusus</Label>
+                  <Label className="text-xs font-semibold uppercase tracking-wider text-teal-deep/60 mb-1.5 block">Permintaan Khusus</Label>
                   <ExtraBedSelector value={extraBedQty} onChange={setExtraBedQty} max={EXTRA_BED_MAX} harga={EXTRA_BED_PRICE} satuan={selectedRooms.length > 1 ? "kamar" : "pemesanan"} />
                 </div>
                 <div>
-                  <Label className="text-xs font-semibold uppercase tracking-wider text-slate-500">Catatan (opsional)</Label>
+                  <Label className="text-xs font-semibold uppercase tracking-wider text-teal-deep/60">Catatan (opsional)</Label>
                   <Textarea data-testid="pb-catatan" value={form.catatan} onChange={(e) => setForm(f => ({ ...f, catatan: e.target.value }))} className="mt-1.5" rows={3} placeholder="Mis: request lantai bawah, late check-in, dll" />
                 </div>
               </CardContent>
             </Card>
 
             {/* Summary sidebar */}
-            <Card className="border-slate-200 h-fit md:sticky md:top-20">
+            <Card className="bg-paper border-teal-deep/15 shadow-paper-sm h-fit md:sticky md:top-20">
               <CardContent className="p-5 space-y-4">
                 <div>
-                  <div className="text-xs uppercase tracking-wider text-slate-500">Booking Anda</div>
+                  <div className="text-xs uppercase tracking-wider text-teal-deep/60">Booking Anda</div>
                   {selectedRooms.length === 1 ? (
-                    <div className="font-extrabold text-lg">{selectedRooms[0].tipe} • Kamar {selectedRooms[0].nomor}</div>
+                    <div className="font-display font-bold text-lg text-teal-deep">{selectedRooms[0].tipe} • Kamar {selectedRooms[0].nomor}</div>
                   ) : (
-                    <div className="font-extrabold text-lg" data-testid="pb-multi-room-summary">{selectedRooms.length} Kamar: {selectedRooms.map((r) => `${r.nomor} (${r.tipe})`).join(", ")}</div>
+                    <div className="font-display font-bold text-lg text-teal-deep" data-testid="pb-multi-room-summary">{selectedRooms.length} Kamar: {selectedRooms.map((r) => `${r.nomor} (${r.tipe})`).join(", ")}</div>
                   )}
                 </div>
-                <div className="space-y-2 text-sm border-t border-slate-100 pt-3">
+                <div className="space-y-2 text-sm border-t border-teal-deep/10 pt-3">
                   <Row icon={Calendar} label="Check-In" value={new Date(`${tanggal}T00:00:00`).toLocaleDateString("id-ID", { weekday: "short", day: "2-digit", month: "long", year: "numeric" })} />
                   {bookingTipe === "menginap" ? (
                     <>
@@ -456,36 +452,36 @@ function BookingForm() {
                   )}
                   {selectedRooms.length === 1 && <Row icon={Building2} label="Tipe" value={selectedRooms[0].tipe} />}
                 </div>
-                <div className="space-y-1.5 border-t border-slate-100 pt-3 text-sm">
-                  <div className="flex justify-between"><span className="text-slate-600">Tarif Kamar{bookingTipe === "menginap" ? ` × ${summary.nights} malam` : ""}{selectedRooms.length > 1 ? ` × ${selectedRooms.length} kamar` : ""}</span><b>{fmtRp(summary.tarifKamar)}</b></div>
+                <div className="space-y-1.5 border-t border-teal-deep/10 pt-3 text-sm">
+                  <div className="flex justify-between"><span className="text-teal-deep/70">Tarif Kamar{bookingTipe === "menginap" ? ` × ${summary.nights} malam` : ""}{selectedRooms.length > 1 ? ` × ${selectedRooms.length} kamar` : ""}</span><b className="text-teal-deep">{fmtRp(summary.tarifKamar)}</b></div>
                   {summary.breakfastTotal > 0 && (
-                    <div className="flex justify-between" data-testid="pb-breakfast-fee"><span className="text-slate-600">Sarapan Pagi × {summary.nights} malam{selectedRooms.length > 1 ? ` × ${selectedRooms.length} kamar` : ""}</span><b>{fmtRp(summary.breakfastTotal)}</b></div>
+                    <div className="flex justify-between" data-testid="pb-breakfast-fee"><span className="text-teal-deep/70">Sarapan Pagi × {summary.nights} malam{selectedRooms.length > 1 ? ` × ${selectedRooms.length} kamar` : ""}</span><b className="text-teal-deep">{fmtRp(summary.breakfastTotal)}</b></div>
                   )}
                   {extraBedQty > 0 && (
-                    <div className="flex justify-between" data-testid="pb-extra-bed-fee"><span className="text-slate-600">Extra Bed &times;{extraBedQty}{selectedRooms.length > 1 ? ` × ${selectedRooms.length} kamar` : ""}</span><b>{fmtRp(summary.extraBedTotal)}</b></div>
+                    <div className="flex justify-between" data-testid="pb-extra-bed-fee"><span className="text-teal-deep/70">Extra Bed &times;{extraBedQty}{selectedRooms.length > 1 ? ` × ${selectedRooms.length} kamar` : ""}</span><b className="text-teal-deep">{fmtRp(summary.extraBedTotal)}</b></div>
                   )}
-                  <div className="flex justify-between"><span className="text-slate-600">Service Fee (3%)</span><b data-testid="pb-service-fee">{fmtRp(summary.service_fee)}</b></div>
-                  <div className="flex justify-between text-base pt-1.5 border-t border-slate-200 mt-1.5"><span className="font-bold">Total</span><b className="text-blue-700" data-testid="pb-total">{fmtRp(summary.total)}</b></div>
+                  <div className="flex justify-between"><span className="text-teal-deep/70">Service Fee (3%)</span><b className="text-teal-deep" data-testid="pb-service-fee">{fmtRp(summary.service_fee)}</b></div>
+                  <div className="flex justify-between text-base pt-1.5 border-t border-teal-deep/15 mt-1.5"><span className="font-bold text-teal-deep">Total</span><b className="text-mustard-deep" data-testid="pb-total">{fmtRp(summary.total)}</b></div>
                 </div>
-                <div className="border-t border-slate-100 pt-3">
-                  <Label className="text-xs font-semibold uppercase tracking-wider text-slate-500">Opsi Pembayaran</Label>
+                <div className="border-t border-teal-deep/10 pt-3">
+                  <Label className="text-xs font-semibold uppercase tracking-wider text-teal-deep/60">Opsi Pembayaran</Label>
                   <div className="grid grid-cols-2 gap-2 mt-2">
-                    <button data-testid="pb-pay-dp50" type="button" onClick={() => setPaymentOption("dp50")} className={`p-3 rounded-lg border-2 text-left transition-colors ${paymentOption === "dp50" ? "border-blue-600 bg-blue-50" : "border-slate-200 hover:border-slate-300"}`}>
-                      <div className="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">DP 50%</div>
-                      <div className="font-extrabold text-blue-700" data-testid="pb-dp">{fmtRp(summary.dp_min)}</div>
-                      <div className="text-[10px] text-slate-500">Sisa di lokasi</div>
+                    <button data-testid="pb-pay-dp50" type="button" onClick={() => setPaymentOption("dp50")} className={`p-3 rounded-lg border-2 text-left transition-colors ${paymentOption === "dp50" ? "border-teal-deep bg-teal-deep/8" : "border-teal-deep/15 hover:border-teal-deep/30"}`}>
+                      <div className="text-[10px] uppercase tracking-wider text-teal-deep/60 font-semibold">DP 50%</div>
+                      <div className="font-bold text-teal-deep" data-testid="pb-dp">{fmtRp(summary.dp_min)}</div>
+                      <div className="text-[10px] text-teal-deep/50">Sisa di lokasi</div>
                     </button>
-                    <button data-testid="pb-pay-full" type="button" onClick={() => setPaymentOption("full")} className={`p-3 rounded-lg border-2 text-left transition-colors ${paymentOption === "full" ? "border-blue-600 bg-blue-50" : "border-slate-200 hover:border-slate-300"}`}>
-                      <div className="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">Bayar Penuh</div>
-                      <div className="font-extrabold text-blue-700">{fmtRp(summary.total)}</div>
-                      <div className="text-[10px] text-slate-500">Tanpa sisa</div>
+                    <button data-testid="pb-pay-full" type="button" onClick={() => setPaymentOption("full")} className={`p-3 rounded-lg border-2 text-left transition-colors ${paymentOption === "full" ? "border-teal-deep bg-teal-deep/8" : "border-teal-deep/15 hover:border-teal-deep/30"}`}>
+                      <div className="text-[10px] uppercase tracking-wider text-teal-deep/60 font-semibold">Bayar Penuh</div>
+                      <div className="font-bold text-teal-deep">{fmtRp(summary.total)}</div>
+                      <div className="text-[10px] text-teal-deep/50">Tanpa sisa</div>
                     </button>
                   </div>
                 </div>
-                <div className="border-t border-slate-100 pt-3">
-                  <Label className="text-xs font-semibold uppercase tracking-wider text-slate-500">Metode Pembayaran</Label>
+                <div className="border-t border-teal-deep/10 pt-3">
+                  <Label className="text-xs font-semibold uppercase tracking-wider text-teal-deep/60">Metode Pembayaran</Label>
                   {channels.length === 0 ? (
-                    <p className="text-xs text-slate-400 mt-2">Memuat metode pembayaran...</p>
+                    <p className="text-xs text-teal-deep/40 mt-2">Memuat metode pembayaran...</p>
                   ) : (
                     <div className="mt-2 space-y-3 max-h-64 overflow-y-auto pr-1" data-testid="pb-payment-methods">
                       {Object.entries(
@@ -496,7 +492,7 @@ function BookingForm() {
                         }, {})
                       ).map(([group, items]) => (
                         <div key={group}>
-                          <div className="text-[10px] uppercase tracking-wider text-slate-400 font-semibold mb-1">{group}</div>
+                          <div className="text-[10px] uppercase tracking-wider text-teal-deep/40 font-semibold mb-1">{group}</div>
                           <div className="grid grid-cols-2 gap-1.5">
                             {items.map((c) => (
                               <button
@@ -504,10 +500,10 @@ function BookingForm() {
                                 type="button"
                                 data-testid={`pb-method-${c.code}`}
                                 onClick={() => setMethod(c.code)}
-                                className={`flex items-center gap-2 p-2 rounded-lg border-2 text-left transition-colors ${method === c.code ? "border-blue-600 bg-blue-50" : "border-slate-200 hover:border-slate-300"}`}
+                                className={`flex items-center gap-2 p-2 rounded-lg border-2 text-left transition-colors ${method === c.code ? "border-teal-deep bg-teal-deep/8" : "border-teal-deep/15 hover:border-teal-deep/30"}`}
                               >
                                 <img src={c.icon_url} alt="" className="w-6 h-6 object-contain shrink-0" />
-                                <span className="text-xs font-medium truncate">{c.name}</span>
+                                <span className="text-xs font-medium truncate text-teal-deep">{c.name}</span>
                               </button>
                             ))}
                           </div>
@@ -516,10 +512,10 @@ function BookingForm() {
                     </div>
                   )}
                 </div>
-                <Button data-testid="pb-submit" disabled={submitting || !method} onClick={submit} className="w-full h-12 bg-gradient-to-r from-blue-700 to-blue-600 hover:from-blue-800 hover:to-blue-700 text-base font-bold">
+                <Button data-testid="pb-submit" disabled={submitting || !method} onClick={submit} className="w-full h-12 rounded-full bg-teal-deep hover:bg-teal-deep/90 text-cream text-base font-bold">
                   {submitting ? "Memproses..." : "Bayar Sekarang"} <ArrowRight className="w-4 h-4 ml-2" />
                 </Button>
-                <p className="text-[10px] text-center text-slate-500">
+                <p className="text-[10px] text-center text-teal-deep/50">
                   Dengan menekan tombol, Anda menyetujui kebijakan reservasi.
                   Pembatalan gratis sampai {bookingTipe === "menginap" ? "H-3" : "H-1"} sebelum check-in, setelah itu dikenakan biaya 10% dari total pembayaran.
                 </p>
@@ -529,13 +525,13 @@ function BookingForm() {
         )}
 
         {/* Footer info */}
-        <footer className="text-center text-xs text-slate-500 pt-8 border-t border-slate-200 space-y-2">
-          <p>Pelangi Homestay &middot; Bersantai di kaki Bedugul, Bali</p>
+        <footer className="text-center text-xs text-teal-deep/60 pt-8 border-t border-teal-deep/10 space-y-2">
+          <p className="font-semibold text-teal-deep">Pelangi Homestay &middot; Bersantai di kaki Bedugul, Bali</p>
           <p className="max-w-md mx-auto">{ALAMAT_HOMESTAY}</p>
           <a
             href={waLink(CS_WHATSAPP, "Halo, saya ingin bertanya tentang booking di Pelangi Homestay.")}
             target="_blank" rel="noreferrer"
-            className="inline-flex items-center gap-1.5 text-emerald-700 hover:text-emerald-800 font-semibold"
+            className="inline-flex items-center gap-1.5 text-leaf hover:text-teal-deep font-semibold"
           >
             <Phone className="w-3.5 h-3.5" /> Chat Admin/CS: {CS_WHATSAPP}
           </a>
@@ -547,7 +543,7 @@ function BookingForm() {
 
 function StepDot({ active, done, label }) {
   return (
-    <div className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full ${active ? "bg-blue-700 text-white" : "bg-slate-200 text-slate-600"}`}>
+    <div className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full ${active ? "bg-teal-deep text-cream" : "bg-teal-deep/10 text-teal-deep/60"}`}>
       <span className="w-1.5 h-1.5 rounded-full bg-current" />
       <span className="font-semibold">{label}</span>
       {done && <CheckCircle2 className="w-3 h-3" />}
@@ -558,7 +554,7 @@ function StepDot({ active, done, label }) {
 function FieldIcon({ icon: Icon, label, children }) {
   return (
     <div>
-      <Label className="text-xs font-semibold uppercase tracking-wider text-slate-500 inline-flex items-center gap-1.5"><Icon className="w-3 h-3" /> {label}</Label>
+      <Label className="text-xs font-semibold uppercase tracking-wider text-teal-deep/60 inline-flex items-center gap-1.5"><Icon className="w-3 h-3" /> {label}</Label>
       <div className="mt-1.5">{children}</div>
     </div>
   );
@@ -567,8 +563,8 @@ function FieldIcon({ icon: Icon, label, children }) {
 function Row({ icon: Icon, label, value }) {
   return (
     <div className="flex items-center justify-between gap-2">
-      <span className="inline-flex items-center gap-1.5 text-slate-600"><Icon className="w-3.5 h-3.5" /> {label}</span>
-      <b className="text-right">{value}</b>
+      <span className="inline-flex items-center gap-1.5 text-teal-deep/70"><Icon className="w-3.5 h-3.5" /> {label}</span>
+      <b className="text-right text-teal-deep">{value}</b>
     </div>
   );
 }
@@ -682,7 +678,7 @@ function BatalkanPesananDialog({ bk, open, onOpenChange, onCancelled }) {
               </Button>
             </>
           ) : (
-            <Button data-testid="batalkan-selesai" onClick={() => onOpenChange(false)} className="bg-blue-700 hover:bg-blue-800">Tutup</Button>
+            <Button data-testid="batalkan-selesai" onClick={() => onOpenChange(false)} className="bg-teal-deep hover:bg-teal-deep/90">Tutup</Button>
           )}
         </DialogFooter>
       </DialogContent>
@@ -748,7 +744,7 @@ function RetryBayarDialog({ bk, open, onOpenChange, channels }) {
                 type="button"
                 data-testid="retry-opsi-dp50"
                 onClick={() => setOpsi("dp50")}
-                className={`p-2.5 rounded-lg border-2 text-left text-xs ${opsi === "dp50" ? "border-blue-600 bg-blue-50" : "border-slate-200"}`}
+                className={`p-2.5 rounded-lg border-2 text-left text-xs ${opsi === "dp50" ? "border-teal-deep bg-teal-deep/8" : "border-slate-200"}`}
               >
                 <div className="font-semibold">DP 50%</div>
                 <div className="text-slate-500">{fmtRp(bk.dp_min)}</div>
@@ -757,7 +753,7 @@ function RetryBayarDialog({ bk, open, onOpenChange, channels }) {
                 type="button"
                 data-testid="retry-opsi-full"
                 onClick={() => setOpsi("full")}
-                className={`p-2.5 rounded-lg border-2 text-left text-xs ${opsi === "full" ? "border-blue-600 bg-blue-50" : "border-slate-200"}`}
+                className={`p-2.5 rounded-lg border-2 text-left text-xs ${opsi === "full" ? "border-teal-deep bg-teal-deep/8" : "border-slate-200"}`}
               >
                 <div className="font-semibold">Lunas</div>
                 <div className="text-slate-500">{fmtRp(bk.total)}</div>
@@ -765,13 +761,13 @@ function RetryBayarDialog({ bk, open, onOpenChange, channels }) {
             </div>
           </div>
           <div className="bg-slate-50 border border-slate-200 rounded p-2 flex justify-between">
-            <span className="font-bold">Total Ditagih</span><b className="text-blue-700">{fmtRp(nominal)}</b>
+            <span className="font-bold">Total Ditagih</span><b className="text-teal-deep">{fmtRp(nominal)}</b>
           </div>
           {error && <p className="text-red-600 text-xs" data-testid="retry-error">{error}</p>}
         </div>
         <DialogFooter>
           <Button variant="ghost" onClick={() => onOpenChange(false)} disabled={submitting}>Tutup</Button>
-          <Button data-testid="retry-bayar-submit" onClick={bayarLagi} disabled={!method || submitting} className="bg-blue-700 hover:bg-blue-800">
+          <Button data-testid="retry-bayar-submit" onClick={bayarLagi} disabled={!method || submitting} className="bg-teal-deep hover:bg-teal-deep/90">
             {submitting ? "Memproses…" : "Bayar Sekarang"}
           </Button>
         </DialogFooter>
@@ -838,7 +834,7 @@ function SuccessView({ bookingId: bookingIdFromUrl }) {
             >
               Hubungi CS via WhatsApp
             </a>
-            <Link to="/book" className="block text-sm text-blue-700 hover:underline">Buat booking baru</Link>
+            <Link to="/book" className="block text-sm text-teal-deep hover:underline">Buat booking baru</Link>
           </CardContent>
         </Card>
       </div>
@@ -902,7 +898,7 @@ function SuccessView({ bookingId: bookingIdFromUrl }) {
             {bk.extra_bed_qty > 0 && (
               <div className="flex justify-between" data-testid="pb-success-extra-bed"><span className="text-slate-500">Permintaan Khusus</span><b>Extra Bed &times;{bk.extra_bed_qty}{isGrouped ? " / kamar" : ""}</b></div>
             )}
-            <div className="flex justify-between border-t pt-2 mt-2"><span className="text-slate-500">Total{isGrouped ? " Semua Kamar" : ""}</span><b className="text-blue-700">{fmtRp(groupTotal)}</b></div>
+            <div className="flex justify-between border-t pt-2 mt-2"><span className="text-slate-500">Total{isGrouped ? " Semua Kamar" : ""}</span><b className="text-teal-deep">{fmtRp(groupTotal)}</b></div>
             <div className="flex justify-between"><span className="text-slate-500">DP Minimum</span><b>{fmtRp(groupDpMin)}</b></div>
             <div className="flex justify-between"><span className="text-slate-500">Status Pembayaran</span>
               <b data-testid="pb-success-paystatus" className={isDp ? "text-amber-600" : isPaid ? "text-emerald-600" : isFailed ? "text-red-600" : "text-amber-600"}>{STATUS_BAYAR_LABEL[statusBayar] || bk.payment_status?.toUpperCase()}</b>
@@ -922,7 +918,7 @@ function SuccessView({ bookingId: bookingIdFromUrl }) {
               type="button"
               data-testid="pb-coba-bayar-lagi"
               onClick={() => setRetryOpen(true)}
-              className="print:hidden inline-flex items-center justify-center gap-2 w-full px-4 h-11 rounded-md bg-blue-700 hover:bg-blue-800 text-white text-sm font-bold"
+              className="print:hidden inline-flex items-center justify-center gap-2 w-full px-4 h-11 rounded-md bg-teal-deep hover:bg-teal-deep/90 text-white text-sm font-bold"
             >
               Coba Bayar Lagi
             </button>
@@ -976,7 +972,7 @@ function SuccessView({ bookingId: bookingIdFromUrl }) {
               <Ban className="w-4 h-4" /> Batalkan Pesanan
             </button>
           )}
-          <Link to="/book" className="print:hidden block text-sm text-blue-700 hover:underline">Buat booking lain</Link>
+          <Link to="/book" className="print:hidden block text-sm text-teal-deep hover:underline">Buat booking lain</Link>
         </CardContent>
       </Card>
       <BatalkanPesananDialog bk={bk} open={cancelOpen} onOpenChange={setCancelOpen} onCancelled={setBk} />
