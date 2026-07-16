@@ -1,4 +1,5 @@
 from core import *
+from routes.push import send_push
 
 @api.post("/checkins")
 async def create_checkin(body: CheckinCreate, user: dict = Depends(get_current_user)):
@@ -164,6 +165,7 @@ async def checkout(checkin_id: str, body: CheckoutIn, user: dict = Depends(get_c
         "catatan": "",
         "status": "pending",
     })
+    await send_push("Kamar Perlu Dibersihkan", f"Kamar {c['room_nomor']}", url="/housekeeping", role="resepsionis")
     if c.get("guest_id"):
         await db.guests.update_one({"id": c["guest_id"]}, {"$inc": {"total_transaksi": calc["total"]}})
     await log_activity(user, "checkout", f"Check-out {c['nama_tamu']} kamar {c['room_nomor']}, total Rp{calc['total']:,}".replace(",", "."), entity=c["room_nomor"])

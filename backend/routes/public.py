@@ -1,6 +1,7 @@
 from core import *
 from reservation_service import check_room_available, create_reservation
 from email_service import generate_voucher_pdf, send_voucher_email
+from routes.push import send_push
 import httpx
 import io
 from fastapi.responses import StreamingResponse
@@ -211,7 +212,15 @@ async def public_create_booking(body: PublicBookingCreate):
         created.append(booking)
 
     if len(created) == 1:
+        total_rp = f"Rp{int(created[0].get('total', 0)):,}".replace(",", ".")
+        await send_push(
+            "Booking Baru", f"{body.nama_tamu} — Kamar {created[0].get('room_nomor', '-')} ({total_rp})",
+            url="/bookings",
+        )
         return created[0]
+    await send_push(
+        "Booking Baru", f"{body.nama_tamu} — {len(created)} kamar sekaligus", url="/bookings",
+    )
     return {"group_id": group_id, "bookings": created}
 
 def _batas_jam_bebas_biaya(tipe: str) -> int:

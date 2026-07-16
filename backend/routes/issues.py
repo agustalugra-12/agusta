@@ -1,4 +1,5 @@
 from core import *
+from routes.push import send_push
 
 # ---- Complaint & Maintenance ----
 # Satu collection `issues` dipakai untuk 2 tipe (complaint/maintenance) — modelnya identik
@@ -37,6 +38,7 @@ async def create_issue(body: IssueCreate, user: dict = Depends(get_current_user)
     await db.issues.insert_one(doc)
     label = "Komplain" if body.tipe == "complaint" else "Maintenance"
     await log_activity(user, "create_issue", f"{label} kamar {room_nomor or '-'}: {doc['deskripsi']}", entity=room_nomor)
+    await send_push(f"{label} Baru", f"Kamar {room_nomor or '-'}: {doc['deskripsi']}", url="/komplain")
     doc.pop("_id", None)
     return doc
 

@@ -1,4 +1,5 @@
 from core import *
+from routes.push import send_push
 
 # ---- Rooms ----
 @api.get("/rooms")
@@ -88,6 +89,7 @@ async def change_room_status(room_id: str, body: RoomStatusUpdate, user: dict = 
             "catatan": body.catatan or "",
             "status": "pending",
         })
+        await send_push("Kamar Perlu Dibersihkan", f"Kamar {r['nomor']}", url="/housekeeping", role="resepsionis")
     return {"ok": True}
 
 @api.post("/rooms/{room_id}/housekeeping-mulai")
@@ -170,6 +172,7 @@ async def move_room(room_id: str, body: MoveRoomBody, user: dict = Depends(get_c
         "tanggal": now_iso(), "jam_mulai": None, "jam_selesai": None,
         "petugas": "", "catatan": f"Pindah tamu ke kamar {new['nomor']}", "status": "pending",
     })
+    await send_push("Kamar Perlu Dibersihkan", f"Kamar {old['nomor']}", url="/housekeeping", role="resepsionis")
     await log_activity(
         user, "move_room",
         f"Pindah tamu kamar {old['nomor']} → kamar {new['nomor']} ({body.alasan or 'tanpa alasan'})",

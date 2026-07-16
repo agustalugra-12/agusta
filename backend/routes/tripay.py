@@ -1,5 +1,6 @@
 from core import *
 from email_service import generate_voucher_pdf, send_voucher_email
+from routes.push import send_push
 import hmac
 import httpx
 
@@ -259,4 +260,9 @@ async def tripay_callback(request: Request):
                         logging.getLogger("tripay").warning(
                             f"Gagal kirim voucher otomatis (Tripay) booking {gb['kode']}: {e}"
                         )
+                    await send_push(
+                        "Pembayaran Diterima",
+                        f"Booking {gb['kode']} - {gb.get('nama_tamu', '-')} - Kamar {gb.get('room_nomor', '-')} sudah dibayar",
+                        url="/bookings",
+                    )
     return {"success": True}

@@ -6,7 +6,65 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { UserCircle, Send } from "lucide-react";
+import { UserCircle, Send, Bell } from "lucide-react";
+import { isPushSupported, subscribeToPush, unsubscribeFromPush, getPushStatus } from "@/lib/pushNotifications";
+
+function PushNotifLink() {
+  const [status, setStatus] = useState(null);
+  const [loading, setLoading] = useState(false);
+
+  const cekStatus = () => getPushStatus().then(setStatus);
+  useEffect(() => { cekStatus(); }, []);
+
+  const aktifkan = async () => {
+    setLoading(true);
+    try {
+      await subscribeToPush();
+      toast.success("Notifikasi push diaktifkan");
+      cekStatus();
+    } catch (e) {
+      toast.error(e?.message || "Gagal mengaktifkan notifikasi");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const matikan = async () => {
+    try {
+      await unsubscribeFromPush();
+      toast.success("Notifikasi push dimatikan");
+      cekStatus();
+    } catch (e) {
+      toast.error(e?.message || "Gagal");
+    }
+  };
+
+  if (!status || !status.supported) return null;
+
+  return (
+    <Card className="border-slate-200">
+      <CardContent className="p-6 space-y-4">
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 rounded-full bg-amber-100 grid place-items-center"><Bell className="w-5 h-5 text-amber-600" /></div>
+          <div>
+            <div className="font-semibold">Notifikasi Push</div>
+            <div className="text-sm text-slate-500">Booking baru, pembayaran diterima, komplain, kamar perlu dibersihkan — walau tab PMS tidak dibuka.</div>
+          </div>
+        </div>
+        {status.subscribed ? (
+          <div className="flex items-center justify-between bg-emerald-50 border border-emerald-200 rounded-lg p-3">
+            <span className="text-sm font-medium text-emerald-700" data-testid="push-status-aktif">✓ Aktif di perangkat ini</span>
+            <Button size="sm" variant="outline" onClick={matikan} data-testid="push-matikan">Matikan</Button>
+          </div>
+        ) : (
+          <Button onClick={aktifkan} disabled={loading} data-testid="push-aktifkan" className="bg-amber-600 hover:bg-amber-700">
+            {loading ? "Mengaktifkan..." : "Aktifkan Notifikasi Push"}
+          </Button>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
 
 function TelegramLink() {
   const { user } = useAuth();
@@ -158,6 +216,7 @@ export default function Profil() {
         </CardContent>
       </Card>
 
+      <PushNotifLink />
       <TelegramLink />
     </div>
   );

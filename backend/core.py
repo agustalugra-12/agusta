@@ -64,6 +64,11 @@ TELEGRAM_STAFF_BOT_TOKEN = os.environ.get("TELEGRAM_STAFF_BOT_TOKEN", "")
 TELEGRAM_OWNER_WEBHOOK_SECRET = os.environ.get("TELEGRAM_OWNER_WEBHOOK_SECRET", "")
 TELEGRAM_STAFF_WEBHOOK_SECRET = os.environ.get("TELEGRAM_STAFF_WEBHOOK_SECRET", "")
 
+# ---- Web Push (notifikasi PWA — booking baru, pembayaran diterima, komplain, housekeeping) ----
+VAPID_PUBLIC_KEY = os.environ.get("VAPID_PUBLIC_KEY", "")
+VAPID_PRIVATE_KEY = os.environ.get("VAPID_PRIVATE_KEY", "")
+VAPID_CLAIM_EMAIL = os.environ.get("VAPID_CLAIM_EMAIL", "mailto:booking@pelangihomestay.com")
+
 # ---- Constants ----
 SERVICE_FEE_PCT = 0.03  # 3% service fee diaplikasikan ke checkin & booking
 EXTRA_BED_PRICE = 50000  # per extra bed, flat (PRD: "Extra Bed Rp 50.000 berlaku untuk kedua jenis layanan")

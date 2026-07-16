@@ -48,6 +48,8 @@ async def startup():
     await db.availability_logs.create_index("room_id")
     await db.availability_logs.create_index("changed_at")
     await db.integrations.create_index("provider", unique=True)
+    await db.push_subscriptions.create_index("endpoint", unique=True)
+    await db.push_subscriptions.create_index("user_id")
 
     # Seed users
     async def ensure_user(username, password, nama, role):

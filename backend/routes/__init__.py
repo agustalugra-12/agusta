@@ -28,3 +28,4 @@ from . import rates  # noqa: F401
 from . import tripay  # noqa: F401
 from . import issues  # noqa: F401
 from . import telegram_bot  # noqa: F401
+from . import push  # noqa: F401
