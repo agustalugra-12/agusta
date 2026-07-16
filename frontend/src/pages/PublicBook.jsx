@@ -209,6 +209,7 @@ function BookingForm() {
       <main className="max-w-5xl mx-auto px-4 sm:px-6 py-6 sm:py-10 space-y-8">
         {/* Hero */}
         <section className="text-center space-y-3">
+          <img src="/pelangi-logo.png" alt="Pelangi Homestay" className="h-20 sm:h-24 w-auto object-contain mx-auto mb-1" />
           <p className="text-xs uppercase tracking-[0.3em] text-mustard-deep font-semibold">Reservasi Online</p>
           <h1 className="font-display text-3xl sm:text-5xl font-bold tracking-tight text-teal-deep">
             Istirahat Sejenak di<br className="hidden sm:block" /> Sejuknya Bedugul
