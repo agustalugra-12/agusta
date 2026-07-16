@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Search, X, CreditCard, Plus, Copy, ExternalLink } from "lucide-react";
 import api, { fmtDateTime, fmtRp } from "@/lib/apiClient";
+import { useAuth } from "@/context/AuthContext";
 
 const STATUS_META = {
   settlement: { label: "Lunas", cls: "bg-emerald-100 text-emerald-800" },
@@ -181,6 +182,8 @@ function BuatTagihanDialog({ open, onOpenChange, onCreated }) {
 }
 
 export default function Pembayaran() {
+  const { user } = useAuth();
+  const isOwner = user?.role === "owner";
   const [searchParams] = useSearchParams();
   const [transactions, setTransactions] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -362,29 +365,31 @@ export default function Pembayaran() {
                 <div className="flex justify-between"><span className="font-bold">Nominal</span><b className="text-blue-700">{fmtRp(selected.gross_amount)}</b></div>
               </div>
 
-              <div className="border-t border-slate-100 pt-3 mt-1">
-                <Label htmlFor="ubah-status">Ubah Status (manual, staf)</Label>
-                <div className="flex gap-2 mt-1.5">
-                  <select
-                    id="ubah-status"
-                    data-testid="pembayaran-ubah-status"
-                    value={ubahStatus}
-                    onChange={(e) => setUbahStatus(e.target.value)}
-                    className="flex-1 h-10 rounded-md border border-slate-300 px-3 bg-white text-sm"
-                  >
-                    {UBAH_STATUS_OPTIONS.map((s) => <option key={s} value={s}>{STATUS_META[s]?.label || s}</option>)}
-                  </select>
-                  <Button
-                    data-testid="pembayaran-simpan-status"
-                    size="sm"
-                    disabled={ubahStatus === selected.transaction_status || savingStatus}
-                    onClick={simpanUbahStatus}
-                    className="bg-blue-700 hover:bg-blue-800 shrink-0"
-                  >
-                    {savingStatus ? "Menyimpan…" : "Simpan"}
-                  </Button>
+              {isOwner && (
+                <div className="border-t border-slate-100 pt-3 mt-1">
+                  <Label htmlFor="ubah-status">Ubah Status (manual, owner)</Label>
+                  <div className="flex gap-2 mt-1.5">
+                    <select
+                      id="ubah-status"
+                      data-testid="pembayaran-ubah-status"
+                      value={ubahStatus}
+                      onChange={(e) => setUbahStatus(e.target.value)}
+                      className="flex-1 h-10 rounded-md border border-slate-300 px-3 bg-white text-sm"
+                    >
+                      {UBAH_STATUS_OPTIONS.map((s) => <option key={s} value={s}>{STATUS_META[s]?.label || s}</option>)}
+                    </select>
+                    <Button
+                      data-testid="pembayaran-simpan-status"
+                      size="sm"
+                      disabled={ubahStatus === selected.transaction_status || savingStatus}
+                      onClick={simpanUbahStatus}
+                      className="bg-blue-700 hover:bg-blue-800 shrink-0"
+                    >
+                      {savingStatus ? "Menyimpan…" : "Simpan"}
+                    </Button>
+                  </div>
                 </div>
-              </div>
+              )}
 
               <div className="border-t border-slate-100 pt-3">
                 <p className="text-sm font-semibold text-slate-600 mb-2">Riwayat Pembayaran</p>

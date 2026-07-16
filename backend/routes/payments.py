@@ -12,9 +12,9 @@ VALID_PAYMENT_STATUSES = {"settlement", "pending", "expire", "deny", "cancel", "
 
 @api.put("/payments/log/{log_id}/status")
 async def update_payment_status_manual(log_id: str, body: PaymentStatusUpdateBody,
-                                        user: dict = Depends(get_current_user)):
-    """Ubah status transaksi payment_log secara manual oleh staf (halaman Pembayaran) —
-    mis. staf mengecek bukti transfer langsung, atau mengoreksi status yang salah.
+                                        user: dict = Depends(require_owner)):
+    """Ubah status transaksi payment_log secara manual — KHUSUS owner (keputusan bisnis:
+    resepsionis hanya boleh lihat/export laporan keuangan, tidak mengubahnya).
     Beda dari webhook gateway (otomatis, signature-verified): ini aksi manual staf,
     jadi status booking terkait ikut disesuaikan dengan pemetaan yang sama dipakai webhook."""
     if body.status not in VALID_PAYMENT_STATUSES:
