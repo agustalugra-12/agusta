@@ -82,6 +82,7 @@ export default function Laporan() {
           <TabsTrigger value="items" data-testid="tab-items">Item Terjual</TabsTrigger>
           <TabsTrigger value="top" data-testid="tab-top">Produk Terlaris</TabsTrigger>
           <TabsTrigger value="expenses" data-testid="tab-expenses">Pengeluaran</TabsTrigger>
+          <TabsTrigger value="shift" data-testid="tab-shift">Laporan Shift</TabsTrigger>
           <TabsTrigger value="service" data-testid="tab-service">Service</TabsTrigger>
           <TabsTrigger value="cancel" data-testid="tab-cancel">Cancel & No-Show</TabsTrigger>
           <TabsTrigger value="saluran" data-testid="tab-saluran">Analitik Saluran</TabsTrigger>
@@ -95,6 +96,7 @@ export default function Laporan() {
           <TabsContent value="kasir"><LaporanKasir from={from} to={to} /></TabsContent>
           <TabsContent value="items"><LaporanItems from={from} to={to} /></TabsContent>
           <TabsContent value="expenses"><LaporanExpenses from={from} to={to} /></TabsContent>
+          <TabsContent value="shift"><LaporanShift from={from} to={to} /></TabsContent>
           <TabsContent value="service"><LaporanService from={from} to={to} /></TabsContent>
           <TabsContent value="cancel"><LaporanCancel from={from} to={to} /></TabsContent>
           <TabsContent value="top"><TopProducts /></TabsContent>
@@ -422,6 +424,115 @@ function LaporanExpenses({ from, to }) {
               </tfoot>
             )}
           </table>
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
+function LaporanShift({ from, to }) {
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(false);
+  useEffect(() => {
+    setLoading(true);
+    api.get("/reports/shift", { params: { from_date: from, to_date: to } })
+      .then(r => setData(r.data))
+      .catch(() => setData(null))
+      .finally(() => setLoading(false));
+  }, [from, to]);
+
+  if (loading || !data) return <Card className="border-slate-200"><CardContent className="p-6 text-center text-slate-500">{loading ? "Memuat..." : "Data tidak tersedia"}</CardContent></Card>;
+
+  const perPetugas = data.per_petugas || [];
+  const rows = data.rows || [];
+
+  const exp = () => downloadCsv(`Laporan_Shift_${from}_${to}.csv`,
+    ["Tanggal", "Petugas", "Transaksi Kasir", "Total Kasir", "Check-In", "Check-Out", "Total Check-Out", "Pengeluaran Dicatat", "Total Pengeluaran", "Kamar Dibersihkan"],
+    rows.map(r => [r.tanggal, r.petugas, r.kasir_count, r.kasir_total, r.checkin_count, r.checkout_count, r.checkout_total, r.expense_count, r.expense_total, r.housekeeping_count]));
+
+  return (
+    <div className="space-y-4">
+      <p className="text-slate-500 text-sm">
+        Rangkuman aktivitas per petugas per hari — dirangkum dari jejak petugas yang sudah tercatat di kasir,
+        check-in/out, pengeluaran, dan housekeeping (sistem ini belum punya jam clock-in/clock-out shift asli).
+      </p>
+      <div className="flex justify-end">
+        <Button variant="outline" onClick={exp} data-testid="export-shift">Export CSV</Button>
+      </div>
+
+      <Card className="border-slate-200">
+        <CardContent className="p-5 space-y-3">
+          <h3 className="font-bold">Ringkasan per Petugas</h3>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead className="bg-slate-50 text-slate-600 text-xs uppercase">
+                <tr>
+                  <th className="text-left p-3">Petugas</th>
+                  <th className="text-right p-3">Trx Kasir</th>
+                  <th className="text-right p-3">Total Kasir</th>
+                  <th className="text-right p-3">Check-In</th>
+                  <th className="text-right p-3">Check-Out</th>
+                  <th className="text-right p-3">Total Check-Out</th>
+                  <th className="text-right p-3">Pengeluaran</th>
+                  <th className="text-right p-3">Kamar Dibersihkan</th>
+                </tr>
+              </thead>
+              <tbody data-testid="shift-petugas-tbody">
+                {perPetugas.map((p, i) => (
+                  <tr key={p.petugas} className="border-t border-slate-100" data-testid={`shift-petugas-row-${i}`}>
+                    <td className="p-3 font-semibold">{p.petugas}</td>
+                    <td className="p-3 text-right">{p.kasir_count}</td>
+                    <td className="p-3 text-right font-bold text-blue-700">{fmtRp(p.kasir_total)}</td>
+                    <td className="p-3 text-right">{p.checkin_count}</td>
+                    <td className="p-3 text-right">{p.checkout_count}</td>
+                    <td className="p-3 text-right font-bold text-emerald-700">{fmtRp(p.checkout_total)}</td>
+                    <td className="p-3 text-right text-red-600">{fmtRp(p.expense_total)} <span className="text-slate-400">({p.expense_count}x)</span></td>
+                    <td className="p-3 text-right">{p.housekeeping_count}</td>
+                  </tr>
+                ))}
+                {perPetugas.length === 0 && <tr><td colSpan={8} className="p-6 text-center text-slate-500">Tidak ada aktivitas dalam rentang ini</td></tr>}
+              </tbody>
+            </table>
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card className="border-slate-200">
+        <CardContent className="p-5 space-y-3">
+          <h3 className="font-bold">Detail per Hari</h3>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead className="bg-slate-50 text-slate-600 text-xs uppercase">
+                <tr>
+                  <th className="text-left p-3">Tanggal</th>
+                  <th className="text-left p-3">Petugas</th>
+                  <th className="text-right p-3">Trx Kasir</th>
+                  <th className="text-right p-3">Total Kasir</th>
+                  <th className="text-right p-3">Check-In</th>
+                  <th className="text-right p-3">Check-Out</th>
+                  <th className="text-right p-3">Total Check-Out</th>
+                  <th className="text-right p-3">Pengeluaran</th>
+                  <th className="text-right p-3">Kamar Dibersihkan</th>
+                </tr>
+              </thead>
+              <tbody data-testid="shift-detail-tbody">
+                {rows.map((r, i) => (
+                  <tr key={`${r.tanggal}-${r.petugas}-${i}`} className="border-t border-slate-100">
+                    <td className="p-3 text-xs">{r.tanggal}</td>
+                    <td className="p-3">{r.petugas}</td>
+                    <td className="p-3 text-right">{r.kasir_count}</td>
+                    <td className="p-3 text-right">{fmtRp(r.kasir_total)}</td>
+                    <td className="p-3 text-right">{r.checkin_count}</td>
+                    <td className="p-3 text-right">{r.checkout_count}</td>
+                    <td className="p-3 text-right">{fmtRp(r.checkout_total)}</td>
+                    <td className="p-3 text-right text-red-600">{fmtRp(r.expense_total)}</td>
+                    <td className="p-3 text-right">{r.housekeeping_count}</td>
+                  </tr>
+                ))}
+                {rows.length === 0 && <tr><td colSpan={9} className="p-6 text-center text-slate-500">Tidak ada aktivitas dalam rentang ini</td></tr>}
+              </tbody>
+            </table>
+          </div>
         </CardContent>
       </Card>
     </div>

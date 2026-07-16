@@ -494,3 +494,92 @@ async def report_top_products(period: str = Query("month"), limit: int = Query(1
             agg[key]["pendapatan"] += it["subtotal"]
     rows = sorted(agg.values(), key=lambda x: x["qty"], reverse=True)[:limit]
     return {"period": period, "rows": rows}
+
+@api.get("/reports/shift")
+async def report_shift(from_date: str = Query(...), to_date: str = Query(...),
+                        user: dict = Depends(get_current_user)):
+    """Laporan aktivitas per petugas per hari. Sistem ini tidak punya konsep clock-in/out
+    shift asli — laporan ini dirangkum dari jejak petugas yang sudah tercatat di tiap modul
+    (kasir, check-in/out, pengeluaran, housekeeping), dikelompokkan per tanggal + nama
+    petugas, supaya owner tetap bisa melihat kontribusi/aktivitas tiap staf per hari."""
+    start = from_date
+    end = to_date + "T23:59:59"
+
+    def bucket(iso: str) -> str:
+        return (iso or "")[:10]
+
+    def blank_row(tanggal: str, petugas: str) -> Dict[str, Any]:
+        return {
+            "tanggal": tanggal, "petugas": petugas,
+            "kasir_count": 0, "kasir_total": 0,
+            "checkin_count": 0,
+            "checkout_count": 0, "checkout_total": 0,
+            "expense_count": 0, "expense_total": 0,
+            "housekeeping_count": 0,
+        }
+
+    rows: Dict[tuple, Dict[str, Any]] = {}
+    def row(tanggal: str, petugas: str) -> Dict[str, Any]:
+        key = (tanggal, petugas or "-")
+        if key not in rows:
+            rows[key] = blank_row(tanggal, petugas or "-")
+        return rows[key]
+
+    kasir_docs = await db.kasir.find(
+        {"timestamp": {"$gte": start, "$lte": end}}, {"_id": 0, "timestamp": 1, "petugas": 1, "total": 1}
+    ).to_list(10000)
+    for k in kasir_docs:
+        r = row(bucket(k.get("timestamp")), k.get("petugas"))
+        r["kasir_count"] += 1
+        r["kasir_total"] += int(k.get("total") or 0)
+
+    checkin_docs = await db.checkins.find(
+        {"jam_checkin": {"$gte": start, "$lte": end}}, {"_id": 0, "jam_checkin": 1, "petugas_checkin": 1}
+    ).to_list(10000)
+    for c in checkin_docs:
+        r = row(bucket(c.get("jam_checkin")), c.get("petugas_checkin"))
+        r["checkin_count"] += 1
+
+    checkout_docs = await db.checkins.find(
+        {"jam_checkout": {"$gte": start, "$lte": end}}, {"_id": 0, "jam_checkout": 1, "petugas_checkout": 1, "total": 1}
+    ).to_list(10000)
+    for c in checkout_docs:
+        if not c.get("jam_checkout"):
+            continue
+        r = row(bucket(c["jam_checkout"]), c.get("petugas_checkout"))
+        r["checkout_count"] += 1
+        r["checkout_total"] += int(c.get("total") or 0)
+
+    expense_docs = await db.expenses.find(
+        {"tanggal": {"$gte": start, "$lte": end}}, {"_id": 0, "tanggal": 1, "user": 1, "nominal": 1}
+    ).to_list(10000)
+    for e in expense_docs:
+        r = row(bucket(e.get("tanggal")), e.get("user"))
+        r["expense_count"] += 1
+        r["expense_total"] += int(e.get("nominal") or 0)
+
+    hk_docs = await db.housekeeping_log.find(
+        {"jam_selesai": {"$gte": start, "$lte": end}, "status": "selesai"}, {"_id": 0, "jam_selesai": 1, "petugas": 1}
+    ).to_list(10000)
+    for h in hk_docs:
+        if not h.get("petugas"):
+            continue
+        r = row(bucket(h.get("jam_selesai")), h["petugas"])
+        r["housekeeping_count"] += 1
+
+    rows_list = sorted(rows.values(), key=lambda r: (r["tanggal"], r["petugas"]))
+
+    agg_fields = ["kasir_count", "kasir_total", "checkin_count", "checkout_count", "checkout_total",
+                  "expense_count", "expense_total", "housekeeping_count"]
+    per_petugas: Dict[str, Dict[str, Any]] = {}
+    for r in rows_list:
+        p = per_petugas.setdefault(r["petugas"], {"petugas": r["petugas"], **{f: 0 for f in agg_fields}})
+        for f in agg_fields:
+            p[f] += r[f]
+
+    return {
+        "from_date": from_date,
+        "to_date": to_date,
+        "rows": rows_list,
+        "per_petugas": sorted(per_petugas.values(), key=lambda p: p["kasir_total"] + p["checkout_total"], reverse=True),
+    }
