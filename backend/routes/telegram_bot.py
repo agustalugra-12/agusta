@@ -3,7 +3,19 @@ import asyncio
 import re
 import secrets as pysecrets
 import httpx
+from openai import OpenAI
 from routes.reports import report_summary, report_kas_metode_bayar
+
+_openai_client = OpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
+
+OWNER_AI_SYSTEM_PROMPT = """Kamu asisten pribadi owner Pelangi Homestay lewat Telegram — bukan
+robot pembaca laporan. Jawab natural, santai, kayak asisten manusia yang benar-benar paham
+kondisi hotel saat ini: boleh kasih insight singkat atau soroti hal yang perlu perhatian owner,
+bukan cuma menyalin ulang angka mentah. Jawab SESUAI pertanyaan owner (kalau dia tanya spesifik
+soal komplain, fokus jawab itu, tidak perlu dump semua angka). JANGAN PERNAH mengarang data yang
+tidak ada di konteks di bawah — kalau owner tanya sesuatu yang datanya tidak tersedia, jujur
+bilang belum ada datanya. Jawaban ringkas (maks beberapa paragraf pendek), enak dibaca di HP,
+Bahasa Indonesia santai tapi sopan."""
 
 # ---- Telegram Bot: owner (laporan ringkas on-demand) & staff (kirim pengeluaran foto+teks) ----
 # Dua bot terpisah (bukan satu bot dibedakan lewat role) sesuai yang user sudah buat sendiri
@@ -77,9 +89,9 @@ async def _unduh_foto_telegram(bot_token: str, file_id: str) -> Optional[str]:
         return None
 
 
-async def _ringkasan_owner_text() -> str:
-    """Ringkasan kondisi usaha untuk owner — dipanggil setiap owner kirim pesan apa pun
-    ke bot (bukan command tertentu, supaya tidak perlu hafal syntax)."""
+async def _ringkasan_owner_fallback_text() -> str:
+    """Fallback template kalau OPENAI_API_KEY belum/tidak dikonfigurasi — dipakai juga
+    sebagai bagian dari konteks yang disuplai ke AI (_kumpulkan_konteks_bisnis)."""
     s = await report_summary(user=_DUMMY_USER)
     today = datetime.now(timezone.utc).date().isoformat()
     kas = await report_kas_metode_bayar(from_date=today, to_date=today, user=_DUMMY_USER)
@@ -95,6 +107,78 @@ async def _ringkasan_owner_text() -> str:
         f"💸 Pengeluaran hari ini: {_rp(s['pengeluaran_hari_ini'])}\n\n"
         f"📈 Bulan ini: Pendapatan {_rp(s['pendapatan_bulan_ini'])} · Laba Bersih {_rp(s['laba_bersih_bulan_ini'])}"
     )
+
+
+async def _kumpulkan_konteks_bisnis() -> str:
+    """Snapshot kondisi bisnis yang lebih dalam dari sekadar angka pendapatan — dipasok ke
+    AI supaya owner bisa tanya apa saja (komplain, stok, housekeeping, dst) bukan cuma
+    laporan keuangan, dan jawabannya tetap akurat (bukan karangan AI)."""
+    s = await report_summary(user=_DUMMY_USER)
+    today = datetime.now(timezone.utc).date().isoformat()
+    kas = await report_kas_metode_bayar(from_date=today, to_date=today, user=_DUMMY_USER)
+    r = s["rooms"]
+
+    issues = await db.issues.find(
+        {"status": {"$in": ["open", "in_progress"]}}, {"_id": 0, "tipe": 1, "room_nomor": 1, "deskripsi": 1, "status": 1}
+    ).to_list(50)
+    issues_teks = "Tidak ada komplain/maintenance aktif." if not issues else "\n".join(
+        f"  - [{'Komplain' if it['tipe'] == 'complaint' else 'Maintenance'}] Kamar {it.get('room_nomor') or '-'}: {it['deskripsi']} (status: {it['status']})"
+        for it in issues
+    )
+
+    hk_antrian = await db.rooms.count_documents({"status": "perlu_dibersihkan"})
+
+    semua_produk = await db.products.find(
+        {"aktif": True}, {"_id": 0, "nama": 1, "kategori": 1, "stok": 1, "stok_minimal": 1}
+    ).sort("kategori", 1).to_list(200)
+    per_kategori: Dict[str, list] = {}
+    for p in semua_produk:
+        per_kategori.setdefault(p["kategori"], []).append(p)
+    stok_teks_parts = []
+    for kat, produk_list in per_kategori.items():
+        if kat == "laundry":
+            continue
+        detail = ", ".join(
+            f"{p['nama']} ({p['stok']}{' — MENIPIS' if p['stok'] < p.get('stok_minimal', 0) else ''})"
+            for p in produk_list
+        )
+        stok_teks_parts.append(f"  - {kat}: {detail}")
+    stok_teks = "\n".join(stok_teks_parts) if stok_teks_parts else "Belum ada data produk."
+
+    return (
+        f"Okupansi: {r.get('day_use', 0) + r.get('menginap', 0)}/{s['total_rooms']} kamar terisi "
+        f"(kosong {r.get('kosong', 0)}, dipesan hari ini {r.get('dipesan_hari_ini', 0)}, "
+        f"perlu dibersihkan {r.get('perlu_dibersihkan', 0)}, maintenance {r.get('maintenance', 0)})\n"
+        f"Tamu check-in hari ini: {s['tamu_hari_ini']}, check-out hari ini: {s['checkout_hari_ini']}\n"
+        f"Pendapatan hari ini: {_rp(s['pendapatan_hari_ini'])} "
+        f"(Tunai {_rp(kas['tunai'])}, QRIS {_rp(kas['qris'])}, Transfer {_rp(kas['transfer'])})\n"
+        f"Pendapatan service hari ini: {_rp(s['pendapatan_service_hari_ini'])}\n"
+        f"Pengeluaran hari ini: {_rp(s['pengeluaran_hari_ini'])}\n"
+        f"Bulan ini: Pendapatan {_rp(s['pendapatan_bulan_ini'])}, Laba Bersih {_rp(s['laba_bersih_bulan_ini'])}\n"
+        f"Kamar antre dibersihkan (housekeeping): {hk_antrian}\n"
+        f"Komplain & Maintenance aktif:\n{issues_teks}\n"
+        f"Stok produk (di luar laundry):\n{stok_teks}"
+    )
+
+
+async def _balasan_ai_owner(pesan_masuk: str) -> str:
+    if not _openai_client:
+        return await _ringkasan_owner_fallback_text()
+    konteks = await _kumpulkan_konteks_bisnis()
+    try:
+        resp = await asyncio.to_thread(
+            _openai_client.chat.completions.create,
+            model="gpt-4o-mini",
+            temperature=0.6,
+            messages=[
+                {"role": "system", "content": OWNER_AI_SYSTEM_PROMPT},
+                {"role": "user", "content": f"Data kondisi bisnis saat ini:\n{konteks}\n\nPesan owner: {pesan_masuk or '(owner buka chat tanpa pesan spesifik — kasih ringkasan singkat kondisi hari ini)'}"},
+            ],
+        )
+        return resp.choices[0].message.content
+    except Exception as e:
+        logging.getLogger("telegram_bot").warning(f"Gagal generate balasan AI owner: {e}")
+        return await _ringkasan_owner_fallback_text()
 
 
 async def _laporan_harian_text() -> str:
@@ -188,7 +272,7 @@ async def _handle_telegram_update(kind: str, request: Request):
         return {"ok": True}
 
     if kind == "owner":
-        await _kirim_pesan(token, chat_id, await _ringkasan_owner_text())
+        await _kirim_pesan(token, chat_id, await _balasan_ai_owner(text))
     else:
         photos = msg.get("photo")
         if photos:
