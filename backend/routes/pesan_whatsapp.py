@@ -4,8 +4,52 @@ import httpx
 from openai import OpenAI
 from fastapi.responses import PlainTextResponse
 from routes.public import public_availability
+from reservation_service import check_room_available
 
 _openai_client = OpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
+
+# Default operasional Day Use — belum ada UI Settings (keputusan 2026-07-16: hardcode dulu,
+# pindah ke pengaturan collection kalau memang perlu diubah tanpa deploy kode).
+DAYUSE_DURASI_JAM = 6
+BUFFER_HOUSEKEEPING_MENIT = 30
+WIB = timezone(timedelta(hours=7))  # konsisten dengan konvensi WIB di public.py/email_service.py/dll, walau Bali geografis WITA
+
+
+async def _rekomendasi_slot_kosong(tipe: str) -> Optional[str]:
+    """Kalau tipe kamar tertentu penuh SEKARANG, cari kamar dengan booking aktif yang
+    jam_selesai-nya paling dekat, tambah buffer housekeeping, lalu verifikasi slot Day Use
+    6 jam mulai dari situ tidak bentrok booking lain yang sudah terkonfirmasi (mis. tamu
+    menginap besok pagi) — pakai check_room_available yang sama dengan alur booking asli,
+    supaya rekomendasi AI tidak pernah menjanjikan slot yang sebenarnya sudah terisi.
+    Return None kalau tidak ada kandidat yang bisa diestimasi (staf harus dihubungi manual).
+    """
+    now = datetime.now(timezone.utc)
+    rooms = await db.rooms.find({"tipe": tipe}, {"_id": 0}).to_list(200)
+    kandidat = []
+    for r in rooms:
+        aktif = await db.bookings.find_one({
+            "room_id": r["id"],
+            "status": {"$in": ["aktif", "booking_paid", "checked_in"]},
+            "jam_mulai": {"$lte": now.isoformat()},
+            "jam_selesai": {"$gt": now.isoformat()},
+        }, sort=[("jam_selesai", 1)])
+        if not aktif or not aktif.get("jam_selesai"):
+            continue
+        siap_pakai = datetime.fromisoformat(aktif["jam_selesai"]) + timedelta(minutes=BUFFER_HOUSEKEEPING_MENIT)
+        usulan_selesai = siap_pakai + timedelta(hours=DAYUSE_DURASI_JAM)
+        try:
+            await check_room_available(r["id"], siap_pakai, usulan_selesai)
+        except HTTPException:
+            continue  # slot ini bentrok booking lain yang sudah terkonfirmasi, lewati
+        kandidat.append((siap_pakai, r["nomor"]))
+    if not kandidat:
+        return None
+    kandidat.sort(key=lambda x: x[0])
+    siap_pakai, nomor = kandidat[0]
+    jam_lokal = siap_pakai.astimezone(WIB)
+    return (f"Kamar {tipe} sedang penuh, tapi Kamar {nomor} diperkirakan siap dipakai lagi "
+            f"mulai pukul {jam_lokal.strftime('%H:%M')} WIB tanggal {jam_lokal.strftime('%d %B %Y')} "
+            f"(setelah tamu check-out & kamar selesai dibersihkan).")
 
 # ---- Pesan WhatsApp Otomatis / Pemantauan Status ----
 # Satu collection `wa_conversations` jadi sumber kebenaran untuk kedua nama fitur mirip
@@ -14,8 +58,10 @@ _openai_client = OpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
 
 AI_SYSTEM_PROMPT = """Kamu adalah asisten WhatsApp Pelangi Homestay. Jawab singkat, ramah,
 dalam Bahasa Indonesia, berdasarkan HANYA data ketersediaan & harga kamar yang diberikan.
-Jangan mengarang data yang tidak ada. Kalau pertanyaan di luar itu (pembatalan, komplain,
-dll), arahkan tamu menghubungi resepsionis."""
+Jangan mengarang data yang tidak ada. Kalau ada baris estimasi waktu kamar berikutnya kosong,
+sampaikan sebagai PERKIRAAN (bukan jaminan pasti) dan tawarkan bantu reservasikan untuk jam
+tersebut. Kalau pertanyaan di luar itu (pembatalan, komplain, dll), arahkan tamu menghubungi
+resepsionis."""
 
 
 async def _ringkasan_ketersediaan_untuk_ai() -> str:
@@ -28,6 +74,13 @@ async def _ringkasan_ketersediaan_untuk_ai() -> str:
             t["kosong"] += 1
     baris = [f"{tipe}: {v['kosong']}/{v['total']} kamar kosong sekarang, tarif Rp{v['tarif']:,}".replace(",", ".")
              for tipe, v in per_tipe.items()]
+    # Kalau ada tipe yang penuh (0 kosong), tambahkan estimasi kapan kamar berikutnya siap —
+    # supaya AI bisa jawab "penuh, tapi diperkirakan kosong jam X" alih-alih cuma "penuh".
+    for tipe, v in per_tipe.items():
+        if v["kosong"] == 0:
+            rekom = await _rekomendasi_slot_kosong(tipe)
+            if rekom:
+                baris.append(rekom)
     return "Ketersediaan kamar saat ini:\n" + "\n".join(baris)
 
 
@@ -286,6 +339,14 @@ async def balesotomatis_cek_ketersediaan(token: str, request: Request):
         teks = f"Mohon maaf, tidak ada kamar{keterangan_tipe} yang tersedia pada tanggal {tanggal}."
 
     return {"ok": True, "reply": teks, "message": teks, "balasan": teks, "text": teks, "response": teks, "output": teks}
+
+
+@api.get("/pesan-whatsapp/rekomendasi-slot")
+async def get_rekomendasi_slot(tipe: str, user: dict = Depends(get_current_user)):
+    """Endpoint staf untuk cek/tes manual apa yang akan AI sampaikan ke tamu kalau tipe
+    kamar ini penuh — dipakai juga untuk verifikasi logika tanpa perlu WhatsApp aktif."""
+    rekom = await _rekomendasi_slot_kosong(tipe)
+    return {"tipe": tipe, "rekomendasi": rekom}
 
 
 @api.get("/pesan-whatsapp/percakapan")
