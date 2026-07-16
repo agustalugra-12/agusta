@@ -1,5 +1,6 @@
 from core import *
 import asyncio
+import json
 import re
 import secrets as pysecrets
 import httpx
@@ -18,13 +19,25 @@ diringkas jadi cuma total), rapikan dalam list per baris. JANGAN PERNAH mengaran
 tidak ada di konteks di bawah — kalau owner tanya sesuatu yang datanya tidak tersedia, jujur
 bilang belum ada datanya.
 
-PENTING — batasan keras: kamu HANYA bisa MEMBACA & MELAPORKAN data, sama sekali TIDAK punya
-kemampuan mengubah apa pun di PMS (stok produk, status/booking kamar, catat pemasukan, atau
-data lain apa pun) — tidak peduli owner memintanya seperti apa. Kalau owner minta kamu ubah/
-tambah/hapus sesuatu, tolak dengan sopan dan arahkan untuk melakukannya langsung di dashboard
-PMS. Jangan pernah berpura-pura atau mengklaim sudah melakukan suatu perubahan.
+Catatan: pesan yang jelas-jelas berisi pengeluaran (nominal + keterangan) sudah otomatis
+tercatat sistem SEBELUM sampai ke kamu — kamu tidak perlu (dan tidak akan) diminta menanganinya.
+Pesan yang sampai ke kamu berarti bukan pengeluaran, atau owner sedang tanya balik soal itu.
+
+PENTING — batasan keras: kamu TIDAK bisa mengubah stok produk, status/booking kamar, atau
+mencatat pemasukan/income dalam bentuk apa pun — tidak peduli owner memintanya seperti apa.
+Kalau diminta itu, tolak dengan sopan dan arahkan ke dashboard PMS. Jangan pernah berpura-pura
+atau mengklaim sudah melakukan perubahan semacam itu.
 
 Jawaban enak dibaca di HP, Bahasa Indonesia santai tapi sopan."""
+
+EXPENSE_EXTRACT_PROMPT = """Kamu mengekstrak daftar PENGELUARAN (uang keluar/belanja/beban biaya)
+dari pesan staf/owner hotel. Balas HANYA JSON: {"items": [{"nominal": <integer rupiah>, "deskripsi": "<keterangan singkat>"}, ...]}.
+Satu pesan boleh berisi beberapa pengeluaran sekaligus — pisahkan jadi beberapa item.
+Nominal harus angka murni (tanpa "Rp", titik, atau koma pemisah ribuan) — kalau ditulis "500rb"
+atau "500 ribu" artinya 500000, "1jt"/"1 juta" artinya 1000000.
+Kalau pesan TIDAK menyebutkan pengeluaran sama sekali (pertanyaan, sapaan, obrolan biasa, atau
+justru menyebut PEMASUKAN/pendapatan bukan pengeluaran), balas {"items": []} — JANGAN mengarang
+nominal yang tidak jelas disebutkan di pesan."""
 
 # ---- Telegram Bot: owner (laporan ringkas on-demand) & staff (kirim pengeluaran foto+teks) ----
 # Dua bot terpisah (bukan satu bot dibedakan lewat role) sesuai yang user sudah buat sendiri
@@ -233,7 +246,62 @@ async def _laporan_harian_text() -> str:
 _NOMINAL_RE = re.compile(r"^\s*([\d.,]+)\s*(.*)$", re.DOTALL)
 
 
-async def _proses_pengeluaran_staff(user_doc: dict, file_id: str, caption: str) -> str:
+async def _catat_pengeluaran_items(user_doc: dict, items: list, foto_url: str = "") -> str:
+    """Satu-satunya jalur insert ke db.expenses dari bot Telegram (owner & staff) — sengaja
+    TIDAK PERNAH menyentuh db.bookings/kasir/payment_log, jadi struktural tidak mungkin
+    'pemasukan' tercatat lewat sini apa pun yang diminta/dikirim user."""
+    baris, total = [], 0
+    for it in items:
+        doc = {
+            "id": str(uuid.uuid4()), "tanggal": now_iso(), "kategori": "Operasional",
+            "deskripsi": it["deskripsi"], "nominal": it["nominal"], "foto_url": foto_url or "",
+            "user": user_doc["nama"], "user_id": user_doc["id"], "created_at": now_iso(),
+            "source": "telegram",
+        }
+        await db.expenses.insert_one(doc)
+        await log_activity(user_doc, "expense", f"Pengeluaran (Telegram) Operasional Rp{it['nominal']:,}".replace(",", "."))
+        baris.append(f"  - {it['deskripsi']}: {_rp(it['nominal'])}")
+        total += it["nominal"]
+    prefix = "✅ Pengeluaran tercatat:" if len(items) == 1 else f"✅ {len(items)} pengeluaran tercatat:"
+    teks = prefix + "\n" + "\n".join(baris)
+    if len(items) > 1:
+        teks += f"\n\nTotal: {_rp(total)}"
+    return teks
+
+
+async def _ekstrak_pengeluaran_dari_teks(text: str) -> list:
+    """Ekstrak 0/1/banyak item pengeluaran dari pesan bebas via AI (mis. "bensin 500rb,
+    service mobil 200rb"). List kosong berarti pesan bukan pengeluaran (pertanyaan/obrolan)."""
+    if not _openai_client or not text.strip():
+        return []
+    try:
+        resp = await asyncio.to_thread(
+            _openai_client.chat.completions.create,
+            model="gpt-4o-mini",
+            temperature=0,
+            response_format={"type": "json_object"},
+            messages=[
+                {"role": "system", "content": EXPENSE_EXTRACT_PROMPT},
+                {"role": "user", "content": text},
+            ],
+        )
+        data = json.loads(resp.choices[0].message.content or "{}")
+        out = []
+        for it in (data.get("items") or []):
+            try:
+                nominal = int(it.get("nominal"))
+                deskripsi = str(it.get("deskripsi") or "").strip()
+                if nominal > 0 and deskripsi:
+                    out.append({"nominal": nominal, "deskripsi": deskripsi})
+            except (TypeError, ValueError):
+                continue
+        return out
+    except Exception as e:
+        logging.getLogger("telegram_bot").warning(f"Gagal ekstrak pengeluaran dari teks: {e}")
+        return []
+
+
+async def _proses_pengeluaran_foto(user_doc: dict, bot_token: str, file_id: str, caption: str) -> str:
     caption = (caption or "").strip()
     m = _NOMINAL_RE.match(caption)
     if not m:
@@ -245,16 +313,11 @@ async def _proses_pengeluaran_staff(user_doc: dict, file_id: str, caption: str) 
     if nominal <= 0:
         return "Nominal harus lebih dari 0."
     deskripsi = m.group(2).strip() or "Pengeluaran via Telegram"
-    foto_url = await _unduh_foto_telegram(BOT_CONFIG["staff"]["token"], file_id)
-    doc = {
-        "id": str(uuid.uuid4()), "tanggal": now_iso(), "kategori": "Operasional",
-        "deskripsi": deskripsi, "nominal": nominal, "foto_url": foto_url or "",
-        "user": user_doc["nama"], "user_id": user_doc["id"], "created_at": now_iso(),
-        "source": "telegram",
-    }
-    await db.expenses.insert_one(doc)
-    await log_activity(user_doc, "expense", f"Pengeluaran (Telegram) Operasional Rp{nominal:,}".replace(",", "."))
-    return f"✅ Pengeluaran tercatat: {deskripsi} — {_rp(nominal)}" + ("" if foto_url else "\n(foto gagal diunduh, tapi pengeluaran tetap tercatat)")
+    foto_url = await _unduh_foto_telegram(bot_token, file_id)
+    teks = await _catat_pengeluaran_items(user_doc, [{"nominal": nominal, "deskripsi": deskripsi}], foto_url or "")
+    if not foto_url:
+        teks += "\n(foto gagal diunduh, tapi pengeluaran tetap tercatat)"
+    return teks
 
 
 async def _handle_link_code(kind: str, chat_id: Any, code: str) -> str:
@@ -270,8 +333,11 @@ async def _handle_link_code(kind: str, chat_id: Any, code: str) -> str:
         {"$set": {"telegram_chat_id": chat_id}, "$unset": {"telegram_link_code": "", "telegram_link_code_expires": ""}},
     )
     peran = "Owner" if role == "owner" else "Staff"
-    lanjutan = "Kirim pesan apa saja untuk lihat ringkasan bisnis kapan pun." if kind == "owner" \
-        else "Kirim foto struk dengan caption: <nominal> <keterangan> untuk catat pengeluaran."
+    lanjutan = (
+        "Tanya apa saja soal kondisi bisnis, atau kirim pengeluaran (teks/foto) — mis. \"bensin 500rb, service mobil 200rb\"."
+        if kind == "owner" else
+        "Kirim pengeluaran lewat teks (mis. \"50000 beli galon air\") atau foto struk dengan caption serupa."
+    )
     return f"✅ Berhasil terhubung sebagai {u['nama']} ({peran}).\n{lanjutan}"
 
 
@@ -303,16 +369,21 @@ async def _handle_telegram_update(kind: str, request: Request):
         await _kirim_pesan(token, chat_id, "Akun belum terhubung. Buat kode link dari halaman Profil di PMS, lalu kirim /start <kode> ke sini.")
         return {"ok": True}
 
-    if kind == "owner":
-        await _kirim_pesan(token, chat_id, await _balasan_ai_owner(text))
-    else:
-        photos = msg.get("photo")
-        if photos:
-            file_id = photos[-1]["file_id"]  # elemen terakhir = resolusi terbesar
-            reply = await _proses_pengeluaran_staff(u, file_id, msg.get("caption", ""))
+    photos = msg.get("photo")
+    if photos:
+        file_id = photos[-1]["file_id"]  # elemen terakhir = resolusi terbesar
+        reply = await _proses_pengeluaran_foto(u, token, file_id, msg.get("caption", ""))
+    elif text:
+        items = await _ekstrak_pengeluaran_dari_teks(text)
+        if items:
+            reply = await _catat_pengeluaran_items(u, items)
+        elif kind == "owner":
+            reply = await _balasan_ai_owner(text)
         else:
-            reply = "Kirim foto struk/nota dengan caption: <nominal> <keterangan>\nContoh: 50000 beli galon air"
-        await _kirim_pesan(token, chat_id, reply)
+            reply = "Kirim pengeluaran lewat teks, mis. \"50000 beli galon air\" (boleh lebih dari satu sekaligus), atau foto struk dengan caption serupa."
+    else:
+        reply = "Kirim teks atau foto struk untuk catat pengeluaran." if kind == "staff" else await _balasan_ai_owner("")
+    await _kirim_pesan(token, chat_id, reply)
     return {"ok": True}
 
 
