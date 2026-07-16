@@ -200,4 +200,81 @@ export function bookingConfirmationWaLink(b) {
   return waLink(b?.no_hp, buildBookingConfirmationMessage(b));
 }
 
+/**
+ * Build a plain-text WhatsApp receipt for a day-use check-out transaction
+ * (from CheckOut.jsx `done` state — POST /checkins/{id}/checkout response).
+ */
+export function buildCheckoutReceiptMessage(ci) {
+  if (!ci) return "";
+  const lines = [
+    `Halo *${ci.nama_tamu || "Tamu"}*,`,
+    "",
+    "Berikut bukti transaksi Anda di *Pelangi Homestay*.",
+    "",
+    "🧾 *Struk Check-Out*",
+    `• No. Transaksi: *${ci.trx_no}*`,
+    `• Kamar: *${ci.room_nomor}${ci.room_tipe ? ` (${ci.room_tipe})` : ""}*`,
+    `• Check-In: *${fmtDateTime(ci.jam_checkin)}*`,
+    `• Check-Out: *${fmtDateTime(ci.jam_checkout)}*`,
+    `• Durasi: *${ci.durasi_jam} jam*`,
+    "",
+    "💳 *Rincian Biaya*",
+    `• Tarif Dasar: ${fmtRp(ci.tarif_dasar)}`,
+  ];
+  if (ci.biaya_tambahan) lines.push(`• Overtime (${ci.overtime_jam} jam): ${fmtRp(ci.biaya_tambahan)}`);
+  lines.push(`• Subtotal: ${fmtRp(ci.subtotal ?? (ci.tarif_dasar + (ci.biaya_tambahan || 0)))}`);
+  if (ci.service_fee) lines.push(`• Service Fee (3%): ${fmtRp(ci.service_fee)}`);
+  lines.push(`• *TOTAL: ${fmtRp(ci.total)}*`, "");
+  if ((ci.pembayaran || []).length) {
+    lines.push("💰 *Pembayaran*");
+    for (const p of ci.pembayaran) lines.push(`• ${p.metode}: ${fmtRp(p.jumlah)}`);
+    lines.push("");
+  }
+  lines.push("Terima kasih atas kunjungan Anda. Sampai jumpa lagi! 😊");
+  return lines.join("\n");
+}
+
+/** Convenience: build the wa.me URL directly from a checkout result. */
+export function checkoutReceiptWaLink(ci) {
+  return waLink(ci?.no_hp, buildCheckoutReceiptMessage(ci));
+}
+
+/**
+ * Build a plain-text WhatsApp receipt for a POS/kasir transaction
+ * (from Kasir.jsx `last` state — POST /kasir response). Kasir sales have no
+ * guest identity by default, so the phone number is passed in separately
+ * (captured optionally in the UI at send time).
+ */
+export function buildKasirReceiptMessage(trx, namaPembeli = "") {
+  if (!trx) return "";
+  const lines = [
+    `Halo${namaPembeli ? ` *${namaPembeli}*` : ""},`,
+    "",
+    "Berikut bukti transaksi Anda di *Pelangi Homestay*.",
+    "",
+    "🧾 *Struk Transaksi*",
+    `• No. Transaksi: *${trx.trx_no}*`,
+    `• Waktu: *${fmtDateTime(trx.timestamp)}*`,
+    "",
+    "🛒 *Item*",
+    ...(trx.items || []).map((it) => `• ${it.nama} x${it.qty}: ${fmtRp(it.subtotal)}`),
+    "",
+    `• Subtotal: ${fmtRp(trx.subtotal)}`,
+  ];
+  if (trx.diskon) lines.push(`• Diskon: -${fmtRp(trx.diskon)}`);
+  lines.push(`• *TOTAL: ${fmtRp(trx.total)}*`, "");
+  if ((trx.pembayaran || []).length) {
+    lines.push("💰 *Pembayaran*");
+    for (const p of trx.pembayaran) lines.push(`• ${p.metode}: ${fmtRp(p.jumlah)}`);
+    lines.push("");
+  }
+  lines.push("Terima kasih atas kunjungan Anda. Sampai jumpa lagi! 😊");
+  return lines.join("\n");
+}
+
+/** Convenience: build the wa.me URL for a kasir transaction, given a phone number. */
+export function kasirReceiptWaLink(trx, phone, namaPembeli = "") {
+  return waLink(phone, buildKasirReceiptMessage(trx, namaPembeli));
+}
+
 export default api;

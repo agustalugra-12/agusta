@@ -1,17 +1,45 @@
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
-import api, { fmtRp, fmtDateTime } from "@/lib/apiClient";
+import api, { fmtRp, fmtDateTime, kasirReceiptWaLink } from "@/lib/apiClient";
+import { printViaBluetooth, isBluetoothPrintSupported, padRow, centerRow, divider } from "@/lib/blePrinter";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { ShoppingCart, Plus, Minus, Trash2, Printer } from "lucide-react";
+import { ShoppingCart, Plus, Minus, Trash2, Printer, MessageCircle, Bluetooth } from "lucide-react";
 
 const HOMESTAY_NAMA = "Pelangi Homestay";
 const HOMESTAY_ALAMAT = "Jl. Kebun Raya Bedugul, Candikuning, Kec. Baturiti, Tabanan - Bali";
 const METODE_LABEL = { tunai: "Tunai", transfer: "Transfer", qris: "QRIS" };
+
+function kasirBluetoothLines(trx) {
+  const lines = [
+    centerRow(HOMESTAY_NAMA), centerRow(HOMESTAY_ALAMAT),
+    divider(),
+    padRow("No. Transaksi", trx.trx_no),
+    padRow("Tanggal", fmtDateTime(trx.timestamp)),
+    padRow("Kasir", trx.petugas || "-"),
+    divider(),
+  ];
+  for (const it of trx.items) {
+    lines.push(`${it.qty} x ${it.nama}`);
+    lines.push(padRow("", fmtRp(it.subtotal)));
+  }
+  lines.push(divider());
+  lines.push(padRow("Subtotal", fmtRp(trx.subtotal)));
+  if (trx.diskon > 0) lines.push(padRow("Diskon", `-${fmtRp(trx.diskon)}`));
+  lines.push(padRow("TOTAL", fmtRp(trx.total)));
+  lines.push(divider());
+  for (const p of trx.pembayaran || []) {
+    lines.push(padRow(`Bayar (${METODE_LABEL[p.metode] || p.metode})`, fmtRp(p.jumlah)));
+  }
+  if (trx.catatan) { lines.push(divider()); lines.push(`Catatan: ${trx.catatan}`); }
+  lines.push(divider());
+  lines.push(centerRow("Terima kasih."));
+  return lines;
+}
 
 // Struk kasir — hanya terlihat saat print (hidden print:block), supaya window.print()
 // tidak ikut mencetak sidebar/katalog produk/keranjang seperti sebelumnya.
@@ -70,7 +98,10 @@ export default function Kasir() {
   const [diskon, setDiskon] = useState(0);
   const [catatan, setCatatan] = useState("");
   const [pays, setPays] = useState([{ metode: "tunai", jumlah: 0 }]);
+  const [namaPembeli, setNamaPembeli] = useState("");
+  const [noHpPembeli, setNoHpPembeli] = useState("");
   const [last, setLast] = useState(null);
+  const [lastBuyer, setLastBuyer] = useState(null);
   const [showCart, setShowCart] = useState(false);
 
   const load = async () => {
@@ -109,8 +140,10 @@ export default function Kasir() {
         pembayaran: pays.filter(p => Number(p.jumlah) > 0).map(p => ({ metode: p.metode, jumlah: Number(p.jumlah) })),
       });
       setLast(data);
+      setLastBuyer({ nama: namaPembeli, no_hp: noHpPembeli });
       toast.success(`Transaksi ${data.trx_no} berhasil`);
       setCart([]); setDiskon(0); setCatatan(""); setPays([{ metode: "tunai", jumlah: 0 }]);
+      setNamaPembeli(""); setNoHpPembeli("");
       setShowCart(false);
       load();
     } catch (e) { toast.error(e?.response?.data?.detail || "Gagal"); }
@@ -206,6 +239,16 @@ export default function Kasir() {
                 {kurang > 0 ? <span className="text-red-600">Kurang {fmtRp(kurang)}</span> : <span className="text-emerald-700">Lunas {kurang < 0 ? `(Kembalian ${fmtRp(-kurang)})` : ""}</span>}
               </div>
             </div>
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <Label className="text-xs">Nama Pembeli (opsional)</Label>
+                <Input data-testid="kasir-nama-pembeli" placeholder="Utk struk WA" value={namaPembeli} onChange={(e) => setNamaPembeli(e.target.value)} className="h-9 mt-1" />
+              </div>
+              <div>
+                <Label className="text-xs">No. HP (opsional)</Label>
+                <Input data-testid="kasir-no-hp-pembeli" placeholder="Utk kirim struk WA" value={noHpPembeli} onChange={(e) => setNoHpPembeli(e.target.value)} className="h-9 mt-1" />
+              </div>
+            </div>
             <Textarea data-testid="kasir-catatan" placeholder="Catatan (opsional)" value={catatan} onChange={(e) => setCatatan(e.target.value)} rows={2} />
             <Button data-testid="kasir-submit" onClick={submit} className="w-full h-12 bg-blue-700 hover:bg-blue-800 text-base">Bayar Sekarang</Button>
           </div>
@@ -219,9 +262,34 @@ export default function Kasir() {
               <div className="font-bold">Transaksi {last.trx_no} berhasil</div>
               <div className="text-sm text-slate-600">{last.items.length} item • {fmtRp(last.total)}</div>
             </div>
-            <Button data-testid="kasir-cetak-struk" variant="outline" onClick={() => { window.print(); }}>
-              <Printer className="w-4 h-4 mr-2" /> Cetak Struk
-            </Button>
+            <div className="flex gap-2 flex-wrap">
+              <Button data-testid="kasir-cetak-struk" variant="outline" onClick={() => { window.print(); }}>
+                <Printer className="w-4 h-4 mr-2" /> Cetak Struk
+              </Button>
+              {isBluetoothPrintSupported() && (
+                <Button
+                  data-testid="kasir-cetak-bluetooth"
+                  variant="outline"
+                  onClick={async () => {
+                    try {
+                      await printViaBluetooth(kasirBluetoothLines(last));
+                      toast.success("Terkirim ke printer Bluetooth");
+                    } catch (e) {
+                      toast.error(e?.message || "Gagal mencetak via Bluetooth");
+                    }
+                  }}
+                >
+                  <Bluetooth className="w-4 h-4 mr-2" /> Cetak Bluetooth
+                </Button>
+              )}
+              {lastBuyer?.no_hp && (
+                <a href={kasirReceiptWaLink(last, lastBuyer.no_hp, lastBuyer.nama)} target="_blank" rel="noreferrer">
+                  <Button data-testid="kasir-kirim-wa" variant="outline">
+                    <MessageCircle className="w-4 h-4 mr-2" /> Kirim Bukti Transaksi WA
+                  </Button>
+                </a>
+              )}
+            </div>
           </CardContent>
         </Card>
       )}

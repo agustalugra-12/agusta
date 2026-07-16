@@ -1,13 +1,38 @@
 import { useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { toast } from "sonner";
-import api, { fmtRp, fmtDateTime, waLink } from "@/lib/apiClient";
+import api, { fmtRp, fmtDateTime, checkoutReceiptWaLink } from "@/lib/apiClient";
+import { printViaBluetooth, isBluetoothPrintSupported, padRow, centerRow, divider } from "@/lib/blePrinter";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { ArrowLeft, Printer, MessageCircle } from "lucide-react";
+import { ArrowLeft, Printer, MessageCircle, Bluetooth } from "lucide-react";
+
+function checkoutBluetoothLines(ci) {
+  const lines = [
+    centerRow("PELANGI HOMESTAY"), centerRow("Struk Check-Out Day Use"),
+    divider(),
+    padRow("No", ci.trx_no),
+    padRow("Tamu", ci.nama_tamu),
+    padRow("Kamar", `${ci.room_nomor} (${ci.room_tipe})`),
+    padRow("Check-In", fmtDateTime(ci.jam_checkin)),
+    padRow("Check-Out", fmtDateTime(ci.jam_checkout)),
+    padRow("Durasi", `${ci.durasi_jam} jam`),
+    divider(),
+    padRow("Tarif Dasar", fmtRp(ci.tarif_dasar)),
+    padRow(`Overtime (${ci.overtime_jam} jam)`, fmtRp(ci.biaya_tambahan)),
+    padRow("Subtotal", fmtRp(ci.subtotal ?? (ci.tarif_dasar + (ci.biaya_tambahan || 0)))),
+    padRow("Service Fee (3%)", fmtRp(ci.service_fee || 0)),
+    padRow("TOTAL", fmtRp(ci.total)),
+    divider(),
+  ];
+  for (const p of ci.pembayaran || []) lines.push(padRow(p.metode, fmtRp(p.jumlah)));
+  lines.push(divider());
+  lines.push(centerRow("Terima kasih atas kunjungan Anda"));
+  return lines;
+}
 
 export default function CheckOut() {
   const { checkinId } = useParams();
@@ -86,9 +111,25 @@ export default function CheckOut() {
         <Receipt ci={done} />
         <div className="flex flex-col sm:flex-row gap-3 no-print">
           <Button onClick={() => window.print()} className="h-12 flex-1 bg-blue-700 hover:bg-blue-800"><Printer className="w-4 h-4 mr-2" /> Cetak Struk</Button>
+          {isBluetoothPrintSupported() && (
+            <Button
+              variant="outline"
+              className="h-12 flex-1"
+              onClick={async () => {
+                try {
+                  await printViaBluetooth(checkoutBluetoothLines(done));
+                  toast.success("Terkirim ke printer Bluetooth");
+                } catch (e) {
+                  toast.error(e?.message || "Gagal mencetak via Bluetooth");
+                }
+              }}
+            >
+              <Bluetooth className="w-4 h-4 mr-2" /> Cetak Bluetooth
+            </Button>
+          )}
           {done.no_hp && (
-            <a href={waLink(done.no_hp, `Terima kasih ${done.nama_tamu}, transaksi ${done.trx_no} total ${fmtRp(done.total)} telah selesai.`)} target="_blank" rel="noreferrer" className="flex-1">
-              <Button variant="outline" className="h-12 w-full"><MessageCircle className="w-4 h-4 mr-2" /> Kirim WhatsApp</Button>
+            <a href={checkoutReceiptWaLink(done)} target="_blank" rel="noreferrer" className="flex-1">
+              <Button variant="outline" className="h-12 w-full"><MessageCircle className="w-4 h-4 mr-2" /> Kirim Bukti Transaksi WA</Button>
             </a>
           )}
           <Button variant="outline" className="h-12" onClick={() => nav("/")}>Kembali</Button>
