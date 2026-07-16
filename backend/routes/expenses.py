@@ -9,6 +9,7 @@ async def create_expense(body: ExpenseCreate, user: dict = Depends(get_current_u
         "kategori": body.kategori,
         "deskripsi": body.deskripsi,
         "nominal": body.nominal,
+        "foto_url": body.foto_url or "",
         "user": user["nama"],
         "user_id": user["id"],
         "created_at": now_iso(),

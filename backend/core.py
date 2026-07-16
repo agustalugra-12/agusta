@@ -58,6 +58,12 @@ BREVO_API_KEY = os.environ.get("BREVO_API_KEY", "")
 BREVO_FROM_EMAIL = os.environ.get("BREVO_FROM_EMAIL", "")
 BREVO_FROM_NAME = os.environ.get("BREVO_FROM_NAME", "Pelangi Homestay")
 
+# ---- Telegram Bot (owner: laporan ringkas, staff: kirim pengeluaran foto+teks) ----
+TELEGRAM_OWNER_BOT_TOKEN = os.environ.get("TELEGRAM_OWNER_BOT_TOKEN", "")
+TELEGRAM_STAFF_BOT_TOKEN = os.environ.get("TELEGRAM_STAFF_BOT_TOKEN", "")
+TELEGRAM_OWNER_WEBHOOK_SECRET = os.environ.get("TELEGRAM_OWNER_WEBHOOK_SECRET", "")
+TELEGRAM_STAFF_WEBHOOK_SECRET = os.environ.get("TELEGRAM_STAFF_WEBHOOK_SECRET", "")
+
 # ---- Constants ----
 SERVICE_FEE_PCT = 0.03  # 3% service fee diaplikasikan ke checkin & booking
 EXTRA_BED_PRICE = 50000  # per extra bed, flat (PRD: "Extra Bed Rp 50.000 berlaku untuk kedua jenis layanan")
@@ -376,6 +382,7 @@ class ExpenseCreate(BaseModel):
     kategori: str
     deskripsi: str
     nominal: int
+    foto_url: Optional[str] = ""
 
 class ServiceCreate(BaseModel):
     tanggal: Optional[str] = None  # ISO datetime (auto now if None)

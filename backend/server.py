@@ -14,14 +14,17 @@ import asyncio
 import logging
 
 from fastapi import FastAPI
+from fastapi.staticfiles import StaticFiles
 from starlette.middleware.cors import CORSMiddleware
 
-from core import api, client, db, now_iso, hash_password, verify_password
+from core import api, client, db, now_iso, hash_password, verify_password, ROOT_DIR
 import routes  # noqa: F401  — importing registers all endpoints on `api`
 from routes.sinkronisasi_ketersediaan import background_sync_loop
 from routes.otomasi_email import background_gmail_fetch_loop
+from routes.telegram_bot import background_telegram_daily_report_loop
 
 app = FastAPI(title="Pelangi Homestay API")
+app.mount("/uploads", StaticFiles(directory=str(ROOT_DIR / "uploads")), name="uploads")
 
 @app.on_event("startup")
 async def startup():
@@ -126,6 +129,9 @@ async def startup():
     # Auto-fetch email Gmail OTA berkala (keputusan bisnis user 2026-07-12: reservasi baru
     # dibuat & modifikasi/pembatalan diproses otomatis tanpa staf klik "Cek Email Baru").
     asyncio.create_task(background_gmail_fetch_loop())
+
+    # Laporan akhir hari otomatis ke Telegram (owner & staff yang sudah terhubung), jam 22:00 WIB.
+    asyncio.create_task(background_telegram_daily_report_loop())
 
 
 @app.on_event("shutdown")
