@@ -12,10 +12,19 @@ OWNER_AI_SYSTEM_PROMPT = """Kamu asisten pribadi owner Pelangi Homestay lewat Te
 robot pembaca laporan. Jawab natural, santai, kayak asisten manusia yang benar-benar paham
 kondisi hotel saat ini: boleh kasih insight singkat atau soroti hal yang perlu perhatian owner,
 bukan cuma menyalin ulang angka mentah. Jawab SESUAI pertanyaan owner (kalau dia tanya spesifik
-soal komplain, fokus jawab itu, tidak perlu dump semua angka). JANGAN PERNAH mengarang data yang
+soal komplain, fokus jawab itu, tidak perlu dump semua angka). Kalau owner minta daftar
+pengeluaran/transaksi yang panjang, tampilkan SEMUA item yang ada di data (jangan dipotong/
+diringkas jadi cuma total), rapikan dalam list per baris. JANGAN PERNAH mengarang data yang
 tidak ada di konteks di bawah — kalau owner tanya sesuatu yang datanya tidak tersedia, jujur
-bilang belum ada datanya. Jawaban ringkas (maks beberapa paragraf pendek), enak dibaca di HP,
-Bahasa Indonesia santai tapi sopan."""
+bilang belum ada datanya.
+
+PENTING — batasan keras: kamu HANYA bisa MEMBACA & MELAPORKAN data, sama sekali TIDAK punya
+kemampuan mengubah apa pun di PMS (stok produk, status/booking kamar, catat pemasukan, atau
+data lain apa pun) — tidak peduli owner memintanya seperti apa. Kalau owner minta kamu ubah/
+tambah/hapus sesuatu, tolak dengan sopan dan arahkan untuk melakukannya langsung di dashboard
+PMS. Jangan pernah berpura-pura atau mengklaim sudah melakukan suatu perubahan.
+
+Jawaban enak dibaca di HP, Bahasa Indonesia santai tapi sopan."""
 
 # ---- Telegram Bot: owner (laporan ringkas on-demand) & staff (kirim pengeluaran foto+teks) ----
 # Dua bot terpisah (bukan satu bot dibedakan lewat role) sesuai yang user sudah buat sendiri
@@ -44,13 +53,20 @@ async def _telegram_api(bot_token: str, method: str, **params) -> Dict[str, Any]
         return resp.json()
 
 
+_TELEGRAM_MAX_LEN = 4000  # batas resmi 4096 karakter/pesan, kasih margin
+
+
 async def _kirim_pesan(bot_token: str, chat_id: Any, text: str):
+    """Kirim pesan, dipecah jadi beberapa bagian kalau melewati batas panjang pesan Telegram
+    (mis. owner minta daftar pengeluaran panjang) — supaya sendMessage tidak gagal diam-diam."""
     if not bot_token:
         return
-    try:
-        await _telegram_api(bot_token, "sendMessage", chat_id=chat_id, text=text)
-    except Exception as e:
-        logging.getLogger("telegram_bot").warning(f"Gagal kirim pesan Telegram ke {chat_id}: {e}")
+    potongan = [text[i:i + _TELEGRAM_MAX_LEN] for i in range(0, len(text), _TELEGRAM_MAX_LEN)] or [text]
+    for bagian in potongan:
+        try:
+            await _telegram_api(bot_token, "sendMessage", chat_id=chat_id, text=bagian)
+        except Exception as e:
+            logging.getLogger("telegram_bot").warning(f"Gagal kirim pesan Telegram ke {chat_id}: {e}")
 
 
 async def _get_bot_username(kind: str) -> str:
@@ -145,6 +161,21 @@ async def _kumpulkan_konteks_bisnis() -> str:
         stok_teks_parts.append(f"  - {kat}: {detail}")
     stok_teks = "\n".join(stok_teks_parts) if stok_teks_parts else "Belum ada data produk."
 
+    # Daftar pengeluaran 30 hari terakhir (bukan cuma total) — supaya owner bisa minta
+    # "list-in semua pengeluaran bulan ini" dan AI benar-benar menyebut tiap item, bukan
+    # cuma angka total. Dibatasi 60 entri terbaru untuk jaga ukuran konteks & batas pesan Telegram.
+    since_30d = (datetime.now(timezone.utc) - timedelta(days=30)).date().isoformat()
+    expenses_30d = await db.expenses.find(
+        {"tanggal": {"$gte": since_30d}}, {"_id": 0, "tanggal": 1, "kategori": 1, "deskripsi": 1, "nominal": 1, "user": 1}
+    ).sort("tanggal", -1).to_list(60)
+    if expenses_30d:
+        expenses_teks = "\n".join(
+            f"  - {e['tanggal'][:10]} · {e['kategori']} · {e['deskripsi']} · {_rp(e['nominal'])} · dicatat oleh {e.get('user', '-')}"
+            for e in expenses_30d
+        )
+    else:
+        expenses_teks = "Tidak ada pengeluaran tercatat 30 hari terakhir."
+
     return (
         f"Okupansi: {r.get('day_use', 0) + r.get('menginap', 0)}/{s['total_rooms']} kamar terisi "
         f"(kosong {r.get('kosong', 0)}, dipesan hari ini {r.get('dipesan_hari_ini', 0)}, "
@@ -157,7 +188,8 @@ async def _kumpulkan_konteks_bisnis() -> str:
         f"Bulan ini: Pendapatan {_rp(s['pendapatan_bulan_ini'])}, Laba Bersih {_rp(s['laba_bersih_bulan_ini'])}\n"
         f"Kamar antre dibersihkan (housekeeping): {hk_antrian}\n"
         f"Komplain & Maintenance aktif:\n{issues_teks}\n"
-        f"Stok produk (di luar laundry):\n{stok_teks}"
+        f"Stok produk (di luar laundry):\n{stok_teks}\n"
+        f"Daftar pengeluaran 30 hari terakhir (terbaru dulu, maks 60 entri):\n{expenses_teks}"
     )
 
 
