@@ -94,27 +94,30 @@ async def change_room_status(room_id: str, body: RoomStatusUpdate, user: dict = 
 
 @api.post("/rooms/{room_id}/housekeeping-mulai")
 async def housekeeping_mulai(room_id: str, user: dict = Depends(get_current_user)):
-    """Tandai kamar mulai dibersihkan (jam_mulai) — idempotent, tidak menimpa jam_mulai yang
-    sudah tercatat kalau tombol Mulai dipencet lebih dari sekali."""
+    """Tandai kamar mulai dibersihkan (jam_mulai + status Cleaning) — idempotent, tidak
+    menimpa jam_mulai yang sudah tercatat kalau tombol Mulai dipencet lebih dari sekali."""
     r = await db.rooms.find_one({"id": room_id})
     if not r:
         raise HTTPException(404, "Kamar tidak ditemukan")
     if r["status"] != "perlu_dibersihkan":
         raise HTTPException(400, "Kamar tidak dalam status Perlu Dibersihkan")
-    pending = await db.housekeeping_log.find_one({"room_id": room_id, "status": "pending"}, sort=[("tanggal", -1)])
+    pending = await db.housekeeping_log.find_one({"room_id": room_id, "status": {"$in": ["pending", "cleaning"]}}, sort=[("tanggal", -1)])
     if pending and not pending.get("jam_mulai"):
-        await db.housekeeping_log.update_one({"id": pending["id"]}, {"$set": {"jam_mulai": now_iso()}})
+        await db.housekeeping_log.update_one({"id": pending["id"]}, {"$set": {"jam_mulai": now_iso(), "status": "cleaning"}})
     return {"ok": True}
 
 @api.post("/rooms/{room_id}/housekeeping-done")
 async def housekeeping_done(room_id: str, body: HousekeepingDone, user: dict = Depends(get_current_user)):
+    """Tandai kamar selesai dibersihkan — status jadi Clean (belum Inspected) & kamar kembali
+    Kosong (siap dipakai lagi; Inspected sengaja tidak menahan ketersediaan kamar, cuma lapisan
+    QC tambahan untuk supervisor/owner — lihat housekeeping_inspect)."""
     r = await db.rooms.find_one({"id": room_id})
     if not r:
         raise HTTPException(404, "Kamar tidak ditemukan")
     if r["status"] != "perlu_dibersihkan":
         raise HTTPException(400, "Kamar tidak dalam status Perlu Dibersihkan")
     await db.rooms.update_one({"id": room_id}, {"$set": {"status": "kosong", "info": {}}})
-    pending = await db.housekeeping_log.find_one({"room_id": room_id, "status": "pending"}, sort=[("tanggal", -1)])
+    pending = await db.housekeeping_log.find_one({"room_id": room_id, "status": {"$in": ["pending", "cleaning"]}}, sort=[("tanggal", -1)])
     if pending:
         await db.housekeeping_log.update_one(
             {"id": pending["id"]},
@@ -122,10 +125,28 @@ async def housekeeping_done(room_id: str, body: HousekeepingDone, user: dict = D
                 "jam_selesai": now_iso(),
                 "petugas": body.petugas or user["nama"],
                 "catatan": body.catatan or pending.get("catatan", ""),
-                "status": "selesai",
+                "status": "clean",
             }}
         )
     await log_activity(user, "housekeeping_done", f"Kamar {r['nomor']} selesai dibersihkan", entity=r["nomor"])
+    return {"ok": True}
+
+@api.post("/rooms/{room_id}/housekeeping-inspect")
+async def housekeeping_inspect(room_id: str, user: dict = Depends(get_current_user)):
+    """Verifikasi kualitas (QC) kamar yang sudah Clean — status jadi Inspected. Tidak
+    mempengaruhi ketersediaan kamar (kamar sudah Kosong/bookable sejak status Clean),
+    murni pencatatan siapa & kapan kamar diperiksa ulang."""
+    r = await db.rooms.find_one({"id": room_id})
+    if not r:
+        raise HTTPException(404, "Kamar tidak ditemukan")
+    log = await db.housekeeping_log.find_one({"room_id": room_id, "status": "clean"}, sort=[("tanggal", -1)])
+    if not log:
+        raise HTTPException(400, "Tidak ada riwayat pembersihan berstatus Clean untuk kamar ini")
+    await db.housekeeping_log.update_one(
+        {"id": log["id"]},
+        {"$set": {"status": "inspected", "inspected_by": user["nama"], "inspected_at": now_iso()}}
+    )
+    await log_activity(user, "housekeeping_inspect", f"Kamar {r['nomor']} diverifikasi (Inspected)", entity=r["nomor"])
     return {"ok": True}
 
 @api.post("/rooms/{room_id}/move")

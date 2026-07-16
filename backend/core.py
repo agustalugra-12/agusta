@@ -408,10 +408,17 @@ class IssueCreate(BaseModel):
     room_id: Optional[str] = None
     room_nomor: Optional[str] = ""
     deskripsi: str
+    nama_tamu: Optional[str] = ""            # khusus complaint
+    prioritas: Optional[str] = "normal"      # khusus complaint: rendah | normal | tinggi
+    teknisi: Optional[str] = ""              # khusus maintenance
+    estimasi_selesai: Optional[str] = None   # khusus maintenance, ISO datetime
 
 class IssueStatusUpdate(BaseModel):
     status: str  # open | in_progress | resolved
     catatan_penyelesaian: Optional[str] = ""
+    teknisi: Optional[str] = None
+    estimasi_selesai: Optional[str] = None
+    prioritas: Optional[str] = None
 
 class MoveRoomBody(BaseModel):
     new_room_id: str

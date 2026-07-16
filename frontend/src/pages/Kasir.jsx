@@ -14,39 +14,45 @@ const HOMESTAY_NAMA = "Pelangi Homestay";
 const HOMESTAY_ALAMAT = "Jl. Kebun Raya Bedugul, Candikuning, Kec. Baturiti, Tabanan - Bali";
 const METODE_LABEL = { tunai: "Tunai", transfer: "Transfer", qris: "QRIS" };
 
-function kasirBluetoothLines(trx) {
+// Lebar kertas thermal dalam jumlah karakter/baris ESC-POS (font default printer) —
+// 58mm ~32 kolom, 80mm ~48 kolom, sesuai konvensi umum printer thermal generik.
+const PAPER_COLS = { "58": 32, "80": 48 };
+const PAPER_WIDTH_KEY = "kasir_paper_width";
+
+function kasirBluetoothLines(trx, kolom = 32) {
   const lines = [
-    centerRow(HOMESTAY_NAMA), centerRow(HOMESTAY_ALAMAT),
-    divider(),
-    padRow("No. Transaksi", trx.trx_no),
-    padRow("Tanggal", fmtDateTime(trx.timestamp)),
-    padRow("Kasir", trx.petugas || "-"),
-    divider(),
+    centerRow(HOMESTAY_NAMA, kolom), centerRow(HOMESTAY_ALAMAT, kolom),
+    divider(kolom),
+    padRow("No. Transaksi", trx.trx_no, kolom),
+    padRow("Tanggal", fmtDateTime(trx.timestamp), kolom),
+    padRow("Kasir", trx.petugas || "-", kolom),
+    divider(kolom),
   ];
   for (const it of trx.items) {
     lines.push(`${it.qty} x ${it.nama}`);
-    lines.push(padRow("", fmtRp(it.subtotal)));
+    lines.push(padRow("", fmtRp(it.subtotal), kolom));
   }
-  lines.push(divider());
-  lines.push(padRow("Subtotal", fmtRp(trx.subtotal)));
-  if (trx.diskon > 0) lines.push(padRow("Diskon", `-${fmtRp(trx.diskon)}`));
-  lines.push(padRow("TOTAL", fmtRp(trx.total)));
-  lines.push(divider());
+  lines.push(divider(kolom));
+  lines.push(padRow("Subtotal", fmtRp(trx.subtotal), kolom));
+  if (trx.diskon > 0) lines.push(padRow("Diskon", `-${fmtRp(trx.diskon)}`, kolom));
+  lines.push(padRow("TOTAL", fmtRp(trx.total), kolom));
+  lines.push(divider(kolom));
   for (const p of trx.pembayaran || []) {
-    lines.push(padRow(`Bayar (${METODE_LABEL[p.metode] || p.metode})`, fmtRp(p.jumlah)));
+    lines.push(padRow(`Bayar (${METODE_LABEL[p.metode] || p.metode})`, fmtRp(p.jumlah), kolom));
   }
-  if (trx.catatan) { lines.push(divider()); lines.push(`Catatan: ${trx.catatan}`); }
-  lines.push(divider());
-  lines.push(centerRow("Terima kasih."));
+  if (trx.catatan) { lines.push(divider(kolom)); lines.push(`Catatan: ${trx.catatan}`); }
+  lines.push(divider(kolom));
+  lines.push(centerRow("Terima kasih.", kolom));
   return lines;
 }
 
 // Struk kasir — hanya terlihat saat print (hidden print:block), supaya window.print()
-// tidak ikut mencetak sidebar/katalog produk/keranjang seperti sebelumnya.
-function Receipt({ trx }) {
+// tidak ikut mencetak sidebar/katalog produk/keranjang seperti sebelumnya. Lebar pakai
+// satuan mm (bukan px) supaya presisi mengikuti kertas thermal fisik 58mm/80mm saat dicetak.
+function Receipt({ trx, lebar }) {
   if (!trx) return null;
   return (
-    <div className="hidden print:block font-mono text-xs max-w-xs mx-auto">
+    <div className={`hidden print:block font-mono mx-auto ${lebar === "80" ? "text-sm" : "text-[11px]"}`} style={{ width: `${lebar}mm` }}>
       <div className="text-center space-y-0.5 mb-2">
         <div className="font-bold text-sm">{HOMESTAY_NAMA}</div>
         <div>{HOMESTAY_ALAMAT}</div>
@@ -103,6 +109,8 @@ export default function Kasir() {
   const [last, setLast] = useState(null);
   const [lastBuyer, setLastBuyer] = useState(null);
   const [showCart, setShowCart] = useState(false);
+  const [lebarKertas, setLebarKertas] = useState(() => localStorage.getItem(PAPER_WIDTH_KEY) || "58");
+  const gantiLebarKertas = (v) => { setLebarKertas(v); localStorage.setItem(PAPER_WIDTH_KEY, v); };
 
   const load = async () => {
     const { data } = await api.get("/products");
@@ -262,7 +270,19 @@ export default function Kasir() {
               <div className="font-bold">Transaksi {last.trx_no} berhasil</div>
               <div className="text-sm text-slate-600">{last.items.length} item • {fmtRp(last.total)}</div>
             </div>
-            <div className="flex gap-2 flex-wrap">
+            <div className="flex items-center gap-3 flex-wrap">
+              <div className="no-print flex items-center gap-1.5 text-xs text-slate-600">
+                <span>Kertas:</span>
+                <select
+                  data-testid="kasir-lebar-kertas"
+                  value={lebarKertas}
+                  onChange={(e) => gantiLebarKertas(e.target.value)}
+                  className="h-8 rounded-md border border-slate-300 px-2 bg-white"
+                >
+                  <option value="58">58mm</option>
+                  <option value="80">80mm</option>
+                </select>
+              </div>
               <Button data-testid="kasir-cetak-struk" variant="outline" onClick={() => { window.print(); }}>
                 <Printer className="w-4 h-4 mr-2" /> Cetak Struk
               </Button>
@@ -272,7 +292,7 @@ export default function Kasir() {
                   variant="outline"
                   onClick={async () => {
                     try {
-                      await printViaBluetooth(kasirBluetoothLines(last));
+                      await printViaBluetooth(kasirBluetoothLines(last, PAPER_COLS[lebarKertas]));
                       toast.success("Terkirim ke printer Bluetooth");
                     } catch (e) {
                       toast.error(e?.message || "Gagal mencetak via Bluetooth");
@@ -294,7 +314,7 @@ export default function Kasir() {
         </Card>
       )}
 
-      <Receipt trx={last} />
+      <Receipt trx={last} lebar={lebarKertas} />
     </div>
   );
 }

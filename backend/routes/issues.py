@@ -8,6 +8,7 @@ from routes.push import send_push
 # menyusul di fase AI booking recommendation — endpoint ini dulu untuk pencatatan manual staf.
 ISSUE_TIPE = {"complaint", "maintenance"}
 ISSUE_STATUS = {"open", "in_progress", "resolved"}
+ISSUE_PRIORITAS = {"rendah", "normal", "tinggi"}
 
 @api.post("/issues")
 async def create_issue(body: IssueCreate, user: dict = Depends(get_current_user)):
@@ -15,6 +16,9 @@ async def create_issue(body: IssueCreate, user: dict = Depends(get_current_user)
         raise HTTPException(400, "Tipe harus 'complaint' atau 'maintenance'")
     if not body.deskripsi or not body.deskripsi.strip():
         raise HTTPException(400, "Deskripsi wajib diisi")
+    prioritas = body.prioritas or "normal"
+    if prioritas not in ISSUE_PRIORITAS:
+        raise HTTPException(400, f"Prioritas harus salah satu dari: {', '.join(sorted(ISSUE_PRIORITAS))}")
     room_nomor = (body.room_nomor or "").strip()
     if body.room_id:
         r = await db.rooms.find_one({"id": body.room_id})
@@ -29,6 +33,10 @@ async def create_issue(body: IssueCreate, user: dict = Depends(get_current_user)
         "deskripsi": body.deskripsi.strip(),
         "status": "open",
         "catatan_penyelesaian": "",
+        "nama_tamu": (body.nama_tamu or "").strip(),
+        "prioritas": prioritas,
+        "teknisi": (body.teknisi or "").strip(),
+        "estimasi_selesai": body.estimasi_selesai,
         "created_by": user["nama"],
         "created_by_id": user["id"],
         "created_at": now_iso(),
@@ -59,6 +67,14 @@ async def update_issue_status(issue_id: str, body: IssueStatusUpdate, user: dict
     if not it:
         raise HTTPException(404, "Data tidak ditemukan")
     updates: Dict[str, Any] = {"status": body.status, "catatan_penyelesaian": body.catatan_penyelesaian or it.get("catatan_penyelesaian", "")}
+    if body.teknisi is not None:
+        updates["teknisi"] = body.teknisi.strip()
+    if body.estimasi_selesai is not None:
+        updates["estimasi_selesai"] = body.estimasi_selesai
+    if body.prioritas is not None:
+        if body.prioritas not in ISSUE_PRIORITAS:
+            raise HTTPException(400, f"Prioritas harus salah satu dari: {', '.join(sorted(ISSUE_PRIORITAS))}")
+        updates["prioritas"] = body.prioritas
     if body.status == "resolved":
         updates["resolved_by"] = user["nama"]
         updates["resolved_at"] = now_iso()

@@ -34,6 +34,7 @@ function DateRange({ from, setFrom, to, setTo }) {
     if (p === "7") { setFrom(daysAgo(6)); setTo(today()); }
     if (p === "30") { setFrom(daysAgo(29)); setTo(today()); }
     if (p === "month") { const d = new Date(); setFrom(new Date(d.getFullYear(), d.getMonth(), 1).toISOString().slice(0, 10)); setTo(today()); }
+    if (p === "year") { const d = new Date(); setFrom(new Date(d.getFullYear(), 0, 1).toISOString().slice(0, 10)); setTo(today()); }
   };
   return (
     <Card className="border-slate-200">
@@ -41,10 +42,11 @@ function DateRange({ from, setFrom, to, setTo }) {
         <div className="flex-1"><Label>Dari</Label><Input type="date" value={from} onChange={(e) => setFrom(e.target.value)} className="h-11 mt-1.5" /></div>
         <div className="flex-1"><Label>Sampai</Label><Input type="date" value={to} onChange={(e) => setTo(e.target.value)} className="h-11 mt-1.5" /></div>
         <div className="flex gap-2 flex-wrap">
-          <Button variant="outline" size="sm" onClick={() => set("today")}>Hari Ini</Button>
-          <Button variant="outline" size="sm" onClick={() => set("7")}>7 Hari</Button>
+          <Button variant="outline" size="sm" onClick={() => set("today")}>Harian</Button>
+          <Button variant="outline" size="sm" onClick={() => set("7")}>Mingguan</Button>
           <Button variant="outline" size="sm" onClick={() => set("30")}>30 Hari</Button>
-          <Button variant="outline" size="sm" onClick={() => set("month")}>Bulan Ini</Button>
+          <Button variant="outline" size="sm" onClick={() => set("month")}>Bulanan</Button>
+          <Button variant="outline" size="sm" onClick={() => set("year")}>Tahunan</Button>
         </div>
       </CardContent>
     </Card>

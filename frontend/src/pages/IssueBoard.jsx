@@ -3,6 +3,7 @@ import { toast } from "sonner";
 import api, { fmtDateTime } from "@/lib/apiClient";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { useAuth } from "@/context/AuthContext";
 import { Trash2 } from "lucide-react";
@@ -13,6 +14,12 @@ const STATUS_CLS = {
   in_progress: "bg-amber-100 text-amber-700",
   resolved: "bg-emerald-100 text-emerald-700",
 };
+const PRIORITAS_LABEL = { rendah: "Rendah", normal: "Normal", tinggi: "Tinggi" };
+const PRIORITAS_CLS = {
+  rendah: "bg-slate-100 text-slate-600",
+  normal: "bg-blue-100 text-blue-700",
+  tinggi: "bg-red-100 text-red-700",
+};
 
 export default function IssueBoard({ tipe, title, subtitle }) {
   const { user } = useAuth();
@@ -22,6 +29,10 @@ export default function IssueBoard({ tipe, title, subtitle }) {
   const [statusFilter, setStatusFilter] = useState("");
   const [roomId, setRoomId] = useState("");
   const [deskripsi, setDeskripsi] = useState("");
+  const [namaTamu, setNamaTamu] = useState("");
+  const [prioritas, setPrioritas] = useState("normal");
+  const [teknisi, setTeknisi] = useState("");
+  const [estimasiSelesai, setEstimasiSelesai] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
   const load = async () => {
@@ -39,9 +50,13 @@ export default function IssueBoard({ tipe, title, subtitle }) {
     setSubmitting(true);
     try {
       const room = rooms.find(r => r.id === roomId);
-      await api.post("/issues", { tipe, room_id: roomId || null, room_nomor: room?.nomor || "", deskripsi: deskripsi.trim() });
+      await api.post("/issues", {
+        tipe, room_id: roomId || null, room_nomor: room?.nomor || "", deskripsi: deskripsi.trim(),
+        ...(tipe === "complaint" ? { nama_tamu: namaTamu.trim(), prioritas } : {}),
+        ...(tipe === "maintenance" ? { teknisi: teknisi.trim(), estimasi_selesai: estimasiSelesai || null } : {}),
+      });
       toast.success("Tercatat");
-      setDeskripsi(""); setRoomId("");
+      setDeskripsi(""); setRoomId(""); setNamaTamu(""); setPrioritas("normal"); setTeknisi(""); setEstimasiSelesai("");
       load();
     } catch (e) { toast.error(e?.response?.data?.detail || "Gagal"); }
     finally { setSubmitting(false); }
@@ -95,6 +110,26 @@ export default function IssueBoard({ tipe, title, subtitle }) {
               rows={2}
             />
           </div>
+          {tipe === "complaint" ? (
+            <div className="grid sm:grid-cols-2 gap-3">
+              <Input data-testid="issue-nama-tamu" value={namaTamu} onChange={(e) => setNamaTamu(e.target.value)} placeholder="Nama tamu (opsional)" />
+              <select
+                data-testid="issue-prioritas"
+                value={prioritas}
+                onChange={(e) => setPrioritas(e.target.value)}
+                className="h-10 rounded-md border border-slate-300 px-3 bg-white text-sm"
+              >
+                <option value="rendah">Prioritas: Rendah</option>
+                <option value="normal">Prioritas: Normal</option>
+                <option value="tinggi">Prioritas: Tinggi</option>
+              </select>
+            </div>
+          ) : (
+            <div className="grid sm:grid-cols-2 gap-3">
+              <Input data-testid="issue-teknisi" value={teknisi} onChange={(e) => setTeknisi(e.target.value)} placeholder="Teknisi (opsional)" />
+              <Input data-testid="issue-estimasi" type="datetime-local" value={estimasiSelesai} onChange={(e) => setEstimasiSelesai(e.target.value)} placeholder="Estimasi selesai" />
+            </div>
+          )}
           <Button data-testid="issue-submit" onClick={buat} disabled={submitting} className="bg-blue-700 hover:bg-blue-800">
             {submitting ? "Menyimpan..." : "Simpan"}
           </Button>
@@ -113,9 +148,21 @@ export default function IssueBoard({ tipe, title, subtitle }) {
             <CardContent className="p-4 space-y-2">
               <div className="flex items-start justify-between gap-2">
                 <div className="font-bold">{it.room_nomor ? `Kamar ${it.room_nomor}` : "Umum"}</div>
-                <span className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded-full shrink-0 ${STATUS_CLS[it.status]}`}>{STATUS_LABEL[it.status]}</span>
+                <div className="flex gap-1 shrink-0">
+                  {tipe === "complaint" && it.prioritas && (
+                    <span className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded-full ${PRIORITAS_CLS[it.prioritas]}`}>{PRIORITAS_LABEL[it.prioritas]}</span>
+                  )}
+                  <span className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded-full ${STATUS_CLS[it.status]}`}>{STATUS_LABEL[it.status]}</span>
+                </div>
               </div>
+              {tipe === "complaint" && it.nama_tamu && <div className="text-xs text-slate-500">Tamu: <b>{it.nama_tamu}</b></div>}
               <p className="text-sm text-slate-700">{it.deskripsi}</p>
+              {tipe === "maintenance" && (it.teknisi || it.estimasi_selesai) && (
+                <div className="text-xs text-slate-500 space-y-0.5">
+                  {it.teknisi && <div>Teknisi: <b>{it.teknisi}</b></div>}
+                  {it.estimasi_selesai && <div>Estimasi selesai: <b>{fmtDateTime(it.estimasi_selesai)}</b></div>}
+                </div>
+              )}
               {it.catatan_penyelesaian && (
                 <p className="text-xs text-slate-500 bg-slate-50 border border-slate-200 rounded p-2">Catatan: {it.catatan_penyelesaian}</p>
               )}

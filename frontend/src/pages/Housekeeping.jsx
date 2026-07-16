@@ -27,7 +27,7 @@ export default function Housekeeping() {
     });
     setLogs(l.data);
     const pendingMap = {};
-    l.data.filter(x => x.status === "pending").forEach(x => {
+    l.data.filter(x => ["pending", "cleaning"].includes(x.status)).forEach(x => {
       if (!pendingMap[x.room_id] || x.tanggal > pendingMap[x.room_id].tanggal) pendingMap[x.room_id] = x;
     });
     setPendingLogByRoom(pendingMap);
@@ -52,7 +52,16 @@ export default function Housekeeping() {
     } catch (e) { toast.error(e?.response?.data?.detail || "Gagal"); }
   };
 
-  const selesai = logs.filter(l => l.status === "selesai").slice(0, 30);
+  const inspect = async (roomId, roomNomor) => {
+    try {
+      await api.post(`/rooms/${roomId}/housekeeping-inspect`);
+      toast.success(`Kamar ${roomNomor} ditandai Inspected`);
+      load();
+    } catch (e) { toast.error(e?.response?.data?.detail || "Gagal"); }
+  };
+
+  const perluInspeksi = logs.filter(l => l.status === "clean").slice(0, 20);
+  const selesai = logs.filter(l => ["clean", "inspected"].includes(l.status)).slice(0, 30);
   const avg = selesai.length ? (selesai.reduce((a, x) => {
     if (!x.jam_checkout || !x.jam_selesai) return a;
     return a + (new Date(x.jam_selesai) - new Date(x.jam_checkout)) / 60000;
@@ -65,8 +74,9 @@ export default function Housekeeping() {
         <h1 className="text-3xl sm:text-4xl font-extrabold">Pembersihan Kamar</h1>
       </div>
 
-      <div className="grid sm:grid-cols-3 gap-4">
+      <div className="grid sm:grid-cols-4 gap-4">
         <Stat label="Perlu Dibersihkan" value={rooms.length} color="#F97316" />
+        <Stat label="Perlu Diperiksa" value={perluInspeksi.length} color="#8B5CF6" />
         <Stat label="Selesai (30 terakhir)" value={selesai.length} color="#10B981" />
         <Stat label="Rata-rata Waktu (menit)" value={avg} color="#1E40AF" />
       </div>
@@ -132,11 +142,35 @@ export default function Housekeeping() {
 
       <Card className="border-slate-200">
         <CardContent className="p-5">
+          <h2 className="font-bold mb-4">Perlu Diperiksa (QC)</h2>
+          {perluInspeksi.length === 0 ? (
+            <p className="text-slate-500">Tidak ada kamar yang menunggu inspeksi</p>
+          ) : (
+            <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
+              {perluInspeksi.map(l => (
+                <div key={l.id} className="rounded-xl border border-violet-200 bg-violet-50 p-4 flex items-center justify-between gap-3">
+                  <div>
+                    <div className="font-bold">Kamar {l.room_nomor}</div>
+                    <div className="text-xs text-slate-600">Dibersihkan oleh {l.petugas || "-"} · {fmtDateTime(l.jam_selesai)}</div>
+                  </div>
+                  <Button data-testid={`hk-inspect-${l.room_nomor}`} size="sm" className="bg-violet-600 hover:bg-violet-700" onClick={() => inspect(l.room_id, l.room_nomor)}>
+                    Tandai Diperiksa
+                  </Button>
+                </div>
+              ))}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      <Card className="border-slate-200">
+        <CardContent className="p-5">
           <h2 className="font-bold mb-3">Riwayat Pembersihan</h2>
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead className="text-xs uppercase text-slate-500"><tr>
-                <th className="p-2 text-left">Kamar</th><th className="p-2 text-left">Mulai</th>
+                <th className="p-2 text-left">Kamar</th><th className="p-2 text-left">Status</th>
+                <th className="p-2 text-left">Mulai</th>
                 <th className="p-2 text-left">Selesai</th><th className="p-2 text-left">Durasi</th>
                 <th className="p-2 text-left">Petugas</th><th className="p-2 text-left">Catatan</th>
               </tr></thead>
@@ -148,6 +182,13 @@ export default function Housekeeping() {
                   return (
                     <tr key={l.id} className="border-t border-slate-100">
                       <td className="p-2 font-bold">{l.room_nomor}</td>
+                      <td className="p-2">
+                        {l.status === "inspected" ? (
+                          <span className="text-[10px] font-semibold uppercase tracking-wider text-emerald-700 bg-emerald-100 px-2 py-1 rounded-full" title={l.inspected_by ? `Diperiksa oleh ${l.inspected_by}` : ""}>Inspected</span>
+                        ) : (
+                          <span className="text-[10px] font-semibold uppercase tracking-wider text-violet-700 bg-violet-100 px-2 py-1 rounded-full">Clean</span>
+                        )}
+                      </td>
                       <td className="p-2">{l.jam_mulai ? fmtDateTime(l.jam_mulai) : "-"}</td>
                       <td className="p-2">{fmtDateTime(l.jam_selesai)}</td>
                       <td className="p-2">{durasi}</td>
@@ -156,7 +197,7 @@ export default function Housekeeping() {
                     </tr>
                   );
                 })}
-                {selesai.length === 0 && <tr><td colSpan={6} className="p-6 text-center text-slate-500">Belum ada riwayat</td></tr>}
+                {selesai.length === 0 && <tr><td colSpan={7} className="p-6 text-center text-slate-500">Belum ada riwayat</td></tr>}
               </tbody>
             </table>
           </div>
