@@ -10,33 +10,36 @@ ISSUE_TIPE = {"complaint", "maintenance"}
 ISSUE_STATUS = {"open", "in_progress", "resolved"}
 ISSUE_PRIORITAS = {"rendah", "normal", "tinggi"}
 
-@api.post("/issues")
-async def create_issue(body: IssueCreate, user: dict = Depends(get_current_user)):
-    if body.tipe not in ISSUE_TIPE:
+async def buat_issue(tipe: str, deskripsi: str, user: dict, room_id: Optional[str] = None,
+                     room_nomor: str = "", nama_tamu: str = "", prioritas: str = "normal",
+                     teknisi: str = "", estimasi_selesai: Optional[str] = None) -> Dict[str, Any]:
+    """Logika insert bersama — dipakai endpoint POST /issues (staf manual) DAN klasifikasi
+    otomatis AI WhatsApp (routes/pesan_whatsapp.py) supaya audit log & push notif konsisten
+    dari kedua jalur, tidak ada logika ganda yang bisa saling menyimpang."""
+    if tipe not in ISSUE_TIPE:
         raise HTTPException(400, "Tipe harus 'complaint' atau 'maintenance'")
-    if not body.deskripsi or not body.deskripsi.strip():
+    if not deskripsi or not deskripsi.strip():
         raise HTTPException(400, "Deskripsi wajib diisi")
-    prioritas = body.prioritas or "normal"
+    prioritas = prioritas or "normal"
     if prioritas not in ISSUE_PRIORITAS:
         raise HTTPException(400, f"Prioritas harus salah satu dari: {', '.join(sorted(ISSUE_PRIORITAS))}")
-    room_nomor = (body.room_nomor or "").strip()
-    if body.room_id:
-        r = await db.rooms.find_one({"id": body.room_id})
+    if room_id:
+        r = await db.rooms.find_one({"id": room_id})
         if not r:
             raise HTTPException(404, "Kamar tidak ditemukan")
         room_nomor = r["nomor"]
     doc = {
         "id": str(uuid.uuid4()),
-        "tipe": body.tipe,
-        "room_id": body.room_id,
-        "room_nomor": room_nomor,
-        "deskripsi": body.deskripsi.strip(),
+        "tipe": tipe,
+        "room_id": room_id,
+        "room_nomor": (room_nomor or "").strip(),
+        "deskripsi": deskripsi.strip(),
         "status": "open",
         "catatan_penyelesaian": "",
-        "nama_tamu": (body.nama_tamu or "").strip(),
+        "nama_tamu": (nama_tamu or "").strip(),
         "prioritas": prioritas,
-        "teknisi": (body.teknisi or "").strip(),
-        "estimasi_selesai": body.estimasi_selesai,
+        "teknisi": (teknisi or "").strip(),
+        "estimasi_selesai": estimasi_selesai,
         "created_by": user["nama"],
         "created_by_id": user["id"],
         "created_at": now_iso(),
@@ -44,11 +47,20 @@ async def create_issue(body: IssueCreate, user: dict = Depends(get_current_user)
         "resolved_at": None,
     }
     await db.issues.insert_one(doc)
-    label = "Komplain" if body.tipe == "complaint" else "Maintenance"
-    await log_activity(user, "create_issue", f"{label} kamar {room_nomor or '-'}: {doc['deskripsi']}", entity=room_nomor)
-    await send_push(f"{label} Baru", f"Kamar {room_nomor or '-'}: {doc['deskripsi']}", url="/komplain")
+    label = "Komplain" if tipe == "complaint" else "Maintenance"
+    await log_activity(user, "create_issue", f"{label} kamar {doc['room_nomor'] or '-'}: {doc['deskripsi']}", entity=doc["room_nomor"])
+    await send_push(f"{label} Baru", f"Kamar {doc['room_nomor'] or '-'}: {doc['deskripsi']}", url="/komplain")
     doc.pop("_id", None)
     return doc
+
+
+@api.post("/issues")
+async def create_issue(body: IssueCreate, user: dict = Depends(get_current_user)):
+    return await buat_issue(
+        body.tipe, body.deskripsi, user, room_id=body.room_id, room_nomor=body.room_nomor or "",
+        nama_tamu=body.nama_tamu or "", prioritas=body.prioritas or "normal",
+        teknisi=body.teknisi or "", estimasi_selesai=body.estimasi_selesai,
+    )
 
 @api.get("/issues")
 async def list_issues(tipe: Optional[str] = None, status: Optional[str] = None,

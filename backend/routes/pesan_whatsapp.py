@@ -1,12 +1,95 @@
 from core import *
 import asyncio
 import httpx
+import json
 from openai import OpenAI
 from fastapi.responses import PlainTextResponse
 from routes.public import public_availability
 from reservation_service import check_room_available
+from routes.issues import buat_issue
 
 _openai_client = OpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
+
+ISSUE_CLASSIFY_PROMPT = """Kamu mengklasifikasi pesan WhatsApp tamu hotel sebagai Complaint,
+Maintenance, atau bukan keduanya. Balas HANYA JSON:
+{"tipe": "complaint" | "maintenance" | null, "deskripsi": "<ringkasan singkat masalah, Bahasa Indonesia>"}
+
+Maintenance = kerusakan fasilitas/perangkat (TV mati, AC rusak, shower bocor, air panas mati,
+lampu mati, wifi tidak jalan, dst).
+Complaint = keluhan pelayanan/kebersihan/kelengkapan (kamar kotor, handuk belum ada, air minum
+habis, sarapan terlambat, dst) yang BUKAN kerusakan alat.
+Kalau pesan BUKAN komplain/kerusakan sama sekali (tanya harga, booking, obrolan biasa, ucapan
+terima kasih, dll), balas {"tipe": null, "deskripsi": ""}. JANGAN membuat tiket dari pertanyaan
+atau pernyataan yang ambigu — hanya kalau tamu JELAS melaporkan masalah nyata."""
+
+_WA_ISSUE_USER = {"id": "ai-whatsapp", "nama": "AI WhatsApp", "role": "owner"}
+
+
+async def _klasifikasi_pesan_tamu(pesan: str) -> Optional[Dict[str, str]]:
+    if not _openai_client or not (pesan or "").strip():
+        return None
+    try:
+        resp = await asyncio.to_thread(
+            _openai_client.chat.completions.create,
+            model="gpt-4o-mini", temperature=0,
+            response_format={"type": "json_object"},
+            messages=[
+                {"role": "system", "content": ISSUE_CLASSIFY_PROMPT},
+                {"role": "user", "content": pesan},
+            ],
+        )
+        data = json.loads(resp.choices[0].message.content or "{}")
+        tipe = data.get("tipe")
+        if tipe not in ("complaint", "maintenance"):
+            return None
+        deskripsi = (data.get("deskripsi") or pesan).strip()
+        return {"tipe": tipe, "deskripsi": deskripsi} if deskripsi else None
+    except Exception as e:
+        logging.getLogger("pesan_whatsapp").warning(f"Gagal klasifikasi pesan tamu: {e}")
+        return None
+
+
+async def _cari_kamar_dari_no_hp(no_hp: str):
+    """Cari kamar aktif tamu dari nomor HP-nya (checkin aktif, lalu booking checked_in sebagai
+    fallback) — dicoba beberapa variasi format (0xxx vs 62xxx) karena provider WA & PMS bisa
+    beda konvensi penyimpanan nomor."""
+    digits = re.sub(r"\D", "", no_hp or "")
+    if not digits:
+        return None, ""
+    variasi = {digits}
+    if digits.startswith("62"):
+        variasi.add("0" + digits[2:])
+    elif digits.startswith("0"):
+        variasi.add("62" + digits[1:])
+    ci = await db.checkins.find_one({"no_hp": {"$in": list(variasi)}, "status": "aktif"}, {"_id": 0, "room_id": 1, "room_nomor": 1})
+    if ci:
+        return ci["room_id"], ci["room_nomor"]
+    bk = await db.bookings.find_one(
+        {"no_hp": {"$in": list(variasi)}, "status": "checked_in"},
+        {"_id": 0, "room_id": 1, "room_nomor": 1}, sort=[("created_at", -1)],
+    )
+    if bk:
+        return bk["room_id"], bk["room_nomor"]
+    return None, ""
+
+
+async def _klasifikasi_dan_buat_tiket(no_hp: str, nama: str, pesan_masuk: str):
+    """Dipanggil dari kedua webhook WhatsApp (generik & BalesOtomatis) setelah pesan tamu
+    tersimpan — auto-buat tiket Komplain/Maintenance kalau AI yakin pesannya memang laporan
+    masalah. Gagal (OpenAI error, dsb) sengaja tidak melempar exception ke pemanggil supaya
+    tidak mengganggu jalur balas-ke-tamu yang lebih penting."""
+    hasil = await _klasifikasi_pesan_tamu(pesan_masuk)
+    if not hasil:
+        return None
+    room_id, room_nomor = await _cari_kamar_dari_no_hp(no_hp)
+    try:
+        return await buat_issue(
+            hasil["tipe"], hasil["deskripsi"], _WA_ISSUE_USER,
+            room_id=room_id, room_nomor=room_nomor, nama_tamu=nama or "",
+        )
+    except HTTPException as e:
+        logging.getLogger("pesan_whatsapp").warning(f"Gagal auto-buat tiket dari WA: {e.detail}")
+        return None
 
 # Default operasional Day Use — belum ada UI Settings (keputusan 2026-07-16: hardcode dulu,
 # pindah ke pengaturan collection kalau memang perlu diubah tanpa deploy kode).
@@ -156,6 +239,7 @@ async def whatsapp_incoming(request: Request):
             "id": str(uuid.uuid4()), "event": "kirim_gagal",
             "detail": error, "ok": False, "waktu": now_iso(),
         })
+    await _klasifikasi_dan_buat_tiket(no_hp, nama, pesan_masuk)
     doc.pop("_id", None)
     return {"ok": True, "balasan_ai": balasan_ai}
 
@@ -218,6 +302,8 @@ async def whatsapp_incoming_balesotomatis(token: str, request: Request):
         "error": None, "response_detik": response_detik, "waktu": now_iso(),
         "provider_message_id": data.get("message_id"),
     })
+    if pesan_masuk:
+        await _klasifikasi_dan_buat_tiket(no_hp, nama, pesan_masuk)
     if not balasan_ai:
         return {"ok": True}
     return {"ok": True, "reply": balasan_ai, "message": balasan_ai, "balasan": balasan_ai, "text": balasan_ai}
