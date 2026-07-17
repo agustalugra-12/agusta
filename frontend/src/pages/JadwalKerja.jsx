@@ -64,7 +64,7 @@ function StaffDialog({ staf, onOpenChange, onSaved }) {
           </div>
           <div>
             <Label>Shift Terlarang</Label>
-            <p className="text-[11px] text-slate-400 mb-1.5">Staf ini TIDAK PERNAH akan dijadwalkan shift yang dicentang, baik oleh AI Generate maupun edit manual/tukar shift.</p>
+            <p className="text-[11px] text-slate-400 mb-1.5">Staf ini TIDAK PERNAH akan dijadwalkan shift yang dicentang, baik oleh Generate Jadwal maupun edit manual/tukar shift.</p>
             <div className="flex gap-2">
               {["morning", "middle", "night"].map((sh) => (
                 <button key={sh} type="button" onClick={() => toggleTerlarang(sh)}
@@ -194,7 +194,7 @@ export default function JadwalKerja() {
     try {
       const { data } = await api.post("/jadwal-kerja/generate", { year, month });
       setJadwal(data);
-      toast.success("Jadwal draft berhasil dibuat AI");
+      toast.success("Jadwal draft berhasil dibuat");
     } catch (e) { toast.error(e?.response?.data?.detail || "Gagal generate jadwal"); }
     finally { setGenerating(false); }
   };
