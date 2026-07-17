@@ -6,12 +6,9 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
-import { useAuth } from "@/context/AuthContext";
 import { Plus, AlertTriangle, Pencil, Trash2 } from "lucide-react";
 
 export default function Inventory() {
-  const { user } = useAuth();
-  const isOwner = user?.role === "owner";
   const [products, setProducts] = useState([]);
   const [edit, setEdit] = useState(null);
   const [form, setForm] = useState({ kode: "", nama: "", kategori: "makanan", harga: 0, stok: 0, stok_minimal: 5, aktif: true });
@@ -57,7 +54,7 @@ export default function Inventory() {
           <p className="text-xs uppercase tracking-[0.25em] text-slate-500">Inventory</p>
           <h1 className="text-3xl sm:text-4xl font-extrabold">{products.length} Produk</h1>
         </div>
-        {isOwner && <Button data-testid="add-product" onClick={openNew} className="bg-blue-700 hover:bg-blue-800"><Plus className="w-4 h-4 mr-2" /> Tambah Produk</Button>}
+        <Button data-testid="add-product" onClick={openNew} className="bg-blue-700 hover:bg-blue-800"><Plus className="w-4 h-4 mr-2" /> Tambah Produk</Button>
       </div>
 
       {lowStock.length > 0 && (
@@ -99,12 +96,8 @@ export default function Inventory() {
                   </td>
                   <td className="p-3 text-right whitespace-nowrap">
                     {p.kategori !== "laundry" && <Button size="sm" variant="outline" onClick={() => { setAdj(p); setDelta(1); }} data-testid={`adj-${p.kode}`}>+/-</Button>}
-                    {isOwner && (
-                      <>
-                        <Button size="sm" variant="ghost" onClick={() => openEdit(p)}><Pencil className="w-4 h-4" /></Button>
-                        <Button size="sm" variant="ghost" onClick={() => del(p)}><Trash2 className="w-4 h-4 text-red-500" /></Button>
-                      </>
-                    )}
+                    <Button size="sm" variant="ghost" onClick={() => openEdit(p)}><Pencil className="w-4 h-4" /></Button>
+                    <Button size="sm" variant="ghost" onClick={() => del(p)}><Trash2 className="w-4 h-4 text-red-500" /></Button>
                   </td>
                 </tr>
               ))}

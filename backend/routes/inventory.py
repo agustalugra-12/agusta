@@ -9,7 +9,7 @@ async def list_products(kategori: Optional[str] = None, user: dict = Depends(get
     return items
 
 @api.post("/products")
-async def create_product(body: ProductCreate, user: dict = Depends(require_owner)):
+async def create_product(body: ProductCreate, user: dict = Depends(get_current_user)):
     if await db.products.find_one({"kode": body.kode}):
         raise HTTPException(400, "Kode produk sudah ada")
     doc = {"id": str(uuid.uuid4()), **body.model_dump(), "created_at": now_iso()}
@@ -19,7 +19,7 @@ async def create_product(body: ProductCreate, user: dict = Depends(require_owner
     return doc
 
 @api.put("/products/{pid}")
-async def update_product(pid: str, body: ProductUpdate, user: dict = Depends(require_owner)):
+async def update_product(pid: str, body: ProductUpdate, user: dict = Depends(get_current_user)):
     p = await db.products.find_one({"id": pid})
     if not p:
         raise HTTPException(404, "Produk tidak ditemukan")
@@ -30,7 +30,7 @@ async def update_product(pid: str, body: ProductUpdate, user: dict = Depends(req
     return {"ok": True}
 
 @api.delete("/products/{pid}")
-async def delete_product(pid: str, user: dict = Depends(require_owner)):
+async def delete_product(pid: str, user: dict = Depends(get_current_user)):
     p = await db.products.find_one({"id": pid})
     if not p:
         raise HTTPException(404, "Produk tidak ditemukan")

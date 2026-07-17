@@ -26,7 +26,7 @@ const navItems = [
   { to: "/kalender-harga", label: "Kalender Harga", icon: Tag, ownerOnly: true },
   { to: "/rooms", label: "Kamar", icon: BedDouble },
   { to: "/service", label: "Service", icon: HandCoins },
-  { to: "/inventory", label: "Inventory", icon: Boxes, ownerOnly: true },
+  { to: "/inventory", label: "Inventory", icon: Boxes },
   { to: "/pengeluaran", label: "Pengeluaran", icon: Wallet, ownerOnly: true },
   { to: "/housekeeping", label: "Housekeeping", icon: Sparkles },
   { to: "/komplain", label: "Komplain", icon: AlertTriangle },
