@@ -81,29 +81,46 @@ actions with care", bukan diabaikan): operasi destruktif (`rm -rf`, `git push --
   hanya boleh memberi rekomendasi/peringatan, keputusan akhir di resepsionis/owner.
 - Day Use tidak pernah masuk ke PMS RedDoorz (RedDoorz cuma dipakai untuk baca email
   konfirmasi OTA booking Menginap, lihat `backend/routes/otomasi_email.py`).
-- AI WhatsApp (`backend/routes/pesan_whatsapp.py`) sejauh ini hanya menjawab
-  pertanyaan/memberi rekomendasi & (untuk pengeluaran) mengekstrak data terstruktur yang
-  lalu diinsert kode secara deterministik — TIDAK pernah langsung membuat booking sendiri.
+- AI WhatsApp (`backend/routes/pesan_whatsapp.py`) TIDAK PERNAH langsung membuat booking.
+  Sejak 2026-07-17 AI bisa mengumpulkan data booking lewat percakapan multi-turn dan
+  membuat **Booking Request** non-binding (`backend/routes/booking_requests.py`,
+  `db.booking_requests`) — booking sungguhan baru dibuat staf lewat approve manual di
+  halaman `/booking-requests`. Selain itu (pertanyaan umum, ekstraksi pengeluaran) AI
+  tetap hanya menjawab/merekomendasikan/mengekstrak data terstruktur untuk insert
+  deterministik lewat kode, sama seperti sebelumnya.
+- Booking Menginap via `/book` (publik) maupun Quick Book (staf) MASIH instan seperti
+  biasa setelah bayar/tercatat — TIDAK melalui approval, tidak berubah. Hanya jalur AI
+  WhatsApp yang sekarang melalui Booking Request → approval.
 
 ## Business Rules — TARGET, BELUM DIBANGUN (menunggu keputusan user)
 
 PRD "Modul Reservasi, Priority Booking & Payment Flow (Versi Final)" (diterima
-2026-07-17) mengusulkan alur baru untuk booking Menginap: AI WhatsApp kumpulkan data →
-"Booking Request" → approval resepsionis → baru kirim link Tripay → bayar → **admin
-input manual ke PMS RedDoorz** → tunggu email konfirmasi RedDoorz → baru "Confirmed" &
-muncul di Calendar/Dashboard/Housekeeping/Laporan. Tombol "Book Now" di website akan
-diarahkan ke WhatsApp, bukan langsung ke Booking Engine instan yang sekarang jalan.
+2026-07-17): **Tahap 1 (Booking Request — AI WhatsApp kumpulkan data → approval
+resepsionis → baru kirim link Tripay) SUDAH LIVE sejak 2026-07-17**, lihat bagian
+"SUDAH BERLAKU" di atas & CHANGELOG.md. Yang BELUM dibangun (Tahap 2):
 
-**Status: BELUM diimplementasikan.** Saat ini booking Menginap via `/book` (publik)
-maupun Quick Book (staf) masih instan setelah bayar/tercatat, TIDAK melalui tahap
-approval atau RedDoorz manual-sync. User masih mempertimbangkan poin krusial (block vs
-auto-adjust untuk konflik buffer di alur publik) — **jangan asumsikan/menegakkan alur
-approval ini sampai user eksplisit bilang lanjut.** Kalau menyentuh apa pun yang
-berhubungan dengan alur booking Menginap, cek dulu apakah user sudah memutuskan bagian
-ini sebelum mengubah perilaku yang sudah ada.
+- Setelah tamu bayar, booking Menginap dari Booking Request seharusnya masuk status
+  "Action Required" — **admin input manual ke PMS RedDoorz**, tunggu email konfirmasi
+  RedDoorz, baru "Confirmed" & muncul di Calendar/Dashboard/Housekeeping/Laporan.
+  **Belum dibangun** — saat ini booking dari Booking Request yang sudah lunas LANGSUNG
+  tampil sebagai booking biasa (status `booking_paid`) di semua tampilan itu, sama
+  seperti booking publik biasa.
+- Tombol "Book Now" di website `/book` seharusnya diarahkan ke WhatsApp, bukan Booking
+  Engine instan. **Belum dibangun** — `/book` masih aktif & instan seperti biasa.
+
+**Jangan asumsikan/menegakkan Tahap 2 ini sampai user eksplisit bilang lanjut** — ini
+bagian paling berisiko (mengubah apa yang staf anggap "booking nyata" & mematikan tombol
+publik yang masih dipakai tamu). Kalau menyentuh apa pun yang berhubungan dengan alur
+booking Menginap, cek dulu apakah user sudah memutuskan bagian ini sebelum mengubah
+perilaku yang sudah ada.
 
 ## Fitur yang Sudah Ada (ringkas — detail lengkap di CHANGELOG.md)
 
+- **Booking Request (Tahap 1 Modul Reservasi, 2026-07-17):** AI WhatsApp kumpulkan data
+  booking multi-turn → `db.booking_requests` (non-binding) → staf approve/reject di
+  `/booking-requests` → approve = booking sungguhan dibuat + link Tripay otomatis
+  terkirim ke tamu. Reuse penuh `create_reservation`/`tripay_create_transaction`, tidak
+  ada jalur pembayaran paralel.
 - **Payment Alert & Action Center (sebagian, 2026-07-17):** Web Push (VAPID,
   `backend/routes/push.py`, opt-in per user di halaman Profil) broadcast ke
   resepsionis+owner sekaligus untuk booking baru/pembayaran/komplain/housekeeping, plus
