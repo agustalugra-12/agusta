@@ -6,6 +6,7 @@ from openai import OpenAI
 from fastapi.responses import PlainTextResponse
 from routes.public import public_availability
 from routes.issues import buat_issue
+from routes.booking_requests import buat_booking_request
 from scheduling_engine import rekomendasi_slot_kosong as _rekomendasi_slot_kosong_engine, WIB
 
 _openai_client = OpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
@@ -152,6 +153,160 @@ async def _generate_balasan_ai(pesan_masuk: str) -> Optional[str]:
     return resp.choices[0].message.content
 
 
+# ---- Alur pengumpulan data Booking Request (PRD Modul Reservasi & Priority Booking,
+# disetujui user 2026-07-17) — AI mengumpulkan data lewat beberapa balasan berturut-turut,
+# BUKAN sekali tanya-jawab. Sesi disimpan per no_hp di `wa_booking_sessions` supaya tiap
+# pesan tamu berikutnya melanjutkan data yang sudah terkumpul, bukan mulai dari nol.
+#
+# BATASAN KERAS (jangan dilonggarkan): AI di sini TIDAK PERNAH membuat booking sungguhan —
+# titik akhir satu-satunya alur ini adalah `buat_booking_request()` (permintaan non-binding),
+# persis sama seperti batasan AI tidak boleh mengubah stok/booking/pemasukan yang sudah
+# berlaku untuk bot Telegram (lihat OWNER_AI_SYSTEM_PROMPT di telegram_bot.py).
+
+BOOKING_INTENT_CLASSIFY_PROMPT = """Tentukan apakah pesan tamu ini mengekspresikan NIAT untuk
+MEMESAN/BOOKING kamar (bukan sekadar tanya harga/ketersediaan untuk info umum, bukan komplain,
+bukan obrolan biasa). Balas HANYA JSON: {"niat_booking": true|false}.
+True: tamu bilang mau booking/pesan kamar/reservasi, atau langsung sebut tanggal & tipe kamar
+dengan maksud memesan sekarang.
+False: pertanyaan umum ("ada kamar kosong?", "berapa harganya?") tanpa maksud langsung memesan,
+komplain, atau obrolan lain."""
+
+BOOKING_FLOW_SYSTEM_PROMPT = """Kamu asisten WhatsApp Pelangi Homestay yang membantu tamu
+MENGAJUKAN PERMINTAAN booking (bukan booking final — permintaan ini akan ditinjau resepsionis
+dulu sebelum dikonfirmasi & dikirim link pembayaran). Balas HANYA JSON dengan bentuk persis:
+{{
+  "fields": {{
+    "nama_tamu": "<string atau null kalau belum disebut>",
+    "tipe": "day_use" atau "menginap" atau null,
+    "room_tipe": "Standard" atau "Cottage" atau null,
+    "jumlah_kamar": <int atau null>,
+    "jumlah_tamu": <int atau null>,
+    "tanggal_checkin": "<YYYY-MM-DD atau null>",
+    "jam_checkin": "<HH:mm atau null, hanya relevan utk tipe day_use>",
+    "tanggal_checkout": "<YYYY-MM-DD atau null, hanya relevan utk tipe menginap>"
+  }},
+  "confirmed": <bool — true HANYA kalau pesan ini adalah jawaban YA/setuju/oke tamu terhadap
+                ringkasan permintaan yang barusan kamu tunjukkan>,
+  "cancelled": <bool — true kalau tamu jelas ingin membatalkan/berhenti proses ini>,
+  "balasan": "<balasan natural, ramah, singkat, Bahasa Indonesia, seperti resepsionis manusia —
+              BUKAN bahasa robot. Kalau ada field WAJIB yang masih kosong, tanyakan HANYA yang
+              masih kurang (jangan tanya ulang yang sudah terjawab, boleh gabung beberapa
+              pertanyaan sekaligus). Kalau semua field wajib sudah lengkap dan belum pernah
+              diringkas, ringkas permintaannya lalu minta konfirmasi tamu. Kalau tamu baru saja
+              konfirmasi (confirmed=true), sampaikan permintaannya sudah diteruskan ke
+              resepsionis untuk ditinjau & akan dikirim link pembayaran kalau disetujui. Kalau
+              cancelled=true, konfirmasi proses dibatalkan dengan ramah. JANGAN PERNAH
+              menjanjikan kamar pasti tersedia atau bilang bookingnya sudah pasti/dikonfirmasi —
+              status sebenarnya baru 'permintaan', keputusan akhir ada di resepsionis.>"
+}}
+
+Field WAJIB sebelum bisa diringkas & minta konfirmasi: nama_tamu, tipe, room_tipe,
+tanggal_checkin, lalu jam_checkin (kalau tipe=day_use) ATAU tanggal_checkout (kalau
+tipe=menginap). jumlah_kamar & jumlah_tamu default 1 kalau tamu tidak menyebutkan apa pun —
+JANGAN ditanya kecuali tamu sendiri menyinggung lebih dari 1 kamar/orang. Tanggal hari ini:
+{tanggal_hari_ini} (WIB). Kalau tamu bilang "besok"/"hari ini"/nama hari, konversi ke YYYY-MM-DD
+relatif tanggal hari ini itu."""
+
+
+async def _klasifikasi_niat_booking(pesan: str) -> bool:
+    try:
+        resp = await asyncio.to_thread(
+            _openai_client.chat.completions.create,
+            model="gpt-4o-mini", temperature=0,
+            response_format={"type": "json_object"},
+            messages=[
+                {"role": "system", "content": BOOKING_INTENT_CLASSIFY_PROMPT},
+                {"role": "user", "content": pesan},
+            ],
+        )
+        data = json.loads(resp.choices[0].message.content or "{}")
+        return bool(data.get("niat_booking"))
+    except Exception as e:
+        logging.getLogger("pesan_whatsapp").warning(f"Gagal klasifikasi niat booking: {e}")
+        return False
+
+
+async def _sesi_booking_aktif(no_hp: str) -> Optional[Dict[str, Any]]:
+    """Sesi lebih dari 2 jam dianggap basi (tamu kemungkinan sudah pindah topik) — dibuang
+    supaya pesan baru mulai dari nol, bukan melanjutkan konteks yang sudah tidak relevan."""
+    sesi = await db.wa_booking_sessions.find_one({"no_hp": no_hp})
+    if not sesi:
+        return None
+    try:
+        updated = datetime.fromisoformat(sesi["updated_at"])
+    except Exception:
+        updated = datetime.now(timezone.utc)
+    if datetime.now(timezone.utc) - updated > timedelta(hours=2):
+        await db.wa_booking_sessions.delete_one({"no_hp": no_hp})
+        return None
+    return sesi
+
+
+def _field_wajib_kurang(data: Dict[str, Any]) -> List[str]:
+    wajib = ["nama_tamu", "tipe", "room_tipe", "tanggal_checkin"]
+    if data.get("tipe") == "day_use":
+        wajib.append("jam_checkin")
+    elif data.get("tipe") == "menginap":
+        wajib.append("tanggal_checkout")
+    return [f for f in wajib if not data.get(f)]
+
+
+async def _proses_giliran_booking(no_hp: str, nama: str, pesan_masuk: str, sesi: Optional[Dict[str, Any]]) -> str:
+    data_terkumpul = dict(sesi["data"]) if sesi else {}
+    konteks_ketersediaan = await _ringkasan_ketersediaan_untuk_ai()
+    prompt = BOOKING_FLOW_SYSTEM_PROMPT.format(tanggal_hari_ini=datetime.now(WIB).strftime("%Y-%m-%d"))
+    resp = await asyncio.to_thread(
+        _openai_client.chat.completions.create,
+        model="gpt-4o-mini", temperature=0.3,
+        response_format={"type": "json_object"},
+        messages=[
+            {"role": "system", "content": prompt},
+            {"role": "user", "content": (
+                f"{konteks_ketersediaan}\n\nData permintaan yang sudah terkumpul sejauh ini: "
+                f"{json.dumps(data_terkumpul, ensure_ascii=False)}\n\nPesan tamu: {pesan_masuk}"
+            )},
+        ],
+    )
+    hasil = json.loads(resp.choices[0].message.content or "{}")
+    for k, v in (hasil.get("fields") or {}).items():
+        if v not in (None, ""):
+            data_terkumpul[k] = v
+    balasan = hasil.get("balasan") or "Maaf, bisa diulangi?"
+
+    if hasil.get("cancelled"):
+        await db.wa_booking_sessions.delete_one({"no_hp": no_hp})
+        return balasan
+
+    kurang = _field_wajib_kurang(data_terkumpul)
+    if hasil.get("confirmed") and not kurang:
+        data_terkumpul.setdefault("jumlah_kamar", 1)
+        data_terkumpul.setdefault("jumlah_tamu", 1)
+        data_terkumpul["nama_tamu"] = data_terkumpul.get("nama_tamu") or nama
+        data_terkumpul["no_hp"] = no_hp
+        await buat_booking_request(data_terkumpul)
+        await db.wa_booking_sessions.delete_one({"no_hp": no_hp})
+        return balasan
+
+    await db.wa_booking_sessions.update_one(
+        {"no_hp": no_hp},
+        {"$set": {"nama": nama, "data": data_terkumpul, "updated_at": now_iso()}},
+        upsert=True,
+    )
+    return balasan
+
+
+async def _balasan_dengan_alur_booking(no_hp: str, nama: str, pesan_masuk: str) -> Optional[str]:
+    """Pengganti pemanggilan langsung `_generate_balasan_ai` di kedua webhook WhatsApp —
+    menyisipkan alur Booking Request TANPA mengubah perilaku balasan untuk pesan biasa
+    (pertanyaan umum tetap lewat _generate_balasan_ai persis seperti sebelumnya)."""
+    if not _openai_client or not (pesan_masuk or "").strip():
+        return None
+    sesi = await _sesi_booking_aktif(no_hp)
+    if sesi or await _klasifikasi_niat_booking(pesan_masuk):
+        return await _proses_giliran_booking(no_hp, nama, pesan_masuk, sesi)
+    return await _generate_balasan_ai(pesan_masuk)
+
+
 async def _kirim_via_provider(no_hp: str, pesan: str) -> tuple[bool, Optional[str]]:
     """Kirim balasan lewat webhook provider yang staf konfigurasi sendiri. Generic —
     tidak terikat satu provider tertentu (Fonnte/Wablas/dll punya kontrak beda-beda),
@@ -196,7 +351,7 @@ async def whatsapp_incoming(request: Request, token: Optional[str] = None):
         raise HTTPException(400, "Payload harus berisi pengirim & isi pesan")
 
     mulai = datetime.now(timezone.utc)
-    balasan_ai = await _generate_balasan_ai(pesan_masuk)
+    balasan_ai = await _balasan_dengan_alur_booking(no_hp, nama, pesan_masuk)
     response_detik = round((datetime.now(timezone.utc) - mulai).total_seconds(), 1)
 
     status_kirim, error = "Gagal", "AI Email Parser/OpenAI belum dikonfigurasi (OPENAI_API_KEY kosong)"
@@ -270,7 +425,7 @@ async def whatsapp_incoming_balesotomatis(token: str, request: Request):
         pesan_masuk = data.get("message_body") or ""
 
     mulai = datetime.now(timezone.utc)
-    balasan_ai = await _generate_balasan_ai(pesan_masuk) if pesan_masuk else None
+    balasan_ai = await _balasan_dengan_alur_booking(no_hp, nama, pesan_masuk) if pesan_masuk else None
     response_detik = round((datetime.now(timezone.utc) - mulai).total_seconds(), 1)
 
     await db.wa_conversations.insert_one({

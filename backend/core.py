@@ -639,6 +639,17 @@ class RateOverride(BaseModel):
     updated_at: str
     updated_by: str
 
+class BookingRequestApprove(BaseModel):
+    """Body untuk staf menyetujui Booking Request (PRD Modul Reservasi & Priority Booking) —
+    staf memilih kamar spesifik SETELAH mengecek ketersediaan manual (termasuk cek silang ke
+    PMS RedDoorz, yang sistem ini tidak bisa cek otomatis)."""
+    room_ids: List[str]  # wajib sejumlah booking_request.jumlah_kamar
+    payment_option: str = "dp50"  # dp50 | full
+    method: str  # kode channel Tripay (mis. QRIS/BRIVA), dari GET /payments/tripay/channels
+
+class BookingRequestReject(BaseModel):
+    alasan: Optional[str] = ""
+
 class RateBulkUpdateBody(BaseModel):
     """Body untuk Update Harga Massal (halaman Kalender Harga): terapkan satu harga ke
     rentang tanggal [dari, sampai] untuk satu tipe kamar, atau 'Semua' tipe sekaligus."""

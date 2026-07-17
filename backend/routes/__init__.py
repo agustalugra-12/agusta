@@ -26,6 +26,7 @@ from . import sinkronisasi_data_pms  # noqa: F401
 from . import laporan_analitik  # noqa: F401
 from . import rates  # noqa: F401
 from . import tripay  # noqa: F401
+from . import booking_requests  # noqa: F401
 from . import issues  # noqa: F401
 from . import telegram_bot  # noqa: F401
 from . import scheduling  # noqa: F401

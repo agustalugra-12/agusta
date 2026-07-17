@@ -30,6 +30,7 @@ import PengirimanVoucherOtomatis from "@/pages/PengirimanVoucherOtomatis";
 import RekomendasiCheckinDayUse from "@/pages/RekomendasiCheckinDayUse";
 import Komplain from "@/pages/Komplain";
 import Maintenance from "@/pages/Maintenance";
+import BookingRequests from "@/pages/BookingRequests";
 import PublicBook from "@/pages/PublicBook";
 import "@/App.css";
 
@@ -66,6 +67,7 @@ function AppRoutes() {
         <Route path="/kalender-harga" element={<KalenderHarga />} />
         <Route path="/audit" element={<Audit />} />
         <Route path="/reservasi" element={<DaftarReservasi />} />
+        <Route path="/booking-requests" element={<BookingRequests />} />
         <Route path="/otomasi-email" element={<OtomasiEmail />} />
         <Route path="/sinkronisasi-ketersediaan" element={<SinkronisasiKetersediaan />} />
         <Route path="/pembayaran" element={<Pembayaran />} />

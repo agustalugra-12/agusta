@@ -56,6 +56,9 @@ async def startup():
     await db.housekeeping_log.create_index([("room_id", 1), ("status", 1)])
     await db.housekeeping_log.create_index("tanggal")
     await db.push_subscriptions.create_index("user_id")
+    await db.booking_requests.create_index("status")
+    await db.booking_requests.create_index("created_at")
+    await db.wa_booking_sessions.create_index("no_hp", unique=True)
 
     # Seed users
     async def ensure_user(username, password, nama, role):
