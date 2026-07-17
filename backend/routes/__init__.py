@@ -32,3 +32,4 @@ from . import telegram_bot  # noqa: F401
 from . import scheduling  # noqa: F401
 from . import push  # noqa: F401
 from . import jadwal_kerja  # noqa: F401
+from . import integrasi_ai_bot  # noqa: F401

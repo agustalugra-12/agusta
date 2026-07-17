@@ -925,6 +925,133 @@ function Kredensial() {
           </div>
         </CardContent>
       </Card>
+
+      <div className="pt-4 border-t border-slate-200 space-y-4">
+        <div>
+          <h2 className="text-lg font-bold">Integrasi AI Chat Bot Eksternal</h2>
+          <p className="text-sm text-slate-500 mt-0.5">
+            Kanal terpisah untuk sistem AI eksternal (mis. AI Chat Bot lintas-produk milik sendiri, dirancang reusable
+            di luar Pelangi PMS) yang membaca ketersediaan kamar &amp; menulis tiket/booking request ke PMS ini —
+            bukan bagian dari kredensial provider WhatsApp di atas. PMS ini tidak pernah memanggil sistem AI tersebut;
+            arahnya selalu sistem itu yang memanggil endpoint di bawah, diautentikasi API key sendiri.
+          </p>
+        </div>
+        <IntegrasiAiBot />
+      </div>
+    </div>
+  );
+}
+
+function IntegrasiAiBot() {
+  const [cfg, setCfg] = useState({ aktif: false, api_key: "", updated_at: null });
+  const [showKey, setShowKey] = useState(false);
+  const [copied, setCopied] = useState(null);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    api.get("/konfigurasi-integrasi-ai-bot").then((r) => setCfg(r.data)).catch(() => {});
+  }, []);
+
+  const toggleAktif = async () => {
+    setBusy(true);
+    try {
+      const { data } = await api.put("/konfigurasi-integrasi-ai-bot", { aktif: !cfg.aktif });
+      setCfg((c) => ({ ...c, ...data }));
+      toast.success(data.aktif ? "Integrasi AI Chat Bot diaktifkan" : "Integrasi AI Chat Bot dinonaktifkan");
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Gagal mengubah status");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const regenerate = async () => {
+    if (!window.confirm("API key lama akan langsung tidak berlaku lagi. Lanjutkan?")) return;
+    setBusy(true);
+    try {
+      const { data } = await api.post("/konfigurasi-integrasi-ai-bot/regenerate-key");
+      setCfg((c) => ({ ...c, ...data }));
+      toast.success("API key baru dibuat");
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Gagal generate ulang API key");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const salin = async (label, value) => {
+    if (!value) return;
+    await navigator.clipboard.writeText(value);
+    setCopied(label);
+    setTimeout(() => setCopied(null), 2000);
+  };
+
+  const endpoints = [
+    { label: "Ketersediaan Kamar (GET)", value: `${API_BASE}/integrasi-ai-bot/ketersediaan` },
+    { label: "Buat Tiket Komplain/Maintenance (POST)", value: `${API_BASE}/integrasi-ai-bot/tiket` },
+    { label: "Buat Booking Request (POST)", value: `${API_BASE}/integrasi-ai-bot/booking-request` },
+  ];
+
+  return (
+    <div className="space-y-4" data-testid="integrasi-ai-bot-section">
+      <Card className={cfg.aktif ? "border-emerald-300 bg-emerald-50" : "border-slate-200"}>
+        <CardContent className="p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div className="flex items-center gap-3">
+            <div className={`w-11 h-11 rounded-xl grid place-items-center shrink-0 ${cfg.aktif ? "bg-emerald-100 text-emerald-600" : "bg-slate-100 text-slate-400"}`}>
+              <Bot className="w-5 h-5" />
+            </div>
+            <div>
+              <div className="font-semibold flex items-center gap-1.5" data-testid="ai-bot-status-label">
+                {cfg.aktif ? <CheckCircle2 className="w-4 h-4 text-emerald-600" /> : <XCircle className="w-4 h-4 text-slate-400" />}
+                {cfg.aktif ? "Integrasi Aktif" : "Integrasi Nonaktif"}
+              </div>
+              <div className="text-xs text-slate-500 mt-0.5">Terakhir diperbarui: {fmtDateTime(cfg.updated_at)}</div>
+            </div>
+          </div>
+          <Button data-testid="ai-bot-toggle-aktif" variant="outline" size="sm" onClick={toggleAktif} disabled={busy} className="gap-1.5 shrink-0">
+            {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null} {cfg.aktif ? "Nonaktifkan" : "Aktifkan"}
+          </Button>
+        </CardContent>
+      </Card>
+
+      <Card className="border-slate-200">
+        <CardContent className="p-4 space-y-4">
+          <div>
+            <Label>API Key</Label>
+            <div className="relative mt-1.5">
+              <Input readOnly type={showKey ? "text" : "password"} value={cfg.api_key || ""} className="font-mono text-xs pr-10" data-testid="ai-bot-api-key" onFocus={(e) => e.target.select()} />
+              <button type="button" onClick={() => setShowKey((s) => !s)} className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600">
+                {showKey ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+              </button>
+            </div>
+            <div className="flex gap-2 mt-2">
+              <Button type="button" variant="outline" size="sm" className="gap-1.5" onClick={() => salin("key", cfg.api_key)}>
+                {copied === "key" ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />} {copied === "key" ? "Tersalin" : "Salin"}
+              </Button>
+              <Button type="button" variant="outline" size="sm" className="gap-1.5" onClick={regenerate} disabled={busy} data-testid="ai-bot-regenerate-key">
+                <RefreshCw className="w-3.5 h-3.5" /> Generate Ulang
+              </Button>
+            </div>
+          </div>
+
+          <div>
+            <Label>Endpoint</Label>
+            <div className="space-y-2 mt-1.5">
+              {endpoints.map((ep) => (
+                <div key={ep.label}>
+                  <p className="text-xs text-slate-500 mb-1">{ep.label}</p>
+                  <div className="flex items-center gap-2">
+                    <Input readOnly value={ep.value} className="font-mono text-xs bg-white" onFocus={(e) => e.target.select()} />
+                    <Button type="button" variant="outline" size="sm" className="gap-1.5 shrink-0" onClick={() => salin(ep.label, ep.value)}>
+                      {copied === ep.label ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
+                    </Button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </CardContent>
+      </Card>
     </div>
   );
 }
