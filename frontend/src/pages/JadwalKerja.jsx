@@ -215,10 +215,16 @@ export default function JadwalKerja() {
   };
 
   const exportPdf = async (orientation) => {
+    // window.open(url) langsung setelah await sering di-blok popup blocker browser (async
+    // callback kehilangan asosiasi "user gesture" langsung) — pola <a target="_blank">.click()
+    // (sama seperti downloadCsv di Laporan.jsx) jauh lebih andal untuk blob hasil fetch async.
     try {
       const { data } = await api.get(`/jadwal-kerja/${jadwal.id}/export.pdf`, { params: { orientation }, responseType: "blob" });
       const url = URL.createObjectURL(new Blob([data], { type: "application/pdf" }));
-      window.open(url, "_blank");
+      const a = document.createElement("a");
+      a.href = url; a.target = "_blank"; a.rel = "noopener";
+      document.body.appendChild(a); a.click(); document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(url), 10000);
     } catch (e) { toast.error("Gagal export PDF"); }
   };
 
