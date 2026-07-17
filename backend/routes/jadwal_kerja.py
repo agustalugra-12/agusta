@@ -1,9 +1,11 @@
 """Jadwal Kerja Staf — PRD baru dari user (2026-07-17), TERPISAH dari PRD "Modul Reservasi
-& Priority Booking". Fitur Phase 1 sesuai spesifikasi user: Dashboard Jadwal, AI Generate,
-AI Optimizer (di sini diimplementasikan sebagai validasi+perbaikan deterministik, bukan
-auto-rewrite sel lain secara diam-diam — lihat catatan di `_perbaiki_jadwal`), Publish,
-Riwayat Jadwal, Audit Log (reuse `log_activity`), Tukar Shift, Print/Export PDF. Integrasi
-absensi (attendance) SENGAJA belum dikerjakan (di luar Phase 1 menurut spesifikasi user).
+& Priority Booking". Fitur Phase 1: Dashboard Jadwal, Generate (murni algoritmik — lihat
+`_buat_jadwal_acak`), Optimizer (diimplementasikan sebagai validasi+peringatan transparan
+saat edit manual di `update_shift`/`_detail_jadwal`, bukan auto-rewrite sel lain secara
+diam-diam), Publish, Riwayat Jadwal, Audit Log (reuse `log_activity`), Tukar Shift.
+Integrasi absensi (attendance) SENGAJA belum dikerjakan (di luar Phase 1). Print/Export PDF
+SENGAJA DIHAPUS (2026-07-17, permintaan user "jangan pdf" — simplifikasi setelah generate
+sempat crash, lihat catatan di `generate_jadwal`).
 
 Data model:
 - `db.staff_kerja`   — roster staf yang dijadwalkan (nama, shift_terlarang, aktif).
@@ -13,23 +15,18 @@ Data model:
 from core import *
 import asyncio
 import calendar
-import io
-import json
 import random
-from openai import OpenAI
-from fastapi.responses import StreamingResponse
-from reportlab.lib.pagesizes import A4, landscape
-from reportlab.lib.units import mm
-from reportlab.lib import colors
-from reportlab.lib.styles import getSampleStyleSheet
-from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
+from pymongo import ReplaceOne
 
-_openai_client = OpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
+# Kunci in-process (satu proses uvicorn, tidak ada --workers > 1) — serialisasi generate
+# supaya dua request bersamaan (mis. double-click) tidak saling tumpang tindih menulis
+# jadwal_kerja/jadwal_shifts. Satu kunci global cukup (aksi ini jarang & owner-only, tidak
+# butuh kunci per-bulan yang lebih rumit).
+_generate_lock = asyncio.Lock()
 
 SHIFT_KERJA = ["morning", "middle", "night"]
 SHIFT_VALUES = SHIFT_KERJA + ["off"]
 SHIFT_LABEL = {"morning": "Morning", "middle": "Middle", "night": "Night", "off": "Off"}
-SHIFT_SINGKAT = {"morning": "M", "middle": "MID", "night": "N", "off": "OFF"}
 WAJIB_OFF_PER_BULAN = 4
 BULAN_LABEL = ["", "Januari", "Februari", "Maret", "April", "Mei", "Juni", "Juli",
                "Agustus", "September", "Oktober", "November", "Desember"]
@@ -40,71 +37,30 @@ def _semua_tanggal(year: int, month: int) -> List[str]:
     return [f"{year:04d}-{month:02d}-{d:02d}" for d in range(1, n_hari + 1)]
 
 
-def _perbaiki_jadwal(staff_list: List[dict], saran_ai: Dict[str, Dict[str, str]], tanggal_list: List[str]) -> Dict[str, Dict[str, str]]:
-    """Jaring pengaman deterministik — HASIL AKHIR generate selalu valid apapun kualitas
-    saran AI: tiap staf PERSIS WAJIB_OFF_PER_BULAN hari "off", dan tidak pernah dapat shift
-    yang ada di shift_terlarang miliknya. Saran AI dipakai sebagai starting point (lebih
-    manusiawi/seimbang kalau AI berhasil), tapi kebenaran aturan keras tidak pernah
-    digantungkan ke kualitas output AI."""
+def _buat_jadwal_acak(staff_list: List[dict], tanggal_list: List[str]) -> Dict[str, Dict[str, str]]:
+    """Generate jadwal murni algoritmik (acak-terpandu, TANPA panggilan AI) — 2026-07-17:
+    versi awal memanggil OpenAI untuk draft awal (bisa makan waktu >1 menit utk 1 bulan penuh
+    x 7 staf), yang membuka celah race condition nyata (dua request generate untuk bulan yang
+    sama saling tabrakan saat insert, DuplicateKeyError, generate gagal total). Dihapus atas
+    permintaan user ("kalau ini berat buat saja lebih sederhana") — hasilnya SAMA-SAMA
+    menjamin tiap staf PERSIS WAJIB_OFF_PER_BULAN hari "off" & tidak pernah shift terlarang
+    (jaminan itu sebenarnya selalu berasal dari kode di bawah, bukan dari AI), cuma
+    distribusi antar-shift tidak "dioptimalkan" AI — instan & tidak pernah gagal karena
+    network/timeout."""
     hasil: Dict[str, Dict[str, str]] = {}
     for s in staff_list:
         terlarang = set(s.get("shift_terlarang") or [])
         boleh_kerja = [sh for sh in SHIFT_KERJA if sh not in terlarang] or list(SHIFT_KERJA)
-        saran_staf = saran_ai.get(s["id"]) or {}
-        hari: Dict[str, Optional[str]] = {}
-        for tgl in tanggal_list:
-            v = saran_staf.get(tgl)
-            hari[tgl] = v if (v in SHIFT_VALUES and v not in terlarang) else None
-        for tgl in tanggal_list:
-            if hari[tgl] is None:
-                hari[tgl] = random.choice(boleh_kerja)
-        off_days = [t for t in tanggal_list if hari[t] == "off"]
-        kerja_days = [t for t in tanggal_list if hari[t] != "off"]
+        hari: Dict[str, str] = {tgl: random.choice(boleh_kerja) for tgl in tanggal_list}
+        off_days: List[str] = []
+        kerja_days = list(tanggal_list)
         while len(off_days) < WAJIB_OFF_PER_BULAN and kerja_days:
             pilih = random.choice(kerja_days)
             hari[pilih] = "off"
             kerja_days.remove(pilih)
             off_days.append(pilih)
-        while len(off_days) > WAJIB_OFF_PER_BULAN:
-            pilih = random.choice(off_days)
-            hari[pilih] = random.choice(boleh_kerja)
-            off_days.remove(pilih)
-            kerja_days.append(pilih)
         hasil[s["id"]] = hari
     return hasil
-
-
-async def _saran_ai(staff_list: List[dict], tanggal_list: List[str]) -> Dict[str, Dict[str, str]]:
-    """AI Generate Jadwal — draft awal dari OpenAI (dibalas JSON). Boleh gagal/kosong
-    (OPENAI_API_KEY belum diset, timeout, dll) — `_perbaiki_jadwal` tetap menghasilkan
-    jadwal valid dari draft kosong (murni acak-terpandu), cuma kurang "manusiawi"."""
-    if not _openai_client:
-        return {}
-    staf_info = [{"id": s["id"], "nama": s["nama"], "shift_terlarang": s.get("shift_terlarang") or []} for s in staff_list]
-    prompt = f"""Kamu membuat draft jadwal kerja shift bulanan untuk staf hotel. Balas HANYA JSON
-dengan bentuk persis: {{"<staff_id>": {{"<tanggal YYYY-MM-DD>": "morning"|"middle"|"night"|"off"}}}}
-mencakup SEMUA staf berikut dan SEMUA tanggal berikut.
-
-Aturan WAJIB (usahakan sebisa mungkin, akan divalidasi & diperbaiki otomatis oleh kode setelah ini):
-- Tiap staf harus mendapat PERSIS {WAJIB_OFF_PER_BULAN} hari "off" dalam sebulan ini.
-- Staf TIDAK BOLEH mendapat shift yang ada di daftar shift_terlarang miliknya.
-- Usahakan pembagian shift morning/middle/night SEIMBANG antar staf (jangan 1 staf
-  keseringan 1 jenis shift saja, dan jangan semua staf libur di tanggal yang sama).
-- Usahakan hari "off" tersebar merata sepanjang bulan (jangan menumpuk di awal/akhir bulan).
-
-Staf: {json.dumps(staf_info, ensure_ascii=False)}
-Tanggal: {json.dumps(tanggal_list)}"""
-    try:
-        resp = await asyncio.to_thread(
-            _openai_client.chat.completions.create,
-            model="gpt-4o-mini", temperature=0.5,
-            response_format={"type": "json_object"},
-            messages=[{"role": "system", "content": prompt}],
-        )
-        return json.loads(resp.choices[0].message.content or "{}")
-    except Exception as e:
-        logging.getLogger("jadwal_kerja").warning(f"Gagal AI generate jadwal kerja: {e}")
-        return {}
 
 
 # ---- Staf ----
@@ -212,49 +168,63 @@ async def list_riwayat_jadwal(user: dict = Depends(get_current_user)):
 
 @api.post("/jadwal-kerja/generate")
 async def generate_jadwal(body: JadwalGenerateBody, user: dict = Depends(require_owner)):
-    """AI Generate Jadwal (+ AI Optimizer sebagai validasi/perbaikan otomatis di
-    `_perbaiki_jadwal`). Boleh dipanggil ulang untuk regenerasi TOTAL selama status masih
-    draft (menimpa semua sel lama) — begitu published, tidak bisa digenerate ulang di sini
-    (jaga hasil yang sudah dicetak/dibagikan staf supaya tidak berubah diam-diam)."""
+    """Generate jadwal (algoritmik, lihat `_buat_jadwal_acak`). Boleh dipanggil ulang untuk
+    regenerasi TOTAL selama status masih draft (menimpa semua sel lama) — begitu published,
+    tidak bisa digenerate ulang di sini (jaga hasil yang sudah dibagikan staf supaya tidak
+    berubah diam-diam).
+
+    Kunci in-process (`_generate_lock`) + upsert atomik — 2026-07-17: versi awal sempat CRASH
+    nyata di produksi (DuplicateKeyError) kalau dua request generate utk bulan yang sama
+    tumpang tindih (mis. double-click sebelum tombol sempat disabled, atau retry browser
+    saat request AI yang lama belum selesai). Upsert atomik saja ternyata belum cukup kalau
+    beberapa request BENAR-BENAR simultan (diverifikasi lewat stress test asyncio.gather) —
+    tiap request bisa terlanjur baca `existing=None` sebelum request lain sempat commit,
+    lalu masing-masing generate jadwal_id/hasil acak SENDIRI-SENDIRI yang saling menimpa.
+    Kunci ini menghilangkan kemungkinan itu sama sekali dengan menyerialkan seluruh isi
+    fungsi, bukan cuma operasi tulis individualnya."""
     if not (1 <= body.month <= 12):
         raise HTTPException(400, "month harus 1-12")
-    staff_list = await db.staff_kerja.find({"aktif": True}, {"_id": 0}).to_list(200)
-    if not staff_list:
-        raise HTTPException(400, "Belum ada staf aktif — tambah staf dulu di pengaturan Jadwal Kerja")
+    async with _generate_lock:
+        staff_list = await db.staff_kerja.find({"aktif": True}, {"_id": 0}).to_list(200)
+        if not staff_list:
+            raise HTTPException(400, "Belum ada staf aktif — tambah staf dulu di pengaturan Jadwal Kerja")
 
-    existing = await db.jadwal_kerja.find_one({"year": body.year, "month": body.month})
-    if existing and existing.get("status") == "published":
-        raise HTTPException(400, "Jadwal bulan ini sudah dipublish — tidak bisa digenerate ulang otomatis")
+        existing = await db.jadwal_kerja.find_one({"year": body.year, "month": body.month})
+        if existing and existing.get("status") == "published":
+            raise HTTPException(400, "Jadwal bulan ini sudah dipublish — tidak bisa digenerate ulang otomatis")
 
-    tanggal_list = _semua_tanggal(body.year, body.month)
-    saran = await _saran_ai(staff_list, tanggal_list)
-    hasil = _perbaiki_jadwal(staff_list, saran, tanggal_list)
+        tanggal_list = _semua_tanggal(body.year, body.month)
+        hasil = _buat_jadwal_acak(staff_list, tanggal_list)
 
-    now = now_iso()
-    if existing:
-        jadwal_id = existing["id"]
-        await db.jadwal_shifts.delete_many({"jadwal_id": jadwal_id})
-        await db.jadwal_kerja.update_one({"id": jadwal_id}, {"$set": {
-            "status": "draft", "generated_at": now, "generated_by": user["nama"],
-        }})
-    else:
-        jadwal_id = str(uuid.uuid4())
-        await db.jadwal_kerja.insert_one({
-            "id": jadwal_id, "year": body.year, "month": body.month, "status": "draft",
-            "generated_at": now, "generated_by": user["nama"],
-            "published_at": None, "published_by": None, "created_at": now,
-        })
+        now = now_iso()
+        jadwal_id = existing["id"] if existing else str(uuid.uuid4())
+        await db.jadwal_kerja.update_one(
+            {"year": body.year, "month": body.month},
+            {
+                "$set": {"id": jadwal_id, "status": "draft", "generated_at": now, "generated_by": user["nama"]},
+                "$setOnInsert": {"year": body.year, "month": body.month, "published_at": None, "published_by": None, "created_at": now},
+            },
+            upsert=True,
+        )
 
-    docs = [
-        {"id": str(uuid.uuid4()), "jadwal_id": jadwal_id, "staff_id": sid, "tanggal": tgl, "shift": sh}
-        for sid, hari in hasil.items() for tgl, sh in hari.items()
-    ]
-    if docs:
-        await db.jadwal_shifts.insert_many(docs)
+        ops = [
+            ReplaceOne(
+                {"jadwal_id": jadwal_id, "staff_id": sid, "tanggal": tgl},
+                {"id": str(uuid.uuid4()), "jadwal_id": jadwal_id, "staff_id": sid, "tanggal": tgl, "shift": sh},
+                upsert=True,
+            )
+            for sid, hari in hasil.items() for tgl, sh in hari.items()
+        ]
+        if ops:
+            await db.jadwal_shifts.bulk_write(ops, ordered=False)
+        # Buang sel staf yang sudah tidak aktif/dihapus sejak generate terakhir kali (kalau
+        # ada) — supaya tidak ada sisa data yatim dari staf lama yang tidak lagi dijadwalkan.
+        staff_ids_aktif = [s["id"] for s in staff_list]
+        await db.jadwal_shifts.delete_many({"jadwal_id": jadwal_id, "staff_id": {"$nin": staff_ids_aktif}})
 
-    await log_activity(user, "generate_jadwal_kerja", f"Generate jadwal kerja {body.month}/{body.year} ({len(staff_list)} staf aktif)")
-    jadwal = await db.jadwal_kerja.find_one({"id": jadwal_id})
-    return await _detail_jadwal(jadwal)
+        await log_activity(user, "generate_jadwal_kerja", f"Generate jadwal kerja {body.month}/{body.year} ({len(staff_list)} staf aktif)")
+        jadwal = await db.jadwal_kerja.find_one({"id": jadwal_id})
+        return await _detail_jadwal(jadwal)
 
 
 @api.put("/jadwal-kerja/{jadwal_id}/shift")
@@ -346,52 +316,3 @@ async def publish_jadwal(jadwal_id: str, user: dict = Depends(require_owner)):
     return await _detail_jadwal(jadwal2)
 
 
-@api.get("/jadwal-kerja/{jadwal_id}/export.pdf")
-async def export_jadwal_pdf(jadwal_id: str, orientation: str = "landscape", user: dict = Depends(get_current_user)):
-    jadwal = await db.jadwal_kerja.find_one({"id": jadwal_id})
-    if not jadwal:
-        raise HTTPException(404, "Jadwal tidak ditemukan")
-    if jadwal.get("status") != "published":
-        raise HTTPException(400, "Hanya jadwal yang sudah dipublish yang bisa dicetak")
-    detail = await _detail_jadwal(jadwal)
-
-    pagesize = landscape(A4) if orientation != "portrait" else A4
-    buf = io.BytesIO()
-    doc = SimpleDocTemplate(buf, pagesize=pagesize, topMargin=10 * mm, bottomMargin=10 * mm, leftMargin=10 * mm, rightMargin=10 * mm)
-    styles = getSampleStyleSheet()
-    elems = [
-        Paragraph(f"Jadwal Kerja Staf — {BULAN_LABEL[jadwal['month']]} {jadwal['year']}", styles["Title"]),
-        Paragraph(f"Pelangi Homestay &middot; dipublish {(jadwal.get('published_at') or '')[:10]} oleh {jadwal.get('published_by') or '-'}", styles["Normal"]),
-        Spacer(1, 6 * mm),
-    ]
-    header = ["Staf"] + [t[-2:] for t in detail["tanggal"]]
-    rows = [header] + [
-        [s["nama"]] + [SHIFT_SINGKAT.get(s["shift"].get(t), "-") for t in detail["tanggal"]]
-        for s in detail["staf"]
-    ]
-    tabel = Table(rows, repeatRows=1)
-    style = [
-        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#1e3a5f")),
-        ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
-        ("FONTSIZE", (0, 0), (-1, -1), 7),
-        ("GRID", (0, 0), (-1, -1), 0.4, colors.grey),
-        ("ALIGN", (1, 0), (-1, -1), "CENTER"),
-        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-    ]
-    for ri, s in enumerate(detail["staf"], start=1):
-        for ci, t in enumerate(detail["tanggal"], start=1):
-            sh = s["shift"].get(t)
-            if sh == "off":
-                style.append(("BACKGROUND", (ci, ri), (ci, ri), colors.HexColor("#e2e8f0")))
-            elif sh == "night":
-                style.append(("BACKGROUND", (ci, ri), (ci, ri), colors.HexColor("#c7d2fe")))
-    tabel.setStyle(TableStyle(style))
-    elems.append(tabel)
-    elems.append(Spacer(1, 5 * mm))
-    elems.append(Paragraph("M = Morning &middot; MID = Middle &middot; N = Night &middot; OFF = Libur", styles["Normal"]))
-    doc.build(elems)
-    pdf_bytes = buf.getvalue()
-    return StreamingResponse(
-        io.BytesIO(pdf_bytes), media_type="application/pdf",
-        headers={"Content-Disposition": f'inline; filename="jadwal-kerja-{jadwal["month"]}-{jadwal["year"]}.pdf"'},
-    )

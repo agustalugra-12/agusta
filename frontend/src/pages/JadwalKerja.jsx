@@ -1,12 +1,12 @@
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
-import api, { API_BASE } from "@/lib/apiClient";
+import api from "@/lib/apiClient";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
-import { ChevronLeft, ChevronRight, Sparkles, Printer, Send, Users, Plus, Pencil, Repeat2, AlertTriangle, History } from "lucide-react";
+import { ChevronLeft, ChevronRight, Sparkles, Send, Users, Plus, Pencil, Repeat2, AlertTriangle, History } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
 
 const SHIFT_LABEL = { morning: "Morning", middle: "Middle", night: "Night", off: "Off" };
@@ -217,13 +217,6 @@ export default function JadwalKerja() {
     finally { setPublishing(false); }
   };
 
-  // Blob-fetch + window.open (atau <a target=_blank> pakai blob url) TIDAK ANDAL di sini:
-  // blob: URL hanya valid di tab/browsing-context yang membuatnya, jadi tab baru sering
-  // gagal/kosong. Login (routes/auth.py) sudah set cookie httpOnly `access_token` (dipakai
-  // get_current_user sebagai fallback selain header Authorization) — jadi cukup link browser
-  // biasa ke endpoint-nya, cookie ikut terkirim otomatis, tidak perlu fetch+blob sama sekali.
-  const exportPdfUrl = (orientation) => jadwal ? `${API_BASE}/jadwal-kerja/${jadwal.id}/export.pdf?orientation=${orientation}` : "#";
-
   const bukaBulanRiwayat = (r) => {
     setViewDate(new Date(r.year, r.month - 1, 1));
     setShowRiwayat(false);
@@ -237,7 +230,7 @@ export default function JadwalKerja() {
         <div>
           <p className="text-xs uppercase tracking-[0.25em] text-slate-500">Staf</p>
           <h1 className="text-3xl sm:text-4xl font-extrabold">Jadwal Kerja</h1>
-          <p className="text-slate-500 text-sm mt-1">AI buat draft jadwal shift bulanan, tinjau &amp; publish sebelum dicetak.</p>
+          <p className="text-slate-500 text-sm mt-1">Buat draft jadwal shift bulanan otomatis, tinjau &amp; publish setelah sesuai.</p>
         </div>
         <Button variant="outline" onClick={() => { setShowRiwayat(true); loadRiwayat(); }}><History className="w-4 h-4 mr-2" /> Riwayat</Button>
       </div>
@@ -287,7 +280,7 @@ export default function JadwalKerja() {
             {isOwner ? (
               <>
                 <Button onClick={generate} disabled={generating || staffList.length === 0} className="bg-blue-700 hover:bg-blue-800">
-                  <Sparkles className="w-4 h-4 mr-2" /> {generating ? "AI sedang membuat jadwal…" : "Generate Jadwal (AI)"}
+                  <Sparkles className="w-4 h-4 mr-2" /> {generating ? "Membuat jadwal…" : "Generate Jadwal"}
                 </Button>
                 {staffList.length === 0 && <p className="text-xs text-red-500">Tambah staf dulu sebelum generate.</p>}
               </>
@@ -302,18 +295,12 @@ export default function JadwalKerja() {
             {isOwner && jadwal.status === "draft" && (
               <>
                 <Button size="sm" variant="outline" onClick={generate} disabled={generating}>
-                  <Sparkles className="w-3.5 h-3.5 mr-1" /> {generating ? "Membuat ulang…" : "Generate Ulang (AI)"}
+                  <Sparkles className="w-3.5 h-3.5 mr-1" /> {generating ? "Membuat ulang…" : "Generate Ulang"}
                 </Button>
                 <Button size="sm" variant="outline" onClick={() => setSwapOpen(true)}><Repeat2 className="w-3.5 h-3.5 mr-1" /> Tukar Shift</Button>
                 <Button size="sm" className="bg-emerald-600 hover:bg-emerald-700" onClick={publish} disabled={publishing || totalPelanggaran > 0}>
                   <Send className="w-3.5 h-3.5 mr-1" /> {publishing ? "Mempublish…" : "Publish Jadwal"}
                 </Button>
-              </>
-            )}
-            {jadwal.status === "published" && (
-              <>
-                <Button size="sm" variant="outline" asChild><a href={exportPdfUrl("landscape")} target="_blank" rel="noreferrer"><Printer className="w-3.5 h-3.5 mr-1 inline" /> Print (Landscape)</a></Button>
-                <Button size="sm" variant="outline" asChild><a href={exportPdfUrl("portrait")} target="_blank" rel="noreferrer"><Printer className="w-3.5 h-3.5 mr-1 inline" /> Print (Portrait)</a></Button>
               </>
             )}
           </div>

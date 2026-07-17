@@ -1,5 +1,8 @@
 # See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
 
+# Runtime user uploads (foto struk Telegram, dll) — data pengguna, bukan source code
+backend/uploads/
+
 # IDE and editors
 .idea/
 .vscode/
