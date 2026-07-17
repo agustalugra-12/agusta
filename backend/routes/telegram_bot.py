@@ -1,5 +1,6 @@
 from core import *
 import asyncio
+import base64
 import json
 import re
 import secrets as pysecrets
@@ -38,6 +39,25 @@ atau "500 ribu" artinya 500000, "1jt"/"1 juta" artinya 1000000.
 Kalau pesan TIDAK menyebutkan pengeluaran sama sekali (pertanyaan, sapaan, obrolan biasa, atau
 justru menyebut PEMASUKAN/pendapatan bukan pengeluaran), balas {"items": []} — JANGAN mengarang
 nominal yang tidak jelas disebutkan di pesan."""
+
+EXPENSE_PHOTO_EXTRACT_PROMPT = """Kamu mengekstrak PENGELUARAN dari FOTO nota/struk/bukti
+pembayaran hotel. Balas HANYA JSON: {"items": [{"nominal": <integer rupiah>, "deskripsi": "<keterangan singkat>"}]}.
+
+ATURAN WAJIB — SELALU balas TEPAT SATU item per struk (array "items" isinya 1 elemen saja),
+walau struk berisi banyak barang:
+- "nominal" = TOTAL AKHIR yang dibayar di struk itu (baris "Total"/"Total Bayar"/"Grand Total"
+  paling bawah) — BUKAN salah satu subtotal/harga per barang.
+- "deskripsi" = ringkasan singkat barang/jasa yang dibeli (gabungkan nama item kalau lebih dari
+  satu, mis. "Galon air & bensin"), atau nama toko/keperluan kalau item tidak jelas.
+- JANGAN PERNAH memecah 1 struk jadi beberapa item terpisah — itu akan membuat pengeluaran
+  tercatat DOBEL (subtotal per barang + total sekaligus).
+
+Nominal harus angka murni tanpa "Rp"/titik/koma pemisah ribuan.
+Kalau pengirim menyertakan catatan teks tambahan, jadikan itu konteks untuk keterangan saja —
+nominal tetap harus dari TOTAL di struk, kecuali struk sama sekali tidak menunjukkan angka total
+yang jelas (baru boleh pakai angka dari catatan kalau ada).
+Kalau gambar SAMA SEKALI bukan nota/struk/bukti pembayaran, atau totalnya tidak terbaca sama
+sekali, balas {"items": []} — JANGAN mengarang angka."""
 
 # ---- Telegram Bot: owner (laporan ringkas on-demand) & staff (kirim pengeluaran foto+teks) ----
 # Dua bot terpisah (bukan satu bot dibedakan lewat role) sesuai yang user sudah buat sendiri
@@ -98,9 +118,11 @@ async def _get_bot_username(kind: str) -> str:
         return ""
 
 
-async def _unduh_foto_telegram(bot_token: str, file_id: str) -> Optional[str]:
-    """Download foto dari Telegram Bot API, simpan ke disk lokal, return path publik
-    (/uploads/pengeluaran/...) yang di-serve lewat StaticFiles di server.py."""
+async def _unduh_foto_telegram(bot_token: str, file_id: str) -> Optional[tuple]:
+    """Download foto dari Telegram Bot API, simpan ke disk lokal. Return (path publik
+    /uploads/pengeluaran/... yang di-serve lewat StaticFiles di server.py, isi bytes, mime) —
+    bytes dikembalikan sekalian (bukan cuma path) supaya AI vision bisa baca langsung tanpa
+    perlu download foto yang sama dua kali."""
     try:
         info = await _telegram_api(bot_token, "getFile", file_id=file_id)
         file_path = (info.get("result") or {}).get("file_path")
@@ -109,10 +131,11 @@ async def _unduh_foto_telegram(bot_token: str, file_id: str) -> Optional[str]:
         async with httpx.AsyncClient(timeout=20) as http:
             resp = await http.get(f"https://api.telegram.org/file/bot{bot_token}/{file_path}")
             resp.raise_for_status()
-        ext = file_path.rsplit(".", 1)[-1] if "." in file_path else "jpg"
+        ext = file_path.rsplit(".", 1)[-1].lower() if "." in file_path else "jpg"
+        mime = "image/png" if ext == "png" else "image/jpeg"
         fname = f"{uuid.uuid4().hex}.{ext}"
         (UPLOAD_DIR / fname).write_bytes(resp.content)
-        return f"/uploads/pengeluaran/{fname}"
+        return f"/uploads/pengeluaran/{fname}", resp.content, mime
     except Exception as e:
         logging.getLogger("telegram_bot").warning(f"Gagal unduh foto Telegram: {e}")
         return None
@@ -357,23 +380,70 @@ async def _ekstrak_pengeluaran_dari_teks(text: str) -> list:
         return []
 
 
-async def _proses_pengeluaran_foto(user_doc: dict, bot_token: str, file_id: str, caption: str) -> str:
-    caption = (caption or "").strip()
-    m = _NOMINAL_RE.match(caption)
-    if not m:
-        return "Format caption belum sesuai.\nKirim ulang foto dengan caption: <nominal> <keterangan>\nContoh: 50000 beli galon air"
+async def _ekstrak_pengeluaran_dari_foto(image_bytes: bytes, mime: str, caption: str) -> list:
+    """AI baca langsung isi foto struk/nota (vision, gpt-4o-mini) — pengganti utama caption
+    berformat "<nominal> <keterangan>" (permintaan user 2026-07-17: staf/owner kirim foto
+    harusnya langsung dibaca, bukan diminta format ulang)."""
+    if not _openai_client:
+        return []
     try:
-        nominal = int(m.group(1).replace(".", "").replace(",", ""))
-    except ValueError:
-        return "Nominal tidak terbaca.\nKirim ulang foto dengan caption: <nominal> <keterangan>\nContoh: 50000 beli galon air"
-    if nominal <= 0:
-        return "Nominal harus lebih dari 0."
-    deskripsi = m.group(2).strip() or "Pengeluaran via Telegram"
-    foto_url = await _unduh_foto_telegram(bot_token, file_id)
-    teks = await _catat_pengeluaran_items(user_doc, [{"nominal": nominal, "deskripsi": deskripsi}], foto_url or "")
-    if not foto_url:
-        teks += "\n(foto gagal diunduh, tapi pengeluaran tetap tercatat)"
-    return teks
+        b64 = base64.b64encode(image_bytes).decode()
+        user_content = [{"type": "image_url", "image_url": {"url": f"data:{mime};base64,{b64}"}}]
+        if caption.strip():
+            user_content.append({"type": "text", "text": f"Catatan dari pengirim: {caption.strip()}"})
+        resp = await asyncio.to_thread(
+            _openai_client.chat.completions.create,
+            model="gpt-4o-mini", temperature=0,
+            response_format={"type": "json_object"},
+            messages=[
+                {"role": "system", "content": EXPENSE_PHOTO_EXTRACT_PROMPT},
+                {"role": "user", "content": user_content},
+            ],
+        )
+        data = json.loads(resp.choices[0].message.content or "{}")
+        out = []
+        for it in (data.get("items") or []):
+            try:
+                nominal = int(it.get("nominal"))
+                deskripsi = str(it.get("deskripsi") or "").strip()
+                if nominal > 0 and deskripsi:
+                    out.append({"nominal": nominal, "deskripsi": deskripsi})
+            except (TypeError, ValueError):
+                continue
+        return out
+    except Exception as e:
+        logging.getLogger("telegram_bot").warning(f"Gagal ekstrak pengeluaran dari foto (vision): {e}")
+        return []
+
+
+async def _proses_pengeluaran_foto(user_doc: dict, bot_token: str, file_id: str, caption: str) -> str:
+    """AI baca foto struk langsung (vision) — caption TIDAK LAGI wajib berformat khusus,
+    cukup kirim foto struk apa adanya. Caption (kalau ada) dipakai sebagai konteks tambahan.
+    Fallback ke parsing caption manual "<nominal> <keterangan>" kalau AI gagal baca gambar
+    tapi caption-nya kebetulan sudah dalam format lama itu (kompatibel mundur)."""
+    caption = (caption or "").strip()
+    hasil_unduh = await _unduh_foto_telegram(bot_token, file_id)
+    if not hasil_unduh:
+        return "Gagal mengunduh foto dari Telegram, coba kirim ulang."
+    foto_url, image_bytes, mime = hasil_unduh
+
+    items = await _ekstrak_pengeluaran_dari_foto(image_bytes, mime, caption)
+    if not items and caption:
+        m = _NOMINAL_RE.match(caption)
+        if m:
+            try:
+                nominal = int(m.group(1).replace(".", "").replace(",", ""))
+                if nominal > 0:
+                    items = [{"nominal": nominal, "deskripsi": m.group(2).strip() or "Pengeluaran via Telegram"}]
+            except ValueError:
+                pass
+    if not items:
+        return (
+            "Belum berhasil membaca nominal pengeluaran dari foto ini — pastikan foto struk/nota "
+            "jelas & nominalnya terbaca.\nBisa juga kirim ulang dengan caption manual: "
+            "<nominal> <keterangan>\nContoh: 50000 beli galon air"
+        )
+    return await _catat_pengeluaran_items(user_doc, items, foto_url)
 
 
 async def _handle_link_code(kind: str, chat_id: Any, code: str) -> str:
