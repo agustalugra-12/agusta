@@ -174,11 +174,20 @@ async def _kirim_via_provider(no_hp: str, pesan: str) -> tuple[bool, Optional[st
 
 
 @api.post("/webhook/whatsapp/incoming")
-async def whatsapp_incoming(request: Request):
+async def whatsapp_incoming(request: Request, token: Optional[str] = None):
     """Endpoint publik yang dipanggil provider WhatsApp saat ada pesan masuk. Kontrak
     generik {sender/from, message/text, name} supaya kompatibel dengan provider apa pun
     (Fonnte/Wablas/dll biasanya mengirim salah satu dari nama field ini).
-    """
+
+    `?token=` divalidasi ke `webhook_config.webhook_token` yang sama dipakai endpoint
+    BalesOtomatis (self-review 2026-07-17: endpoint ini sebelumnya 100% tanpa validasi
+    apa pun, terbuka untuk siapa saja di internet — sekarang ada auto-klasifikasi AI +
+    auto-buat tiket di jalur ini, jadi celah itu lebih berisiko dari sebelumnya. Provider
+    lain (Fonnte/Wablas/dll) tinggal tambahkan `?token=<webhook_token>` di URL webhook
+    yang didaftarkan ke mereka)."""
+    cfg = await db.webhook_config.find_one({}, {"_id": 0})
+    if not cfg or not cfg.get("webhook_token") or cfg["webhook_token"] != token:
+        raise HTTPException(404, "Not Found")
     payload = await request.json()
     no_hp = payload.get("sender") or payload.get("from") or payload.get("no_hp") or ""
     pesan_masuk = payload.get("message") or payload.get("text") or payload.get("pesan") or ""
