@@ -3,6 +3,15 @@ from core import *
 # Status booking yang dianggap menempati kamar (dipakai juga di routes/bookings.py availability check).
 ACTIVE_BOOKING_STATUSES = ["aktif", "booking_paid", "booking_pending"]
 
+# Tahap 2 Modul Reservasi (2026-07-17): booking Menginap dari Booking Request yang masih
+# menunggu input/sinkron manual ke PMS RedDoorz TETAP memblokir slotnya (check_room_available
+# tidak menyaring sync_status sama sekali — anti-overbooking tidak berubah), tapi TIDAK
+# ditampilkan sebagai tamu terkonfirmasi di Kalender Ketersediaan sampai email RedDoorz
+# cocok (lihat backend/routes/otomasi_email.py). Kamar jadi terlihat "tersedia" di kalender
+# padahal sudah terpakai — staf yang coba booking ulang tetap akan ditolak check_room_available,
+# jadi tidak berisiko double-booking, cuma tampilan sementara belum mencerminkan status penuh.
+SYNC_STATUS_BELUM_CONFIRMED = ["waiting_reddoorz_input", "waiting_reddoorz_sync"]
+
 # Ambang batas stok menipis: tipe kamar dianggap menipis jika sisa tersedia <= 20% dari total.
 LOW_STOCK_THRESHOLD_PCT = 20
 
@@ -92,6 +101,7 @@ async def kalender_bulanan(
 
     bookings = await db.bookings.find({
         "status": {"$in": ACTIVE_BOOKING_STATUSES},
+        "sync_status": {"$nin": SYNC_STATUS_BELUM_CONFIRMED},
         "jam_mulai": {"$lt": month_end.isoformat()},
         "jam_selesai": {"$gte": month_start.isoformat()},
     }, {"_id": 0, "room_id": 1, "jam_mulai": 1, "jam_selesai": 1}).to_list(2000)
@@ -134,6 +144,7 @@ async def ketersediaan_hari(
     rooms = await db.rooms.find({}, {"_id": 0, "id": 1, "tipe": 1}).to_list(500)
     bookings = await db.bookings.find({
         "status": {"$in": ACTIVE_BOOKING_STATUSES},
+        "sync_status": {"$nin": SYNC_STATUS_BELUM_CONFIRMED},
         "jam_mulai": {"$lt": day_end.isoformat()},
         "jam_selesai": {"$gte": day_start.isoformat()},
     }, {"_id": 0, "room_id": 1, "jam_mulai": 1, "jam_selesai": 1}).to_list(2000)

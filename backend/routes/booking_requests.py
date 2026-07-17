@@ -140,6 +140,13 @@ async def approve_booking_request(rid: str, body: BookingRequestApprove, user: d
             "tipe": tipe, "dengan_sarapan": False,
         }
         booking = await create_reservation(data, source="whatsapp_request", harga_override=harga_override)
+        # Tahap 2 (PRD Modul Reservasi): booking Menginap dari Booking Request TIDAK langsung
+        # dianggap "Confirmed" — admin harus input manual ke PMS RedDoorz dulu, baru dianggap
+        # pasti setelah email konfirmasi RedDoorz cocok (lihat otomasi_email.py). Day Use tidak
+        # pernah masuk RedDoorz (aturan lama, tidak berubah), jadi langsung "not_required".
+        sync_status = "waiting_reddoorz_input" if tipe == "menginap" else "not_required"
+        await db.bookings.update_one({"id": booking["id"]}, {"$set": {"sync_status": sync_status}})
+        booking["sync_status"] = sync_status
         created_bookings.append(booking)
 
     group_id = None

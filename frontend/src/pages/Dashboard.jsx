@@ -15,7 +15,7 @@ import {
   BedDouble, AlertTriangle, Hourglass, Clock, Wallet,
   CalendarRange, Users as UsersIcon, Sparkles, Wrench, Calendar, MessageCircle, X, Inbox, Check,
 } from "lucide-react";
-import { SetujuiDialog, TolakDialog } from "@/pages/BookingRequests";
+import { SetujuiDialog, TolakDialog, ActionRequiredRedDoorz } from "@/pages/BookingRequests";
 
 const STAT_CARDS = [
   { key: "kosong", label: "Kosong", icon: BedDouble, color: "#10B981" },
@@ -149,7 +149,12 @@ export default function Dashboard() {
         api.get("/booking-requests", { params: { status: "waiting_approval" } }),
       ]);
       // tampilkan semua booking yang menempati kamar: aktif, booking_pending, booking_paid
-      const occupying = b.data.filter(x => ["aktif", "booking_pending", "booking_paid"].includes(x.status));
+      // sync_status waiting_reddoorz_* (Tahap 2 Modul Reservasi) — booking Menginap dari
+      // Booking Request yang belum diinput/disinkron manual ke PMS RedDoorz TETAP memblokir
+      // slotnya di backend (check_room_available tidak berubah), tapi belum ditampilkan
+      // sebagai tamu terkonfirmasi di grid Dashboard sampai email RedDoorz cocok.
+      const occupying = b.data.filter(x => ["aktif", "booking_pending", "booking_paid"].includes(x.status)
+        && !["waiting_reddoorz_input", "waiting_reddoorz_sync"].includes(x.sync_status));
       setSummary(s.data); setRooms(r.data); setActive(c.data); setBookings(occupying); setWidgets(w.data);
       setBookingRequests(br.data);
     } catch (e) { console.error(e); }
@@ -401,6 +406,7 @@ export default function Dashboard() {
       </div>
 
       {/* Alerts */}
+      <ActionRequiredRedDoorz />
       {bookingRequests.length > 0 && (
         <div data-testid="booking-request-alert" className="rounded-xl bg-blue-50 border border-blue-200 p-4">
           <div className="flex items-start gap-3 mb-3">

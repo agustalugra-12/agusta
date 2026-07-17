@@ -260,6 +260,34 @@ async def parse_email_with_ai(subjek: str, pengirim: str, isi_email: str) -> dic
     return json.loads(resp.choices[0].message.content)
 
 
+async def _cocokkan_booking_pending_reddoorz(nama_tamu: str, room_tipe: str, check_in: datetime, jumlah_kamar: int) -> list:
+    """Cari booking yang sudah dibuat & lunas lewat Booking Request (AI WhatsApp -> approval
+    -> Tripay, `backend/routes/booking_requests.py`) dan sedang menunggu sinkron RedDoorz
+    (`sync_status="waiting_reddoorz_sync"` — staf sudah klik "Sudah Input ke RedDoorz") yang
+    cocok dengan email konfirmasi ini. Dipakai `buat_reservasi_otomatis` supaya TIDAK membuat
+    booking duplikat untuk reservasi yang sebenarnya sudah ada. Cocok = tipe kamar sama,
+    check-in beda maksimal 1 hari (RedDoorz kadang beda pembulatan zona waktu), dan nama tamu
+    beririsan (longgar, huruf/angka saja, case-insensitive) — tidak exact match karena ejaan
+    AI WhatsApp vs RedDoorz bisa sedikit beda. Return maksimal `jumlah_kamar` kandidat."""
+    kandidat = await db.bookings.find({
+        "source": "whatsapp_request", "sync_status": "waiting_reddoorz_sync",
+        "room_tipe": room_tipe, "tipe": "menginap",
+    }, {"_id": 0}).to_list(50)
+    nama_norm = re.sub(r"[^a-z0-9]", "", (nama_tamu or "").lower())
+    cocok = []
+    for b in kandidat:
+        try:
+            b_checkin = parse_iso(b["jam_mulai"], "jam_mulai")
+        except HTTPException:
+            continue
+        if abs((b_checkin.date() - check_in.date()).days) > 1:
+            continue
+        b_nama_norm = re.sub(r"[^a-z0-9]", "", (b.get("nama_tamu") or "").lower())
+        if nama_norm and b_nama_norm and (nama_norm in b_nama_norm or b_nama_norm in nama_norm):
+            cocok.append(b)
+    return cocok[:jumlah_kamar]
+
+
 async def buat_reservasi_otomatis(log_id: str, data: dict, sumber: str, subjek: str) -> None:
     """Reservation Automation (PRD): dari data hasil AI Email Parser, buat reservasi
     otomatis di Pelangi PMS tanpa input manual staf — asalkan (a) tipe kamar OTA sudah
@@ -292,6 +320,30 @@ async def buat_reservasi_otomatis(log_id: str, data: dict, sumber: str, subjek: 
         return
 
     jumlah_kamar = max(1, min(int(data.get("jumlah_kamar") or 1), 20))  # batas atas jaga-jaga dari data OTA yang tidak masuk akal
+
+    # Tahap 2 Modul Reservasi (2026-07-17): kalau ini email konfirmasi RedDoorz untuk booking
+    # yang SUDAH dibuat & lunas lewat Booking Request (AI WhatsApp -> approval -> Tripay),
+    # jangan buat reservasi baru (jadi duplikat) — tandai booking yang sudah ada sebagai
+    # tersinkron. Hanya short-circuit kalau SEMUA kamar di email berhasil dicocokkan dengan
+    # keyakinan (1 kandidat unik per kamar); kalau ambigu/sebagian, biarkan jalan ke alur lama
+    # di bawah (lebih aman duplikat yang bisa direkonsiliasi manual staf, daripada salah tandai
+    # booking orang lain sebagai tersinkron).
+    pending_match = await _cocokkan_booking_pending_reddoorz(
+        data.get("nama_tamu", ""), mapping["pms_tipe"], check_in, jumlah_kamar
+    )
+    if len(pending_match) == jumlah_kamar:
+        reservation_ids = []
+        for b in pending_match:
+            await db.bookings.update_one({"id": b["id"]}, {"$set": {
+                "sync_status": "synced", "ota_reservation_no": data.get("no_reservasi"), "updated_at": now_iso(),
+            }})
+            reservation_ids.append(b["id"])
+        await db.email_logs.update_one({"id": log_id}, {"$set": {
+            "reservation_id": reservation_ids[0], "reservation_ids": reservation_ids,
+            "aksi": "reservasi_baru_dibuat", "status": "Parsed_Success",
+        }})
+        return
+
     kandidat = await db.rooms.find({"tipe": mapping["pms_tipe"]}, {"_id": 0}).to_list(200)
     dipilih = []
     for r in kandidat:

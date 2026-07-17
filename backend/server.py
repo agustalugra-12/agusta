@@ -45,6 +45,7 @@ async def startup():
     await db.bookings.create_index("source")
     await db.bookings.create_index("ota_reservation_no", sparse=True)
     await db.bookings.create_index("modifikasi_status", sparse=True)
+    await db.bookings.create_index("sync_status", sparse=True)
     await db.rates.create_index([("room_type", 1), ("tanggal", 1)], unique=True)
     await db.availability_logs.create_index("room_id")
     await db.availability_logs.create_index("changed_at")

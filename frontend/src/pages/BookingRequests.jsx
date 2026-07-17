@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
-import { Copy, ExternalLink, Check, X } from "lucide-react";
+import { Copy, ExternalLink, Check, X, AlertOctagon } from "lucide-react";
 
 const STATUS_LABEL = {
   waiting_approval: "Menunggu Persetujuan",
@@ -208,6 +208,69 @@ export function TolakDialog({ req, onOpenChange, onDone }) {
   );
 }
 
+export function ActionRequiredRedDoorz() {
+  const [items, setItems] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [busyId, setBusyId] = useState(null);
+
+  const load = async () => {
+    setLoading(true);
+    try {
+      const { data } = await api.get("/bookings", { params: { sync_status: "waiting_reddoorz_input" } });
+      setItems(data.filter((b) => b.payment_status === "paid"));
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Gagal memuat daftar Action Required");
+    } finally {
+      setLoading(false);
+    }
+  };
+  useEffect(() => { load(); }, []);
+
+  const tandaiSelesai = async (b) => {
+    setBusyId(b.id);
+    try {
+      await api.post(`/bookings/${b.id}/reddoorz-input-selesai`);
+      toast.success(`Booking ${b.kode} ditandai sudah diinput ke RedDoorz`);
+      load();
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Gagal");
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  if (!loading && items.length === 0) return null;
+
+  return (
+    <div className="rounded-xl bg-amber-50 border border-amber-200 p-4">
+      <div className="flex items-start gap-3 mb-3">
+        <AlertOctagon className="w-5 h-5 text-amber-600 mt-0.5 shrink-0" />
+        <div className="text-sm">
+          <div className="font-semibold text-amber-900">Action Required — Perlu Input ke PMS RedDoorz</div>
+          <div className="text-amber-700">Booking Menginap ini sudah lunas — input manual ke PMS RedDoorz, lalu tandai selesai di sini. Baru dianggap "Confirmed" setelah email konfirmasi RedDoorz diterima.</div>
+        </div>
+      </div>
+      {loading ? (
+        <p className="text-xs text-amber-700">Memuat…</p>
+      ) : (
+        <div className="space-y-2">
+          {items.map((b) => (
+            <div key={b.id} className="flex items-center justify-between gap-3 bg-white border border-amber-100 rounded-lg p-2.5 text-sm">
+              <div>
+                <div className="font-semibold">{b.nama_tamu} — Kamar {b.room_nomor} ({b.room_tipe})</div>
+                <div className="text-xs text-slate-500">{b.kode} · check-in {fmtDateTime(b.jam_mulai)}</div>
+              </div>
+              <Button size="sm" className="bg-amber-600 hover:bg-amber-700 shrink-0" disabled={busyId === b.id} onClick={() => tandaiSelesai(b)}>
+                {busyId === b.id ? "Menyimpan…" : "Sudah Input ke RedDoorz"}
+              </Button>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function BookingRequests() {
   const [items, setItems] = useState([]);
   const [statusFilter, setStatusFilter] = useState("waiting_approval");
@@ -235,6 +298,8 @@ export default function BookingRequests() {
         <h1 className="text-3xl sm:text-4xl font-extrabold">Booking Request</h1>
         <p className="text-slate-500 text-sm mt-1">Permintaan booking dari AI WhatsApp — tinjau ketersediaan lalu setujui/tolak sebelum tamu diberi link pembayaran.</p>
       </div>
+
+      <ActionRequiredRedDoorz />
 
       <div className="flex gap-2 flex-wrap">
         {[["waiting_approval", "Menunggu Persetujuan"], ["waiting_payment", "Menunggu Pembayaran"], ["rejected", "Ditolak"], ["", "Semua"]].map(([k, lbl]) => (

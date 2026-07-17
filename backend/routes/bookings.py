@@ -90,13 +90,17 @@ async def create_booking(body: BookingCreate, user: dict = Depends(get_current_u
 @api.get("/bookings")
 async def list_bookings(status: Optional[str] = None, tipe: Optional[str] = None,
                         search: Optional[str] = None, date: Optional[str] = None,
+                        sync_status: Optional[str] = None,
                         user: dict = Depends(get_current_user)):
     """Daftar reservasi. `search` mencocokkan nama tamu atau kode booking (case-insensitive).
     `date` (YYYY-MM-DD) memfilter booking yang overlap tanggal tersebut — dipakai Daftar Reservasi.
+    `sync_status` (Tahap 2 Modul Reservasi) — dipakai halaman Booking Request untuk daftar
+    "Perlu Input RedDoorz" (`waiting_reddoorz_input`).
     """
     q: Dict[str, Any] = {}
     if status: q["status"] = status
     if tipe: q["tipe"] = tipe
+    if sync_status: q["sync_status"] = sync_status
     if search:
         q["$or"] = [
             {"nama_tamu": {"$regex": search, "$options": "i"}},
@@ -333,6 +337,23 @@ async def mark_paid_manual(bid: str, body: ManualMarkPaidBody, user: dict = Depe
                 f"Gagal kirim voucher otomatis (manual paid) booking {b['kode']}: {e}"
             )
     return {"ok": True, "booking_kode": b["kode"], "amount": nominal, "status": "booking_paid"}
+
+@api.post("/bookings/{bid}/reddoorz-input-selesai")
+async def reddoorz_input_selesai(bid: str, user: dict = Depends(get_current_user)):
+    """Tahap 2 Modul Reservasi: staf menandai sudah input booking Menginap ini secara manual
+    ke PMS RedDoorz — booking ini masih BELUM "Confirmed" sampai email konfirmasi RedDoorz
+    diterima & dicocokkan otomatis (lihat `_cocokkan_booking_pending_reddoorz`,
+    `backend/routes/otomasi_email.py`), status transisi ke `waiting_reddoorz_sync`."""
+    b = await db.bookings.find_one({"id": bid})
+    if not b:
+        raise HTTPException(404, "Booking tidak ditemukan")
+    if b.get("sync_status") != "waiting_reddoorz_input":
+        raise HTTPException(400, f"Booking ini tidak dalam status menunggu input RedDoorz (sync_status: {b.get('sync_status')})")
+    if b.get("payment_status") != "paid":
+        raise HTTPException(400, "Booking ini belum lunas — input ke RedDoorz setelah tamu bayar")
+    await db.bookings.update_one({"id": bid}, {"$set": {"sync_status": "waiting_reddoorz_sync", "updated_at": now_iso()}})
+    await log_activity(user, "reddoorz_input_selesai", f"Booking {b['kode']} ditandai sudah diinput manual ke PMS RedDoorz", entity=b.get("room_nomor", ""))
+    return {"ok": True, "booking_kode": b["kode"], "sync_status": "waiting_reddoorz_sync"}
 
 @api.post("/bookings/{bid}/no-show")
 async def mark_no_show(bid: str, body: NoShowBody, user: dict = Depends(get_current_user)):
