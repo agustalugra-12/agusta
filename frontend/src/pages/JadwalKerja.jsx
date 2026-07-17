@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { ChevronLeft, ChevronRight, Sparkles, Printer, Send, Users, Plus, Pencil, Repeat2, AlertTriangle, History } from "lucide-react";
+import { useAuth } from "@/context/AuthContext";
 
 const SHIFT_LABEL = { morning: "Morning", middle: "Middle", night: "Night", off: "Off" };
 const SHIFT_CLS = {
@@ -155,6 +156,8 @@ function TukarShiftDialog({ open, onOpenChange, jadwal, staffList, onDone }) {
 }
 
 export default function JadwalKerja() {
+  const { user } = useAuth();
+  const isOwner = user?.role === "owner";
   const [viewDate, setViewDate] = useState(() => { const d = new Date(); d.setDate(1); return d; });
   const year = viewDate.getFullYear();
   const month = viewDate.getMonth() + 1;
@@ -244,7 +247,7 @@ export default function JadwalKerja() {
         <CardContent className="p-4 sm:p-5">
           <div className="flex items-center justify-between mb-3">
             <h2 className="font-bold flex items-center gap-2"><Users className="w-4 h-4" /> Staf ({staffList.length})</h2>
-            <Button size="sm" onClick={() => setStaffDialog("new")}><Plus className="w-3.5 h-3.5 mr-1" /> Tambah Staf</Button>
+            {isOwner && <Button size="sm" onClick={() => setStaffDialog("new")}><Plus className="w-3.5 h-3.5 mr-1" /> Tambah Staf</Button>}
           </div>
           <div className="flex flex-wrap gap-2">
             {staffList.map((s) => (
@@ -253,7 +256,7 @@ export default function JadwalKerja() {
                 {(s.shift_terlarang || []).length > 0 && (
                   <span className="text-red-600">(no {s.shift_terlarang.map((sh) => SHIFT_LABEL[sh]).join("/")})</span>
                 )}
-                <Button size="icon" variant="ghost" className="h-6 w-6" onClick={() => setStaffDialog(s)}><Pencil className="w-3 h-3" /></Button>
+                {isOwner && <Button size="icon" variant="ghost" className="h-6 w-6" onClick={() => setStaffDialog(s)}><Pencil className="w-3 h-3" /></Button>}
               </div>
             ))}
             {staffList.length === 0 && <p className="text-xs text-slate-400">Belum ada staf</p>}
@@ -281,16 +284,22 @@ export default function JadwalKerja() {
         <Card className="border-slate-200">
           <CardContent className="p-10 text-center space-y-3">
             <p className="text-slate-500">Belum ada jadwal untuk {BULAN_LABEL[month]} {year}.</p>
-            <Button onClick={generate} disabled={generating || staffList.length === 0} className="bg-blue-700 hover:bg-blue-800">
-              <Sparkles className="w-4 h-4 mr-2" /> {generating ? "AI sedang membuat jadwal…" : "Generate Jadwal (AI)"}
-            </Button>
-            {staffList.length === 0 && <p className="text-xs text-red-500">Tambah staf dulu sebelum generate.</p>}
+            {isOwner ? (
+              <>
+                <Button onClick={generate} disabled={generating || staffList.length === 0} className="bg-blue-700 hover:bg-blue-800">
+                  <Sparkles className="w-4 h-4 mr-2" /> {generating ? "AI sedang membuat jadwal…" : "Generate Jadwal (AI)"}
+                </Button>
+                {staffList.length === 0 && <p className="text-xs text-red-500">Tambah staf dulu sebelum generate.</p>}
+              </>
+            ) : (
+              <p className="text-xs text-slate-400">Hubungi owner untuk membuat jadwal bulan ini.</p>
+            )}
           </CardContent>
         </Card>
       ) : (
         <>
           <div className="flex flex-wrap gap-2">
-            {jadwal.status === "draft" && (
+            {isOwner && jadwal.status === "draft" && (
               <>
                 <Button size="sm" variant="outline" onClick={generate} disabled={generating}>
                   <Sparkles className="w-3.5 h-3.5 mr-1" /> {generating ? "Membuat ulang…" : "Generate Ulang (AI)"}
@@ -309,7 +318,7 @@ export default function JadwalKerja() {
             )}
           </div>
 
-          {jadwal.status === "draft" && totalPelanggaran > 0 && (
+          {isOwner && jadwal.status === "draft" && totalPelanggaran > 0 && (
             <div className="rounded-xl bg-red-50 border border-red-200 p-3 flex items-start gap-2 text-sm text-red-700">
               <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />
               <span>{totalPelanggaran} pelanggaran aturan ditemukan — perbaiki dulu (klik sel untuk ubah) sebelum bisa publish.</span>
@@ -337,9 +346,9 @@ export default function JadwalKerja() {
                         return (
                           <td key={t} className="p-0.5 text-center border-b border-slate-100">
                             <button
-                              disabled={jadwal.status === "published"}
+                              disabled={!isOwner || jadwal.status === "published"}
                               onClick={() => setEditCell({ staff: s, tanggal: t })}
-                              className={`w-9 h-7 rounded text-[9px] font-bold border ${SHIFT_CLS[sh] || "bg-white border-slate-200"} ${jadwal.status !== "published" ? "cursor-pointer hover:opacity-70" : "cursor-default"}`}
+                              className={`w-9 h-7 rounded text-[9px] font-bold border ${SHIFT_CLS[sh] || "bg-white border-slate-200"} ${isOwner && jadwal.status !== "published" ? "cursor-pointer hover:opacity-70" : "cursor-default"}`}
                               title={SHIFT_LABEL[sh] || "-"}
                             >
                               {sh ? SHIFT_LABEL[sh].slice(0, 3).toUpperCase() : "-"}

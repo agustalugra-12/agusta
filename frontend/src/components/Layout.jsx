@@ -32,7 +32,7 @@ const navItems = [
   { to: "/komplain", label: "Komplain", icon: AlertTriangle },
   { to: "/maintenance", label: "Maintenance", icon: Wrench },
   { to: "/laporan", label: "Laporan", icon: BarChart3 },
-  { to: "/jadwal-kerja", label: "Jadwal Kerja", icon: CalendarClock, ownerOnly: true },
+  { to: "/jadwal-kerja", label: "Jadwal Kerja", icon: CalendarClock },
   { to: "/pengguna", label: "Pengguna", icon: UserCog, ownerOnly: true },
   { to: "/audit", label: "Audit Log", icon: ShieldCheck, ownerOnly: true },
 ];

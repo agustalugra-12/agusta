@@ -258,7 +258,7 @@ async def generate_jadwal(body: JadwalGenerateBody, user: dict = Depends(require
 
 
 @api.put("/jadwal-kerja/{jadwal_id}/shift")
-async def update_shift(jadwal_id: str, body: JadwalShiftUpdateBody, user: dict = Depends(get_current_user)):
+async def update_shift(jadwal_id: str, body: JadwalShiftUpdateBody, user: dict = Depends(require_owner)):
     """Edit manual 1 sel. TIDAK auto-mengubah sel lain (bukan black-box) — response berisi
     statistik & pelanggaran terbaru supaya staf/owner ADA yang tahu & sadar kalau edit ini
     bikin jumlah hari off staf itu jadi tidak 4 lagi, lalu perbaiki manual sendiri sel mana
@@ -289,7 +289,7 @@ async def update_shift(jadwal_id: str, body: JadwalShiftUpdateBody, user: dict =
 
 
 @api.post("/jadwal-kerja/{jadwal_id}/swap")
-async def swap_shift(jadwal_id: str, body: JadwalSwapBody, user: dict = Depends(get_current_user)):
+async def swap_shift(jadwal_id: str, body: JadwalSwapBody, user: dict = Depends(require_owner)):
     """Tukar Shift — validasi shift_terlarang kedua staf setelah tukar, dan TOLAK tukar
     yang melibatkan hari "off" antar staf BERBEDA (itu akan mengubah jumlah hari off salah
     satu staf dari wajib 4 tanpa admin sadar) — kalau memang perlu, admin edit manual per

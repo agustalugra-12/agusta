@@ -79,7 +79,7 @@ function AppRoutes() {
         <Route path="/rekomendasi-checkin" element={<RekomendasiCheckinDayUse />} />
         <Route path="/komplain" element={<Komplain />} />
         <Route path="/maintenance" element={<Maintenance />} />
-        <Route path="/jadwal-kerja" element={<Protected ownerOnly><JadwalKerja /></Protected>} />
+        <Route path="/jadwal-kerja" element={<JadwalKerja />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
