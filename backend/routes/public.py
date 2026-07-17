@@ -160,6 +160,13 @@ async def public_create_booking(body: PublicBookingCreate):
         raise HTTPException(400, "room_id atau room_ids wajib diisi")
     if body.tipe not in ("day_use", "menginap"):
         raise HTTPException(400, "Tipe booking tidak valid")
+    if body.tipe == "menginap":
+        # Keputusan bisnis user 2026-07-17: booking Menginap publik instan DIMATIKAN — tamu
+        # diarahkan chat WhatsApp dulu (alur Booking Request → approval → link Tripay, lihat
+        # backend/routes/booking_requests.py). Day Use TETAP instan seperti biasa, tidak
+        # berubah. Frontend (PublicBook.jsx) sudah tidak menawarkan opsi ini lagi ke tamu —
+        # guard ini cuma jaga-jaga endpoint dipanggil langsung (mis. request lama ter-cache).
+        raise HTTPException(400, "Booking Menginap sekarang lewat WhatsApp — silakan hubungi admin kami untuk reservasi menginap")
     # Validasi email wajib (untuk kirim bukti pembayaran)
     email = (body.email or "").strip().lower()
     if not email or "@" not in email or "." not in email.split("@")[-1]:

@@ -13,8 +13,9 @@ import { Textarea } from "@/components/ui/textarea";
 import { useAuth } from "@/context/AuthContext";
 import {
   BedDouble, AlertTriangle, Hourglass, Clock, Wallet,
-  CalendarRange, Users as UsersIcon, Sparkles, Wrench, Calendar, MessageCircle, X,
+  CalendarRange, Users as UsersIcon, Sparkles, Wrench, Calendar, MessageCircle, X, Inbox, Check,
 } from "lucide-react";
+import { SetujuiDialog, TolakDialog } from "@/pages/BookingRequests";
 
 const STAT_CARDS = [
   { key: "kosong", label: "Kosong", icon: BedDouble, color: "#10B981" },
@@ -44,6 +45,9 @@ export default function Dashboard() {
   const [active, setActive] = useState([]);
   const [bookings, setBookings] = useState([]);
   const [widgets, setWidgets] = useState(null);
+  const [bookingRequests, setBookingRequests] = useState([]); // waiting_approval — supaya owner/resepsionis lihat langsung dari Dashboard, tidak perlu buka halaman terpisah
+  const [approveReqTarget, setApproveReqTarget] = useState(null);
+  const [rejectReqTarget, setRejectReqTarget] = useState(null);
   const [filterDate, setFilterDate] = useState(todayLocal());
   const [actionRoom, setActionRoom] = useState(null);
   const [statusForm, setStatusForm] = useState({ status: "", nama_tamu: "", catatan: "" });
@@ -136,16 +140,18 @@ export default function Dashboard() {
 
   const load = async () => {
     try {
-      const [s, r, c, b, w] = await Promise.all([
+      const [s, r, c, b, w, br] = await Promise.all([
         api.get("/reports/summary"),
         api.get("/rooms"),
         api.get("/checkins", { params: { status: "aktif" } }),
         api.get("/bookings"),
         api.get("/reports/booking-widgets"),
+        api.get("/booking-requests", { params: { status: "waiting_approval" } }),
       ]);
       // tampilkan semua booking yang menempati kamar: aktif, booking_pending, booking_paid
       const occupying = b.data.filter(x => ["aktif", "booking_pending", "booking_paid"].includes(x.status));
       setSummary(s.data); setRooms(r.data); setActive(c.data); setBookings(occupying); setWidgets(w.data);
+      setBookingRequests(br.data);
     } catch (e) { console.error(e); }
   };
 
@@ -395,6 +401,37 @@ export default function Dashboard() {
       </div>
 
       {/* Alerts */}
+      {bookingRequests.length > 0 && (
+        <div data-testid="booking-request-alert" className="rounded-xl bg-blue-50 border border-blue-200 p-4">
+          <div className="flex items-start gap-3 mb-3">
+            <Inbox className="w-5 h-5 text-blue-600 mt-0.5 shrink-0" />
+            <div className="text-sm">
+              <div className="font-semibold text-blue-900">{bookingRequests.length} Booking Request menunggu persetujuan</div>
+              <div className="text-blue-700">Permintaan dari AI WhatsApp — tinjau ketersediaan lalu terima/tolak.</div>
+            </div>
+          </div>
+          <div className="space-y-2">
+            {bookingRequests.map((it) => (
+              <div key={it.id} data-testid={`br-alert-${it.id}`} className="flex items-center justify-between gap-3 bg-white border border-blue-100 rounded-lg p-2.5 text-sm">
+                <div>
+                  <div className="font-semibold">{it.nama_tamu}</div>
+                  <div className="text-xs text-slate-500">
+                    {it.tipe === "menginap" ? "Menginap" : "Day Use"} · {it.room_tipe || "(tipe bebas)"} x{it.jumlah_kamar} · check-in {it.tanggal_checkin}
+                  </div>
+                </div>
+                <div className="flex gap-2 shrink-0">
+                  <Button size="sm" className="bg-emerald-600 hover:bg-emerald-700" onClick={() => setApproveReqTarget(it)}>
+                    <Check className="w-3.5 h-3.5 mr-1" /> Terima
+                  </Button>
+                  <Button size="sm" variant="outline" onClick={() => setRejectReqTarget(it)}>
+                    <X className="w-3.5 h-3.5 mr-1" /> Tolak
+                  </Button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
       {overtime.length > 0 && (
         <div data-testid="overtime-alert" className="rounded-xl bg-red-50 border border-red-200 p-4 flex items-start gap-3">
           <AlertTriangle className="w-5 h-5 text-red-600 mt-0.5" />
@@ -953,6 +990,9 @@ export default function Dashboard() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <SetujuiDialog req={approveReqTarget} onOpenChange={(o) => { if (!o) setApproveReqTarget(null); }} onApproved={load} />
+      <TolakDialog req={rejectReqTarget} onOpenChange={(o) => { if (!o) setRejectReqTarget(null); }} onDone={() => { setRejectReqTarget(null); load(); }} />
     </div>
   );
 }

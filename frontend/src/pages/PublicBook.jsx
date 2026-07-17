@@ -512,61 +512,81 @@ function BookingForm() {
                   <div className="flex justify-between"><span className="text-teal-deep/70">Service Fee (3%)</span><b className="text-teal-deep" data-testid="pb-service-fee">{fmtRp(summary.service_fee)}</b></div>
                   <div className="flex justify-between text-base pt-1.5 border-t border-teal-deep/15 mt-1.5"><span className="font-bold text-teal-deep">Total</span><b className="text-mustard-deep" data-testid="pb-total">{fmtRp(summary.total)}</b></div>
                 </div>
-                <div className="border-t border-teal-deep/10 pt-3">
-                  <Label className="text-xs font-semibold uppercase tracking-wider text-teal-deep/60">Opsi Pembayaran</Label>
-                  <div className="grid grid-cols-2 gap-2 mt-2">
-                    <button data-testid="pb-pay-dp50" type="button" onClick={() => setPaymentOption("dp50")} className={`p-3 rounded-lg border-2 text-left transition-colors ${paymentOption === "dp50" ? "border-teal-deep bg-teal-deep/8" : "border-teal-deep/15 hover:border-teal-deep/30"}`}>
-                      <div className="text-[10px] uppercase tracking-wider text-teal-deep/60 font-semibold">DP 50%</div>
-                      <div className="font-bold text-teal-deep" data-testid="pb-dp">{fmtRp(summary.dp_min)}</div>
-                      <div className="text-[10px] text-teal-deep/50">Sisa di lokasi</div>
-                    </button>
-                    <button data-testid="pb-pay-full" type="button" onClick={() => setPaymentOption("full")} className={`p-3 rounded-lg border-2 text-left transition-colors ${paymentOption === "full" ? "border-teal-deep bg-teal-deep/8" : "border-teal-deep/15 hover:border-teal-deep/30"}`}>
-                      <div className="text-[10px] uppercase tracking-wider text-teal-deep/60 font-semibold">Bayar Penuh</div>
-                      <div className="font-bold text-teal-deep">{fmtRp(summary.total)}</div>
-                      <div className="text-[10px] text-teal-deep/50">Tanpa sisa</div>
-                    </button>
-                  </div>
-                </div>
-                <div className="border-t border-teal-deep/10 pt-3">
-                  <Label className="text-xs font-semibold uppercase tracking-wider text-teal-deep/60">Metode Pembayaran</Label>
-                  {channels.length === 0 ? (
-                    <p className="text-xs text-teal-deep/40 mt-2">Memuat metode pembayaran...</p>
-                  ) : (
-                    <div className="mt-2 space-y-3 max-h-64 overflow-y-auto pr-1" data-testid="pb-payment-methods">
-                      {Object.entries(
-                        channels.reduce((acc, c) => {
-                          acc[c.group] = acc[c.group] || [];
-                          acc[c.group].push(c);
-                          return acc;
-                        }, {})
-                      ).map(([group, items]) => (
-                        <div key={group}>
-                          <div className="text-[10px] uppercase tracking-wider text-teal-deep/40 font-semibold mb-1">{group}</div>
-                          <div className="grid grid-cols-2 gap-1.5">
-                            {items.map((c) => (
-                              <button
-                                key={c.code}
-                                type="button"
-                                data-testid={`pb-method-${c.code}`}
-                                onClick={() => setMethod(c.code)}
-                                className={`flex items-center gap-2 p-2 rounded-lg border-2 text-left transition-colors ${method === c.code ? "border-teal-deep bg-teal-deep/8" : "border-teal-deep/15 hover:border-teal-deep/30"}`}
-                              >
-                                <img src={c.icon_url} alt="" className="w-6 h-6 object-contain shrink-0" />
-                                <span className="text-xs font-medium truncate text-teal-deep">{c.name}</span>
-                              </button>
-                            ))}
-                          </div>
-                        </div>
-                      ))}
+                {bookingTipe === "menginap" ? (
+                  <div className="border-t border-teal-deep/10 pt-3 space-y-3">
+                    <div className="bg-mustard/10 border border-mustard/30 rounded-lg p-3 text-xs text-teal-deep/80">
+                      Untuk booking <b>Menginap</b>, chat admin kami dulu via WhatsApp — kami cek ketersediaan lalu kirimkan link pembayaran. Perkiraan total: <b>{fmtRp(summary.total)}</b>.
                     </div>
-                  )}
-                </div>
-                <Button data-testid="pb-submit" disabled={submitting || !method} onClick={submit} className="w-full h-12 rounded-full bg-teal-deep hover:bg-teal-deep/90 text-cream text-base font-bold">
-                  {submitting ? "Memproses..." : "Bayar Sekarang"} <ArrowRight className="w-4 h-4 ml-2" />
-                </Button>
+                    <Button asChild data-testid="pb-menginap-wa" className="w-full h-12 rounded-full bg-teal-deep hover:bg-teal-deep/90 text-cream text-base font-bold">
+                      <a
+                        href={waLink(CS_WHATSAPP, `Halo, saya ingin booking Menginap di Pelangi Homestay.\nKamar: ${selectedRooms.length === 1 ? `${selectedRooms[0].tipe} (Kamar ${selectedRooms[0].nomor})` : `${selectedRooms.length} kamar (${selectedRooms.map(r => r.tipe).join(", ")})`}\nCheck-in: ${tanggal}\nCheck-out: ${checkoutDate}\nJumlah tamu: ${form.jumlah_tamu}${denganSarapan ? "\nDengan sarapan" : ""}\nNama: ${form.nama_tamu || "-"}`)}
+                        target="_blank" rel="noreferrer"
+                      >
+                        Chat Admin via WhatsApp <ArrowRight className="w-4 h-4 ml-2" />
+                      </a>
+                    </Button>
+                  </div>
+                ) : (
+                  <>
+                    <div className="border-t border-teal-deep/10 pt-3">
+                      <Label className="text-xs font-semibold uppercase tracking-wider text-teal-deep/60">Opsi Pembayaran</Label>
+                      <div className="grid grid-cols-2 gap-2 mt-2">
+                        <button data-testid="pb-pay-dp50" type="button" onClick={() => setPaymentOption("dp50")} className={`p-3 rounded-lg border-2 text-left transition-colors ${paymentOption === "dp50" ? "border-teal-deep bg-teal-deep/8" : "border-teal-deep/15 hover:border-teal-deep/30"}`}>
+                          <div className="text-[10px] uppercase tracking-wider text-teal-deep/60 font-semibold">DP 50%</div>
+                          <div className="font-bold text-teal-deep" data-testid="pb-dp">{fmtRp(summary.dp_min)}</div>
+                          <div className="text-[10px] text-teal-deep/50">Sisa di lokasi</div>
+                        </button>
+                        <button data-testid="pb-pay-full" type="button" onClick={() => setPaymentOption("full")} className={`p-3 rounded-lg border-2 text-left transition-colors ${paymentOption === "full" ? "border-teal-deep bg-teal-deep/8" : "border-teal-deep/15 hover:border-teal-deep/30"}`}>
+                          <div className="text-[10px] uppercase tracking-wider text-teal-deep/60 font-semibold">Bayar Penuh</div>
+                          <div className="font-bold text-teal-deep">{fmtRp(summary.total)}</div>
+                          <div className="text-[10px] text-teal-deep/50">Tanpa sisa</div>
+                        </button>
+                      </div>
+                    </div>
+                    <div className="border-t border-teal-deep/10 pt-3">
+                      <Label className="text-xs font-semibold uppercase tracking-wider text-teal-deep/60">Metode Pembayaran</Label>
+                      {channels.length === 0 ? (
+                        <p className="text-xs text-teal-deep/40 mt-2">Memuat metode pembayaran...</p>
+                      ) : (
+                        <div className="mt-2 space-y-3 max-h-64 overflow-y-auto pr-1" data-testid="pb-payment-methods">
+                          {Object.entries(
+                            channels.reduce((acc, c) => {
+                              acc[c.group] = acc[c.group] || [];
+                              acc[c.group].push(c);
+                              return acc;
+                            }, {})
+                          ).map(([group, items]) => (
+                            <div key={group}>
+                              <div className="text-[10px] uppercase tracking-wider text-teal-deep/40 font-semibold mb-1">{group}</div>
+                              <div className="grid grid-cols-2 gap-1.5">
+                                {items.map((c) => (
+                                  <button
+                                    key={c.code}
+                                    type="button"
+                                    data-testid={`pb-method-${c.code}`}
+                                    onClick={() => setMethod(c.code)}
+                                    className={`flex items-center gap-2 p-2 rounded-lg border-2 text-left transition-colors ${method === c.code ? "border-teal-deep bg-teal-deep/8" : "border-teal-deep/15 hover:border-teal-deep/30"}`}
+                                  >
+                                    <img src={c.icon_url} alt="" className="w-6 h-6 object-contain shrink-0" />
+                                    <span className="text-xs font-medium truncate text-teal-deep">{c.name}</span>
+                                  </button>
+                                ))}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                    <Button data-testid="pb-submit" disabled={submitting || !method} onClick={submit} className="w-full h-12 rounded-full bg-teal-deep hover:bg-teal-deep/90 text-cream text-base font-bold">
+                      {submitting ? "Memproses..." : "Bayar Sekarang"} <ArrowRight className="w-4 h-4 ml-2" />
+                    </Button>
+                  </>
+                )}
                 <p className="text-[10px] text-center text-teal-deep/50">
-                  Dengan menekan tombol, Anda menyetujui kebijakan reservasi.
-                  Pembatalan gratis sampai {bookingTipe === "menginap" ? "H-3" : "H-1"} sebelum check-in, setelah itu dikenakan biaya 10% dari total pembayaran.
+                  {bookingTipe === "menginap"
+                    ? "Booking Menginap akan dikonfirmasi admin sebelum link pembayaran dikirim."
+                    : "Dengan menekan tombol, Anda menyetujui kebijakan reservasi."}
+                  {" "}Pembatalan gratis sampai {bookingTipe === "menginap" ? "H-3" : "H-1"} sebelum check-in, setelah itu dikenakan biaya 10% dari total pembayaran.
                 </p>
               </CardContent>
             </Card>

@@ -23,7 +23,7 @@ const STATUS_CLS = {
 // silang manual ke PMS RedDoorz, sesuatu yang tidak bisa dicek otomatis oleh sistem ini),
 // lalu sistem langsung membuat booking sungguhan + link bayar Tripay & mengirimkannya ke
 // tamu via WhatsApp (lihat POST /booking-requests/{id}/approve di backend).
-function SetujuiDialog({ req, onOpenChange, onApproved }) {
+export function SetujuiDialog({ req, onOpenChange, onApproved }) {
   const [rooms, setRooms] = useState([]);
   const [channels, setChannels] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -90,7 +90,7 @@ function SetujuiDialog({ req, onOpenChange, onApproved }) {
     <Dialog open={!!req} onOpenChange={(o) => { if (!o) onOpenChange(false); }}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Setujui Permintaan {req.kode}</DialogTitle>
+          <DialogTitle>Terima Permintaan {req.kode}</DialogTitle>
         </DialogHeader>
         {!hasil ? (
           <div className="space-y-3 text-sm">
@@ -162,7 +162,7 @@ function SetujuiDialog({ req, onOpenChange, onApproved }) {
         <DialogFooter>
           {!hasil ? (
             <Button onClick={setujui} disabled={selected.length !== butuh || !method || submitting} className="bg-blue-700 hover:bg-blue-800">
-              {submitting ? "Menyetujui…" : "Setujui & Kirim Link Bayar"}
+              {submitting ? "Menerima…" : "Terima & Kirim Link Bayar"}
             </Button>
           ) : (
             <Button onClick={() => onOpenChange(false)} className="bg-blue-700 hover:bg-blue-800">Selesai</Button>
@@ -173,7 +173,7 @@ function SetujuiDialog({ req, onOpenChange, onApproved }) {
   );
 }
 
-function TolakDialog({ req, onOpenChange, onDone }) {
+export function TolakDialog({ req, onOpenChange, onDone }) {
   const [alasan, setAlasan] = useState("");
   const [submitting, setSubmitting] = useState(false);
   if (!req) return null;
@@ -276,7 +276,7 @@ export default function BookingRequests() {
                 {it.status === "waiting_approval" && (
                   <div className="flex gap-2 pt-1">
                     <Button size="sm" className="bg-emerald-600 hover:bg-emerald-700" onClick={() => setApproveTarget(it)}>
-                      <Check className="w-3.5 h-3.5 mr-1" /> Setujui
+                      <Check className="w-3.5 h-3.5 mr-1" /> Terima
                     </Button>
                     <Button size="sm" variant="outline" onClick={() => setRejectTarget(it)}>
                       <X className="w-3.5 h-3.5 mr-1" /> Tolak
