@@ -222,7 +222,10 @@ export default function JadwalKerja() {
     setShowRiwayat(false);
   };
 
-  const totalPelanggaran = useMemo(() => (jadwal?.staf || []).reduce((n, s) => n + s.pelanggaran.length, 0), [jadwal]);
+  const totalPelanggaran = useMemo(() => {
+    const perStaf = (jadwal?.staf || []).reduce((n, s) => n + s.pelanggaran.length, 0);
+    return perStaf + (jadwal?.pelanggaran_hari?.length || 0);
+  }, [jadwal]);
 
   return (
     <div className="space-y-6">
