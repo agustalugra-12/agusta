@@ -97,8 +97,8 @@ async def slot_dayuse_aman(room_id: str, mulai: datetime, durasi_jam: int = DAYU
         "jam_selesai_aman": max(mulai, batas_aman), "dipersingkat": True,
         "alasan": (
             f"Ada booking menginap check-in {checkin_menginap.astimezone(WIB).strftime('%H:%M')} WIB "
-            f"(kode {menginap_berikutnya.get('kode')}) — Day Use disarankan selesai lebih awal "
-            f"supaya housekeeping ({BUFFER_HOUSEKEEPING_MENIT} menit) selesai tepat waktu."
+            f"— Day Use disarankan selesai lebih awal supaya housekeeping "
+            f"({BUFFER_HOUSEKEEPING_MENIT} menit) selesai tepat waktu."
         ),
     }
 
