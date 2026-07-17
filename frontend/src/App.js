@@ -31,6 +31,7 @@ import RekomendasiCheckinDayUse from "@/pages/RekomendasiCheckinDayUse";
 import Komplain from "@/pages/Komplain";
 import Maintenance from "@/pages/Maintenance";
 import BookingRequests from "@/pages/BookingRequests";
+import JadwalKerja from "@/pages/JadwalKerja";
 import PublicBook from "@/pages/PublicBook";
 import "@/App.css";
 
@@ -78,6 +79,7 @@ function AppRoutes() {
         <Route path="/rekomendasi-checkin" element={<RekomendasiCheckinDayUse />} />
         <Route path="/komplain" element={<Komplain />} />
         <Route path="/maintenance" element={<Maintenance />} />
+        <Route path="/jadwal-kerja" element={<Protected ownerOnly><JadwalKerja /></Protected>} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

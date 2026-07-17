@@ -31,3 +31,4 @@ from . import issues  # noqa: F401
 from . import telegram_bot  # noqa: F401
 from . import scheduling  # noqa: F401
 from . import push  # noqa: F401
+from . import jadwal_kerja  # noqa: F401

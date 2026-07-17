@@ -650,6 +650,35 @@ class BookingRequestApprove(BaseModel):
 class BookingRequestReject(BaseModel):
     alasan: Optional[str] = ""
 
+class StaffKerjaCreate(BaseModel):
+    """Dokumen di collection `staff_kerja` — roster staf yang dijadwalkan shift (Jadwal
+    Kerja). SENGAJA terpisah dari `users` (akun login PMS) — staf shift (housekeeping/
+    umum) tidak wajib punya akun PMS sendiri, sama seperti nama `petugas` yang sudah
+    dipakai bebas di checkins/housekeeping_log tanpa perlu akun."""
+    nama: str
+    shift_terlarang: List[str] = []  # subset dari ["morning","middle","night"]
+    aktif: bool = True
+
+class StaffKerjaUpdate(BaseModel):
+    nama: Optional[str] = None
+    shift_terlarang: Optional[List[str]] = None
+    aktif: Optional[bool] = None
+
+class JadwalGenerateBody(BaseModel):
+    year: int
+    month: int
+
+class JadwalShiftUpdateBody(BaseModel):
+    staff_id: str
+    tanggal: str  # YYYY-MM-DD
+    shift: str  # morning | middle | night | off
+
+class JadwalSwapBody(BaseModel):
+    staff_id_a: str
+    tanggal_a: str
+    staff_id_b: str
+    tanggal_b: str
+
 class RateBulkUpdateBody(BaseModel):
     """Body untuk Update Harga Massal (halaman Kalender Harga): terapkan satu harga ke
     rentang tanggal [dari, sampai] untuk satu tipe kamar, atau 'Semua' tipe sekaligus."""

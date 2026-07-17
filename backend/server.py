@@ -60,6 +60,8 @@ async def startup():
     await db.booking_requests.create_index("status")
     await db.booking_requests.create_index("created_at")
     await db.wa_booking_sessions.create_index("no_hp", unique=True)
+    await db.jadwal_kerja.create_index([("year", 1), ("month", 1)], unique=True)
+    await db.jadwal_shifts.create_index([("jadwal_id", 1), ("staff_id", 1), ("tanggal", 1)], unique=True)
 
     # Seed users
     async def ensure_user(username, password, nama, role):
@@ -133,6 +135,20 @@ async def startup():
             "stok_minimal": 5 if kat != "laundry" else 0, "aktif": True,
             "created_at": now_iso(),
         } for (k, n, kat, h, s) in starter])
+
+    # Seed staf Jadwal Kerja (PRD baru user 2026-07-17) — 7 staf, Pita & Indah tidak boleh
+    # Night Shift (disimpan sebagai DATA shift_terlarang, bukan hardcode nama di kode, supaya
+    # owner bisa ubah lewat UI kalau aturan/personel berubah tanpa perlu deploy ulang).
+    scount = await db.staff_kerja.count_documents({})
+    if scount == 0:
+        staf_awal = [
+            ("Pita", ["night"]), ("Fendi", []), ("Edi", []), ("Esa", []),
+            ("Erik", []), ("Indah", ["night"]), ("Putu Kusuma", []),
+        ]
+        await db.staff_kerja.insert_many([{
+            "id": str(uuid.uuid4()), "nama": nama, "shift_terlarang": terlarang,
+            "aktif": True, "created_at": now_iso(),
+        } for (nama, terlarang) in staf_awal])
 
     # Penjadwalan sinkronisasi otomatis (Sinkronisasi Ketersediaan) — jalan di background
     # selama proses uvicorn ini hidup, interval mengikuti `sync_settings.frekuensi_menit`.
