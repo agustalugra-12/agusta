@@ -96,6 +96,8 @@ async def list_booking_requests(status: Optional[str] = None, user: dict = Depen
                     "kode": b["kode"], "room_nomor": b.get("room_nomor"), "room_tipe": b.get("room_tipe"),
                     "status": b.get("status"), "payment_status": b.get("payment_status"),
                     "sync_status": b.get("sync_status"), "total": b.get("total"),
+                    "payment_option": b.get("payment_option"),
+                    **status_bayar_booking(b),  # status_bayar, jumlah_dibayar, sisa_tagihan
                 } for b in bks]
                 if it["status"] == "waiting_payment" and all(b.get("payment_status") == "paid" for b in bks):
                     it["status_efektif"] = "lunas"

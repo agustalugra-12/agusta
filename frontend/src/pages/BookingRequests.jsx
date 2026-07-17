@@ -383,15 +383,28 @@ export default function BookingRequests() {
                   <p className="text-xs text-slate-500 bg-slate-50 border border-slate-200 rounded p-2">Alasan ditolak: {it.rejected_reason}</p>
                 )}
                 {it.booking_ringkasan && (
-                  <div className="text-xs bg-slate-50 border border-slate-200 rounded p-2 space-y-1">
+                  <div className="text-xs bg-slate-50 border border-slate-200 rounded p-2 space-y-1.5">
                     {it.booking_ringkasan.map((b) => (
-                      <div key={b.kode} className="flex flex-wrap items-center gap-x-2">
-                        <span className="font-semibold">Kamar {b.room_nomor}</span>
-                        <span className="text-slate-400">({b.room_tipe})</span>
-                        <span>{BOOKING_STATUS_LABEL[b.status] || b.status}</span>
-                        {b.total != null && <span className="text-slate-500">{fmtRp(b.total)}</span>}
-                        {SYNC_STATUS_LABEL[b.sync_status] && (
-                          <span className="text-amber-700">· {SYNC_STATUS_LABEL[b.sync_status]}</span>
+                      <div key={b.kode}>
+                        <div className="flex flex-wrap items-center gap-x-2">
+                          <span className="font-semibold">Kamar {b.room_nomor}</span>
+                          <span className="text-slate-400">({b.room_tipe})</span>
+                          <span>{BOOKING_STATUS_LABEL[b.status] || b.status}</span>
+                          {SYNC_STATUS_LABEL[b.sync_status] && (
+                            <span className="text-amber-700">· {SYNC_STATUS_LABEL[b.sync_status]}</span>
+                          )}
+                        </div>
+                        {b.total != null && (
+                          <div className="text-slate-600 mt-0.5">
+                            Total {fmtRp(b.total)}
+                            {b.payment_option && <span className="text-slate-400"> ({b.payment_option === "dp50" ? "DP 50%" : "Lunas"})</span>}
+                            {" · "}Sudah dibayar <b className="text-emerald-700">{fmtRp(b.jumlah_dibayar)}</b>
+                            {b.sisa_tagihan > 0 ? (
+                              <> · Sisa <b className="text-red-600">{fmtRp(b.sisa_tagihan)}</b> (dibayar di lokasi)</>
+                            ) : (
+                              <> · <b className="text-emerald-700">Lunas</b></>
+                            )}
+                          </div>
                         )}
                       </div>
                     ))}
