@@ -47,11 +47,22 @@ async def create_reservation(data: Dict[str, Any], source: str = "public",
     r = await db.rooms.find_one({"id": data["room_id"]})
     if not r:
         raise HTTPException(404, "Kamar tidak ditemukan")
-    if r["status"] != "kosong":
-        raise HTTPException(400, "Kamar tidak tersedia")
 
     mulai = data["jam_mulai"]
     selesai = data["jam_selesai"]
+
+    if r["status"] == "maintenance":
+        raise HTTPException(400, "Kamar sedang maintenance, tidak bisa dibooking")
+    # Kamar yang sedang terisi (day_use/menginap/perlu_dibersihkan) SAAT INI cuma menghalangi
+    # booking yang mulai HARI INI JUGA — booking untuk tanggal mendatang tetap boleh, cukup
+    # divalidasi lewat check_room_available (overlap tanggal sungguhan) di bawah. Konsisten
+    # dengan logika public_availability (is_today) di routes/public.py. Bug ditemukan
+    # 2026-07-17: booking publik utk tanggal mendatang salah ditolak "Kamar tidak tersedia"
+    # hanya karena kamar itu kebetulan sedang dipakai tamu lain SAAT INI, walau sudah kosong
+    # lagi jauh sebelum tanggal check-in yang diminta.
+    if mulai.astimezone(timezone.utc).date() <= datetime.now(timezone.utc).date() and r["status"] != "kosong":
+        raise HTTPException(400, "Kamar tidak tersedia")
+
     await check_room_available(data["room_id"], mulai, selesai)
 
     extra_bed_qty = max(0, min(EXTRA_BED_MAX, int(data.get("extra_bed_qty") or 0)))
