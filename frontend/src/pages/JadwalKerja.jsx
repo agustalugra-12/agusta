@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
-import api from "@/lib/apiClient";
+import api, { API_BASE } from "@/lib/apiClient";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -214,19 +214,12 @@ export default function JadwalKerja() {
     finally { setPublishing(false); }
   };
 
-  const exportPdf = async (orientation) => {
-    // window.open(url) langsung setelah await sering di-blok popup blocker browser (async
-    // callback kehilangan asosiasi "user gesture" langsung) — pola <a target="_blank">.click()
-    // (sama seperti downloadCsv di Laporan.jsx) jauh lebih andal untuk blob hasil fetch async.
-    try {
-      const { data } = await api.get(`/jadwal-kerja/${jadwal.id}/export.pdf`, { params: { orientation }, responseType: "blob" });
-      const url = URL.createObjectURL(new Blob([data], { type: "application/pdf" }));
-      const a = document.createElement("a");
-      a.href = url; a.target = "_blank"; a.rel = "noopener";
-      document.body.appendChild(a); a.click(); document.body.removeChild(a);
-      setTimeout(() => URL.revokeObjectURL(url), 10000);
-    } catch (e) { toast.error("Gagal export PDF"); }
-  };
+  // Blob-fetch + window.open (atau <a target=_blank> pakai blob url) TIDAK ANDAL di sini:
+  // blob: URL hanya valid di tab/browsing-context yang membuatnya, jadi tab baru sering
+  // gagal/kosong. Login (routes/auth.py) sudah set cookie httpOnly `access_token` (dipakai
+  // get_current_user sebagai fallback selain header Authorization) — jadi cukup link browser
+  // biasa ke endpoint-nya, cookie ikut terkirim otomatis, tidak perlu fetch+blob sama sekali.
+  const exportPdfUrl = (orientation) => jadwal ? `${API_BASE}/jadwal-kerja/${jadwal.id}/export.pdf?orientation=${orientation}` : "#";
 
   const bukaBulanRiwayat = (r) => {
     setViewDate(new Date(r.year, r.month - 1, 1));
@@ -310,8 +303,8 @@ export default function JadwalKerja() {
             )}
             {jadwal.status === "published" && (
               <>
-                <Button size="sm" variant="outline" onClick={() => exportPdf("landscape")}><Printer className="w-3.5 h-3.5 mr-1" /> Print (Landscape)</Button>
-                <Button size="sm" variant="outline" onClick={() => exportPdf("portrait")}><Printer className="w-3.5 h-3.5 mr-1" /> Print (Portrait)</Button>
+                <Button size="sm" variant="outline" asChild><a href={exportPdfUrl("landscape")} target="_blank" rel="noreferrer"><Printer className="w-3.5 h-3.5 mr-1 inline" /> Print (Landscape)</a></Button>
+                <Button size="sm" variant="outline" asChild><a href={exportPdfUrl("portrait")} target="_blank" rel="noreferrer"><Printer className="w-3.5 h-3.5 mr-1 inline" /> Print (Portrait)</a></Button>
               </>
             )}
           </div>
