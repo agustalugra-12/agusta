@@ -66,10 +66,40 @@ async def buat_booking_request(data: Dict[str, Any]) -> Dict[str, Any]:
 
 @api.get("/booking-requests")
 async def list_booking_requests(status: Optional[str] = None, user: dict = Depends(get_current_user)):
+    """`status` mentah cuma tahu 3 nilai (waiting_approval/waiting_payment/rejected) —
+    begitu di-approve, status TIDAK PERNAH otomatis lanjut lagi biar pun tamu sudah bayar
+    (lihat approve_booking_request: satu-satunya penulis field ini). Supaya staf bisa lihat
+    riwayat permintaan yang SUDAH benar-benar selesai (lunas), tiap item di sini diperkaya
+    `status_efektif` (menambah nilai virtual "lunas") + `booking_ringkasan` (status booking
+    sungguhan yang terkait) dengan mengecek payment_status booking yang sudah dibuat saat
+    approve. `status=lunas` di query jadi filter virtual tambahan (bukan field asli)."""
+    raw_status = status if status in ("waiting_approval", "waiting_payment", "rejected") else None
     q: Dict[str, Any] = {}
-    if status:
-        q["status"] = status
-    return await db.booking_requests.find(q, {"_id": 0}).sort("created_at", -1).to_list(500)
+    if raw_status:
+        q["status"] = raw_status
+    elif status == "lunas":
+        q["status"] = "waiting_payment"
+    items = await db.booking_requests.find(q, {"_id": 0}).sort("created_at", -1).to_list(500)
+
+    for it in items:
+        it["status_efektif"] = it["status"]
+        it["booking_ringkasan"] = None
+        if it.get("booking_ids"):
+            bks = await db.bookings.find({"id": {"$in": it["booking_ids"]}}, {"_id": 0}).to_list(20)
+            if bks:
+                it["booking_ringkasan"] = [{
+                    "kode": b["kode"], "room_nomor": b.get("room_nomor"), "room_tipe": b.get("room_tipe"),
+                    "status": b.get("status"), "payment_status": b.get("payment_status"),
+                    "sync_status": b.get("sync_status"), "total": b.get("total"),
+                } for b in bks]
+                if it["status"] == "waiting_payment" and all(b.get("payment_status") == "paid" for b in bks):
+                    it["status_efektif"] = "lunas"
+
+    if status == "lunas":
+        items = [it for it in items if it["status_efektif"] == "lunas"]
+    elif status == "waiting_payment":
+        items = [it for it in items if it["status_efektif"] == "waiting_payment"]
+    return items
 
 
 @api.get("/booking-requests/{rid}")

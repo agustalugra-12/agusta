@@ -11,12 +11,22 @@ import { Copy, ExternalLink, Check, X, AlertOctagon } from "lucide-react";
 const STATUS_LABEL = {
   waiting_approval: "Menunggu Persetujuan",
   waiting_payment: "Menunggu Pembayaran",
+  lunas: "Lunas",
   rejected: "Ditolak",
 };
 const STATUS_CLS = {
   waiting_approval: "bg-amber-100 text-amber-800",
   waiting_payment: "bg-blue-100 text-blue-800",
+  lunas: "bg-emerald-100 text-emerald-700",
   rejected: "bg-red-100 text-red-700",
+};
+const BOOKING_STATUS_LABEL = {
+  booking_pending: "Menunggu Bayar", booking_paid: "Lunas", checked_in: "Sudah Check-in",
+  cancelled: "Dibatalkan", no_show: "No-Show",
+};
+const SYNC_STATUS_LABEL = {
+  waiting_reddoorz_input: "Menunggu Input RedDoorz", waiting_reddoorz_sync: "Menunggu Sinkron RedDoorz",
+  synced: "Confirmed (RedDoorz)", not_required: null,
 };
 
 // Dialog Setujui — staf memilih kamar spesifik SETELAH cek ketersediaan (termasuk cek
@@ -281,8 +291,13 @@ export default function BookingRequests() {
   const load = async () => {
     setLoading(true);
     try {
-      const { data } = await api.get("/booking-requests", { params: { status: statusFilter || undefined } });
-      setItems(data);
+      // "riwayat" bukan status asli — gabungan permintaan yang SUDAH selesai diproses
+      // (lunas + ditolak), diambil semua lalu disaring di sini pakai status_efektif
+      // (backend menghitungnya dari status booking sungguhan yang terkait, karena
+      // booking_requests.status sendiri berhenti di "waiting_payment" walau tamu sudah bayar).
+      const params = statusFilter === "riwayat" ? {} : { status: statusFilter || undefined };
+      const { data } = await api.get("/booking-requests", { params });
+      setItems(statusFilter === "riwayat" ? data.filter((it) => ["lunas", "rejected"].includes(it.status_efektif)) : data);
     } catch (e) {
       toast.error(e?.response?.data?.detail || "Gagal memuat permintaan booking");
     } finally {
@@ -302,7 +317,7 @@ export default function BookingRequests() {
       <ActionRequiredRedDoorz />
 
       <div className="flex gap-2 flex-wrap">
-        {[["waiting_approval", "Menunggu Persetujuan"], ["waiting_payment", "Menunggu Pembayaran"], ["rejected", "Ditolak"], ["", "Semua"]].map(([k, lbl]) => (
+        {[["waiting_approval", "Menunggu Persetujuan"], ["waiting_payment", "Menunggu Pembayaran"], ["riwayat", "Riwayat"], ["", "Semua"]].map(([k, lbl]) => (
           <Button key={k} size="sm" variant={statusFilter === k ? "default" : "outline"} className={statusFilter === k ? "bg-blue-700 hover:bg-blue-800" : ""} onClick={() => setStatusFilter(k)}>{lbl}</Button>
         ))}
       </div>
@@ -318,8 +333,8 @@ export default function BookingRequests() {
               <CardContent className="p-4 space-y-2">
                 <div className="flex items-start justify-between gap-2">
                   <div className="font-bold">{it.nama_tamu}</div>
-                  <span className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded-full shrink-0 ${STATUS_CLS[it.status] || "bg-slate-100 text-slate-600"}`}>
-                    {STATUS_LABEL[it.status] || it.status}
+                  <span className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded-full shrink-0 ${STATUS_CLS[it.status_efektif || it.status] || "bg-slate-100 text-slate-600"}`}>
+                    {STATUS_LABEL[it.status_efektif || it.status] || it.status}
                   </span>
                 </div>
                 <div className="text-xs text-slate-500">{it.no_hp}</div>
@@ -331,13 +346,30 @@ export default function BookingRequests() {
                   {it.tanggal_checkout ? ` — Check-out ${it.tanggal_checkout}` : ""}
                 </div>
                 {it.catatan && <p className="text-xs italic text-slate-500">"{it.catatan}"</p>}
-                {it.status === "waiting_payment" && it.checkout_url && (
+                {it.status === "waiting_payment" && it.status_efektif !== "lunas" && it.checkout_url && (
                   <a href={it.checkout_url} target="_blank" rel="noreferrer" className="text-xs text-blue-600 underline break-all">Link pembayaran</a>
                 )}
                 {it.status === "rejected" && it.rejected_reason && (
-                  <p className="text-xs text-slate-500 bg-slate-50 border border-slate-200 rounded p-2">Alasan: {it.rejected_reason}</p>
+                  <p className="text-xs text-slate-500 bg-slate-50 border border-slate-200 rounded p-2">Alasan ditolak: {it.rejected_reason}</p>
                 )}
-                <div className="text-[11px] text-slate-400">{it.kode} · {fmtDateTime(it.created_at)}</div>
+                {it.booking_ringkasan && (
+                  <div className="text-xs bg-slate-50 border border-slate-200 rounded p-2 space-y-1">
+                    {it.booking_ringkasan.map((b) => (
+                      <div key={b.kode} className="flex flex-wrap items-center gap-x-2">
+                        <span className="font-semibold">Kamar {b.room_nomor}</span>
+                        <span className="text-slate-400">({b.room_tipe})</span>
+                        <span>{BOOKING_STATUS_LABEL[b.status] || b.status}</span>
+                        {b.total != null && <span className="text-slate-500">{fmtRp(b.total)}</span>}
+                        {SYNC_STATUS_LABEL[b.sync_status] && (
+                          <span className="text-amber-700">· {SYNC_STATUS_LABEL[b.sync_status]}</span>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+                {it.approved_by && <div className="text-[11px] text-slate-400">Diterima oleh {it.approved_by} · {fmtDateTime(it.approved_at)}</div>}
+                {it.rejected_by && <div className="text-[11px] text-slate-400">Ditolak oleh {it.rejected_by} · {fmtDateTime(it.rejected_at)}</div>}
+                <div className="text-[11px] text-slate-400">{it.kode} · diajukan {fmtDateTime(it.created_at)}</div>
                 {it.status === "waiting_approval" && (
                   <div className="flex gap-2 pt-1">
                     <Button size="sm" className="bg-emerald-600 hover:bg-emerald-700" onClick={() => setApproveTarget(it)}>
