@@ -203,9 +203,14 @@ dulu sebelum dikonfirmasi & dikirim link pembayaran). Balas HANYA JSON dengan be
 Field WAJIB sebelum bisa diringkas & minta konfirmasi: nama_tamu, tipe, room_tipe,
 tanggal_checkin, lalu jam_checkin (kalau tipe=day_use) ATAU tanggal_checkout (kalau
 tipe=menginap). jumlah_kamar & jumlah_tamu default 1 kalau tamu tidak menyebutkan apa pun —
-JANGAN ditanya kecuali tamu sendiri menyinggung lebih dari 1 kamar/orang. Tanggal hari ini:
-{tanggal_hari_ini} (WIB). Kalau tamu bilang "besok"/"hari ini"/nama hari, konversi ke YYYY-MM-DD
-relatif tanggal hari ini itu."""
+JANGAN ditanya kecuali tamu sendiri menyinggung lebih dari 1 kamar/orang.
+
+Tanggal hari ini: {tanggal_hari_ini} (WIB) — SEMUA kata relatif waktu (besok, lusa, hari ini,
+nama hari, dst) selalu dihitung relatif tanggal HARI INI itu, BUKAN relatif tanggal lain yang
+sudah disebut sebelumnya di percakapan (mis. bukan relatif tanggal check-in). Contoh persis:
+kalau hari ini {tanggal_hari_ini}, "besok" = hari ini + 1 hari, "lusa" = hari ini + 2 hari.
+Kalau tamu bilang "check-in besok, check-out lusa", checkout HARUS cuma 1 malam dari checkin
+(besok+1 hari = lusa), BUKAN 2 malam — hitung ulang selisih harinya, jangan asal tebak."""
 
 
 async def _klasifikasi_niat_booking(pesan: str) -> bool:
