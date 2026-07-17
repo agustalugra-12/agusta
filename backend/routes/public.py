@@ -2,6 +2,7 @@ from core import *
 from reservation_service import check_room_available, create_reservation
 from email_service import generate_voucher_pdf, send_voucher_email
 from routes.push import send_push
+from scheduling_engine import slot_dayuse_aman
 import httpx
 import io
 from fastapi.responses import StreamingResponse
@@ -124,6 +125,21 @@ async def public_availability(tanggal: str, tipe: Optional[str] = None, checkout
             out.append({"id": r["id"], "nomor": r["nomor"], "tipe": r["tipe"], "tarif": r["tarif"], "tarif_menginap": r["tarif_menginap"]})
     out.sort(key=lambda r: (0 if r["tipe"] == "Standard" else 1, int(r["nomor"]) if r["nomor"].isdigit() else 9999))
     return {"tanggal": tanggal, "tipe": tipe, "rooms": out}
+
+@api.get("/public/scheduling/rekomendasi-dayuse")
+async def public_rekomendasi_dayuse(room_id: str, jam_mulai: str):
+    """Versi publik (tanpa login) dari /scheduling/rekomendasi-dayuse — dipakai halaman /book
+    supaya tamu juga lihat peringatan kalau jam Day Use yang dipilih mepet booking Menginap
+    yang sudah terkonfirmasi di kamar yang sama (Scheduling Engine, PRD Revisi #6). Murni
+    informasi, TIDAK mengubah/membatasi apa yang bisa disubmit tamu."""
+    mulai = parse_iso(jam_mulai, "jam_mulai")
+    info = await slot_dayuse_aman(room_id, mulai)
+    return {
+        "jam_selesai_ideal": info["jam_selesai_ideal"].isoformat(),
+        "jam_selesai_aman": info["jam_selesai_aman"].isoformat(),
+        "dipersingkat": info["dipersingkat"],
+        "alasan": info["alasan"],
+    }
 
 @api.post("/public/bookings")
 async def public_create_booking(body: PublicBookingCreate):

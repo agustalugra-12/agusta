@@ -12,7 +12,7 @@ import { bookingConfirmationWaLink, waLink, STATUS_BAYAR_LABEL } from "@/lib/api
 import { ExtraBedSelector } from "@/pages/PermintaanKhususExtraBed";
 import {
   BedDouble, Wifi, Snowflake, Tv, Droplets, Bath, Trees, CheckCircle2, XCircle,
-  Calendar, Clock, User, Phone, IdCard, Car, Users as UsersIcon, Building2, ArrowRight, Mail, Ban,
+  Calendar, Clock, User, Phone, IdCard, Car, Users as UsersIcon, Building2, ArrowRight, Mail, Ban, AlertTriangle,
 } from "lucide-react";
 
 // API client tanpa auth (untuk endpoint /api/public/*)
@@ -103,6 +103,24 @@ function BookingForm() {
     const a = new Date(`${tanggal}T00:00:00`), b = new Date(`${checkoutDate}T00:00:00`);
     return Math.max(1, Math.round((b - a) / 86400000));
   }, [bookingTipe, tanggal, checkoutDate]);
+
+  // Scheduling Engine — info (bukan pembatas) kalau jam Day Use yang dipilih mepet booking
+  // Menginap yang sudah terkonfirmasi di kamar yang sama, supaya tamu tahu lebih dulu.
+  const [dayuseHints, setDayuseHints] = useState([]); // [{room_nomor, alasan}]
+  useEffect(() => {
+    if (bookingTipe !== "day_use" || !tanggal || !form.jam_checkin || selectedRooms.length === 0) {
+      setDayuseHints([]);
+      return;
+    }
+    let batal = false;
+    const jamIso = new Date(`${tanggal}T${form.jam_checkin}:00`).toISOString();
+    Promise.all(selectedRooms.map((r) =>
+      PUBLIC_API.get("/public/scheduling/rekomendasi-dayuse", { params: { room_id: r.id, jam_mulai: jamIso } })
+        .then(({ data }) => (data.dipersingkat ? { room_nomor: r.nomor, alasan: data.alasan } : null))
+        .catch(() => null)
+    )).then((hasil) => { if (!batal) setDayuseHints(hasil.filter(Boolean)); });
+    return () => { batal = true; };
+  }, [bookingTipe, tanggal, form.jam_checkin, selectedRooms]);
 
   // Ringkasan harga per kamar (extra bed & sarapan berlaku sama untuk tiap kamar yang
   // dipilih), dijumlah untuk grand total kalau tamu pilih >1 kamar sekaligus.
@@ -423,6 +441,12 @@ function BookingForm() {
                 </div>
                 <FieldIcon icon={Clock} label="Jam Check-In">
                   <Input data-testid="pb-jam" type="time" value={form.jam_checkin} onChange={(e) => setForm(f => ({ ...f, jam_checkin: e.target.value }))} className="h-12" />
+                  {dayuseHints.map((h) => (
+                    <div key={h.room_nomor} data-testid={`pb-dayuse-hint-${h.room_nomor}`} className="mt-2 flex items-start gap-2 text-xs text-mustard-deep bg-mustard/10 border border-mustard/30 rounded-md p-2.5">
+                      <AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
+                      <span><b>Kamar {h.room_nomor}:</b> {h.alasan}</span>
+                    </div>
+                  ))}
                 </FieldIcon>
                 {bookingTipe === "menginap" && (
                   <div>
