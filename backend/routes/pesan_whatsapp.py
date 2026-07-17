@@ -5,8 +5,8 @@ import json
 from openai import OpenAI
 from fastapi.responses import PlainTextResponse
 from routes.public import public_availability
-from reservation_service import check_room_available
 from routes.issues import buat_issue
+from scheduling_engine import rekomendasi_slot_kosong as _rekomendasi_slot_kosong_engine, WIB
 
 _openai_client = OpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
 
@@ -91,46 +91,15 @@ async def _klasifikasi_dan_buat_tiket(no_hp: str, nama: str, pesan_masuk: str):
         logging.getLogger("pesan_whatsapp").warning(f"Gagal auto-buat tiket dari WA: {e.detail}")
         return None
 
-# Default operasional Day Use — belum ada UI Settings (keputusan 2026-07-16: hardcode dulu,
-# pindah ke pengaturan collection kalau memang perlu diubah tanpa deploy kode).
-DAYUSE_DURASI_JAM = 6
-BUFFER_HOUSEKEEPING_MENIT = 30
-WIB = timezone(timedelta(hours=7))  # konsisten dengan konvensi WIB di public.py/email_service.py/dll, walau Bali geografis WITA
-
-
 async def _rekomendasi_slot_kosong(tipe: str) -> Optional[str]:
-    """Kalau tipe kamar tertentu penuh SEKARANG, cari kamar dengan booking aktif yang
-    jam_selesai-nya paling dekat, tambah buffer housekeeping, lalu verifikasi slot Day Use
-    6 jam mulai dari situ tidak bentrok booking lain yang sudah terkonfirmasi (mis. tamu
-    menginap besok pagi) — pakai check_room_available yang sama dengan alur booking asli,
-    supaya rekomendasi AI tidak pernah menjanjikan slot yang sebenarnya sudah terisi.
-    Return None kalau tidak ada kandidat yang bisa diestimasi (staf harus dihubungi manual).
-    """
-    now = datetime.now(timezone.utc)
-    rooms = await db.rooms.find({"tipe": tipe}, {"_id": 0}).to_list(200)
-    kandidat = []
-    for r in rooms:
-        aktif = await db.bookings.find_one({
-            "room_id": r["id"],
-            "status": {"$in": ["aktif", "booking_paid", "checked_in"]},
-            "jam_mulai": {"$lte": now.isoformat()},
-            "jam_selesai": {"$gt": now.isoformat()},
-        }, sort=[("jam_selesai", 1)])
-        if not aktif or not aktif.get("jam_selesai"):
-            continue
-        siap_pakai = datetime.fromisoformat(aktif["jam_selesai"]) + timedelta(minutes=BUFFER_HOUSEKEEPING_MENIT)
-        usulan_selesai = siap_pakai + timedelta(hours=DAYUSE_DURASI_JAM)
-        try:
-            await check_room_available(r["id"], siap_pakai, usulan_selesai)
-        except HTTPException:
-            continue  # slot ini bentrok booking lain yang sudah terkonfirmasi, lewati
-        kandidat.append((siap_pakai, r["nomor"]))
+    """Wrapper teks di atas Scheduling Engine terpusat (scheduling_engine.py) — perhitungan
+    slot-nya sendiri sudah dipusatkan di sana (dipakai bareng endpoint /scheduling/* untuk
+    Dashboard staf) supaya tidak ada logika jadwal yang tercecer per modul (PRD Revisi #6)."""
+    kandidat = await _rekomendasi_slot_kosong_engine(tipe)
     if not kandidat:
         return None
-    kandidat.sort(key=lambda x: x[0])
-    siap_pakai, nomor = kandidat[0]
-    jam_lokal = siap_pakai.astimezone(WIB)
-    return (f"Kamar {tipe} sedang penuh, tapi Kamar {nomor} diperkirakan siap dipakai lagi "
+    jam_lokal = kandidat["siap_pakai"].astimezone(WIB)
+    return (f"Kamar {tipe} sedang penuh, tapi Kamar {kandidat['room_nomor']} diperkirakan siap dipakai lagi "
             f"mulai pukul {jam_lokal.strftime('%H:%M')} WIB tanggal {jam_lokal.strftime('%d %B %Y')} "
             f"(setelah tamu check-out & kamar selesai dibersihkan).")
 

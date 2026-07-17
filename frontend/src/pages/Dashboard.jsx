@@ -57,7 +57,9 @@ export default function Dashboard() {
   const [multiSelectMode, setMultiSelectMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState([]);
 
-  const openQuickBook = (rooms) => { setQuickForm(emptyQuickForm(rooms[0]?.tarif)); setQuickBookRooms(rooms); };
+  const [slotWarnings, setSlotWarnings] = useState([]); // [{room_nomor, alasan, rekomendasi_selesai}]
+
+  const openQuickBook = (rooms) => { setQuickForm(emptyQuickForm(rooms[0]?.tarif)); setQuickBookRooms(rooms); setSlotWarnings([]); };
   const toggleRoomSelect = (room) => {
     setSelectedIds((ids) => ids.includes(room.id) ? ids.filter((id) => id !== room.id) : [...ids, room.id]);
   };
@@ -74,6 +76,25 @@ export default function Dashboard() {
     const svc = Math.round(harga * 0.03);
     return { subtotal: harga, service_fee: svc, total: harga + svc, nights: 1 };
   }, [quickForm]);
+
+  // Scheduling Engine — cek advisory tiap kamar yang dipilih kalau tipe Day Use & jam
+  // check-in terisi, supaya resepsionis tahu lebih dulu kalau kamar ini ada tamu menginap
+  // yang akan check-in tidak lama lagi (murni info, tidak pernah memblokir submit — PRD
+  // Rule 5: keputusan akhir tetap di resepsionis).
+  useEffect(() => {
+    if (quickForm.tipe !== "day_use" || !quickForm.jam_checkin || quickBookRooms.length === 0) {
+      setSlotWarnings([]);
+      return;
+    }
+    let batal = false;
+    const jamIso = new Date(quickForm.jam_checkin).toISOString();
+    Promise.all(quickBookRooms.map((r) =>
+      api.get("/scheduling/rekomendasi-dayuse", { params: { room_id: r.id, jam_mulai: jamIso } })
+        .then(({ data }) => (data.dipersingkat ? { room_nomor: r.nomor, alasan: data.alasan } : null))
+        .catch(() => null)
+    )).then((hasil) => { if (!batal) setSlotWarnings(hasil.filter(Boolean)); });
+    return () => { batal = true; };
+  }, [quickForm.tipe, quickForm.jam_checkin, quickBookRooms]);
 
   const submitQuickBook = async () => {
     if (!quickBookRooms.length) return;
@@ -585,7 +606,16 @@ export default function Dashboard() {
             <div><Label>Kendaraan</Label><Input value={quickForm.kendaraan} onChange={(e) => setQuickForm(f => ({ ...f, kendaraan: e.target.value }))} /></div>
             <div><Label>Jumlah Tamu</Label><Input type="number" min="1" value={quickForm.jumlah_tamu} onChange={(e) => setQuickForm(f => ({ ...f, jumlah_tamu: e.target.value }))} /></div>
             {quickForm.tipe === "day_use" ? (
-              <div className="col-span-2"><Label>Jam Check-In</Label><Input data-testid="q-jam" type="datetime-local" value={quickForm.jam_checkin} onChange={(e) => setQuickForm(f => ({ ...f, jam_checkin: e.target.value }))} /></div>
+              <div className="col-span-2">
+                <Label>Jam Check-In</Label>
+                <Input data-testid="q-jam" type="datetime-local" value={quickForm.jam_checkin} onChange={(e) => setQuickForm(f => ({ ...f, jam_checkin: e.target.value }))} />
+                {slotWarnings.map((w) => (
+                  <div key={w.room_nomor} data-testid={`q-slot-warning-${w.room_nomor}`} className="mt-2 flex items-start gap-2 text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-md p-2.5">
+                    <AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
+                    <span><b>Kamar {w.room_nomor}:</b> {w.alasan}</span>
+                  </div>
+                ))}
+              </div>
             ) : (
               <div className="col-span-2"><Label>Jumlah Malam</Label><Input data-testid="q-malam" type="number" min="1" value={quickForm.malam} onChange={(e) => setQuickForm(f => ({ ...f, malam: e.target.value }))} /></div>
             )}
