@@ -183,7 +183,8 @@ dulu sebelum dikonfirmasi & dikirim link pembayaran). Balas HANYA JSON dengan be
     "jumlah_tamu": <int atau null>,
     "tanggal_checkin": "<YYYY-MM-DD atau null>",
     "jam_checkin": "<HH:mm atau null, hanya relevan utk tipe day_use>",
-    "tanggal_checkout": "<YYYY-MM-DD atau null, hanya relevan utk tipe menginap>"
+    "tanggal_checkout": "<YYYY-MM-DD atau null, hanya relevan utk tipe menginap>",
+    "payment_option": "<'dp50' kalau tamu sebut mau bayar DP/uang muka/setengah/sebagian, 'full' kalau tamu sebut mau bayar penuh/lunas/full payment, null kalau belum disebut sama sekali>"
   }},
   "confirmed": <bool — true HANYA kalau pesan ini adalah jawaban YA/setuju/oke tamu terhadap
                 ringkasan permintaan yang barusan kamu tunjukkan>,
@@ -203,7 +204,12 @@ dulu sebelum dikonfirmasi & dikirim link pembayaran). Balas HANYA JSON dengan be
 Field WAJIB sebelum bisa diringkas & minta konfirmasi: nama_tamu, tipe, room_tipe,
 tanggal_checkin, lalu jam_checkin (kalau tipe=day_use) ATAU tanggal_checkout (kalau
 tipe=menginap). jumlah_kamar & jumlah_tamu default 1 kalau tamu tidak menyebutkan apa pun —
-JANGAN ditanya kecuali tamu sendiri menyinggung lebih dari 1 kamar/orang.
+JANGAN ditanya kecuali tamu sendiri menyinggung lebih dari 1 kamar/orang. payment_option
+OPSIONAL — JANGAN pernah ditanya proaktif (baru dibahas resepsionis setelah permintaan
+disetujui), tapi kalau tamu MENYEBUTKAN sendiri preferensinya (mis. "saya DP dulu ya", "mau
+bayar 50% aja", "bayar lunas langsung") di pesan mana pun selama percakapan, catat sebagai
+payment_option supaya link pembayaran yang dikirim nanti sesuai permintaan tamu, bukan
+staf menebak-nebak.
 
 Tanggal hari ini: {tanggal_hari_ini} (WIB) — SEMUA kata relatif waktu (besok, lusa, hari ini,
 nama hari, dst) selalu dihitung relatif tanggal HARI INI itu, BUKAN relatif tanggal lain yang

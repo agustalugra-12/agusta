@@ -29,7 +29,10 @@ async def buat_booking_request(data: Dict[str, Any]) -> Dict[str, Any]:
     wajib lengkap & tamu konfirmasi — sengaja BUKAN endpoint HTTP publik (tidak menambah
     permukaan serangan baru untuk membuat data). `data` wajib berisi: nama_tamu, no_hp,
     tipe (day_use|menginap), room_tipe, tanggal_checkin; boleh berisi jumlah_kamar,
-    jumlah_tamu, jam_checkin (day_use), tanggal_checkout (menginap), catatan."""
+    jumlah_tamu, jam_checkin (day_use), tanggal_checkout (menginap), catatan,
+    payment_option (dp50|full — preferensi tamu KALAU disebutkan sendiri di chat, lihat
+    BOOKING_FLOW_SYSTEM_PROMPT; None kalau belum disebut — staf yang putuskan saat approve)."""
+    payment_option = data.get("payment_option")
     doc = {
         "id": str(uuid.uuid4()), "kode": _kode_request(),
         "nama_tamu": data["nama_tamu"], "no_hp": data["no_hp"],
@@ -38,6 +41,7 @@ async def buat_booking_request(data: Dict[str, Any]) -> Dict[str, Any]:
         "jumlah_tamu": int(data.get("jumlah_tamu") or 1),
         "tanggal_checkin": data["tanggal_checkin"], "jam_checkin": data.get("jam_checkin"),
         "tanggal_checkout": data.get("tanggal_checkout"), "catatan": data.get("catatan") or "",
+        "payment_option_diminta": payment_option if payment_option in ("dp50", "full") else None,
         "status": "waiting_approval", "source": "whatsapp",
         "booking_ids": [], "group_id": None,
         "created_at": now_iso(), "updated_at": now_iso(),
@@ -58,6 +62,7 @@ async def buat_booking_request(data: Dict[str, Any]) -> Dict[str, Any]:
         f"{doc['jumlah_tamu']} tamu\n"
         f"Check-in: {doc['tanggal_checkin']}" + (f" {doc['jam_checkin']}" if doc.get("jam_checkin") else "") +
         (f"\nCheck-out: {doc['tanggal_checkout']}" if doc.get("tanggal_checkout") else "") +
+        (f"\nTamu minta: {'DP 50%' if doc['payment_option_diminta'] == 'dp50' else 'Bayar Penuh'}" if doc.get("payment_option_diminta") else "") +
         "\n\nTinjau di PMS → Booking Request."
     )
     doc.pop("_id", None)

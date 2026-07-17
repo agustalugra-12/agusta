@@ -28,6 +28,27 @@ const SYNC_STATUS_LABEL = {
   waiting_reddoorz_input: "Menunggu Input RedDoorz", waiting_reddoorz_sync: "Menunggu Sinkron RedDoorz",
   synced: "Confirmed (RedDoorz)", not_required: null,
 };
+const SYNC_STATUS_CLS = {
+  waiting_reddoorz_input: "bg-amber-100 text-amber-800",
+  waiting_reddoorz_sync: "bg-blue-100 text-blue-800",
+  synced: "bg-emerald-100 text-emerald-700",
+};
+
+// Untuk booking Menginap yang lunas, badge utama menampilkan progres RedDoorz (bukan cuma
+// "Lunas" generik) — supaya di tab Riwayat langsung kelihatan mana yang SUDAH diklik "Sudah
+// Input ke RedDoorz" (bukan seperti hilang begitu saja dari Action Required) vs yang masih
+// menunggu vs yang sudah benar-benar Confirmed. Data booking_request-nya sendiri TIDAK
+// PERNAH dihapus oleh aksi itu — ini murni supaya statusnya lebih jelas di Riwayat.
+function badgeInfo(it) {
+  if (it.status_efektif === "lunas" && it.booking_ringkasan?.length) {
+    const sync = it.booking_ringkasan[0].sync_status;
+    if (sync && sync !== "not_required" && SYNC_STATUS_LABEL[sync]) {
+      return { label: SYNC_STATUS_LABEL[sync], cls: SYNC_STATUS_CLS[sync] };
+    }
+  }
+  const key = it.status_efektif || it.status;
+  return { label: STATUS_LABEL[key] || it.status, cls: STATUS_CLS[key] || "bg-slate-100 text-slate-600" };
+}
 
 // Dialog Setujui — staf memilih kamar spesifik SETELAH cek ketersediaan (termasuk cek
 // silang manual ke PMS RedDoorz, sesuatu yang tidak bisa dicek otomatis oleh sistem ini),
@@ -48,6 +69,9 @@ export function SetujuiDialog({ req, onOpenChange, onApproved }) {
     if (!req) return;
     setLoading(true);
     setError(""); setSelected([]); setHasil(null);
+    // Default ke preferensi yang tamu SENDIRI sebutkan di WhatsApp (kalau ada) — staf tetap
+    // bisa ubah manual, ini cuma default supaya tidak ketinggalan/salah pilih dari yang diminta.
+    setOpsi(req.payment_option_diminta || "dp50");
     const params = { tanggal: req.tanggal_checkin, tipe: req.room_tipe || undefined };
     if (req.tipe === "menginap" && req.tanggal_checkout) params.checkout = req.tanggal_checkout;
     Promise.all([
@@ -108,6 +132,9 @@ export function SetujuiDialog({ req, onOpenChange, onApproved }) {
               <div><b>{req.nama_tamu}</b> — {req.no_hp}</div>
               <div>{req.tipe === "menginap" ? "Menginap" : "Day Use"} · {req.room_tipe || "(tipe bebas)"} · {butuh} kamar · {req.jumlah_tamu} tamu</div>
               <div>Check-in {req.tanggal_checkin}{req.jam_checkin ? ` ${req.jam_checkin}` : ""}{req.tanggal_checkout ? ` — Check-out ${req.tanggal_checkout}` : ""}</div>
+              {req.payment_option_diminta && (
+                <div className="text-blue-700 font-semibold">Tamu minta: {req.payment_option_diminta === "dp50" ? "DP 50%" : "Bayar Penuh"}</div>
+              )}
               {req.catatan && <div className="italic text-slate-500">"{req.catatan}"</div>}
             </div>
 
@@ -333,8 +360,8 @@ export default function BookingRequests() {
               <CardContent className="p-4 space-y-2">
                 <div className="flex items-start justify-between gap-2">
                   <div className="font-bold">{it.nama_tamu}</div>
-                  <span className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded-full shrink-0 ${STATUS_CLS[it.status_efektif || it.status] || "bg-slate-100 text-slate-600"}`}>
-                    {STATUS_LABEL[it.status_efektif || it.status] || it.status}
+                  <span className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded-full shrink-0 ${badgeInfo(it).cls}`}>
+                    {badgeInfo(it).label}
                   </span>
                 </div>
                 <div className="text-xs text-slate-500">{it.no_hp}</div>
@@ -345,6 +372,9 @@ export default function BookingRequests() {
                   Check-in {it.tanggal_checkin}{it.jam_checkin ? ` ${it.jam_checkin}` : ""}
                   {it.tanggal_checkout ? ` — Check-out ${it.tanggal_checkout}` : ""}
                 </div>
+                {it.payment_option_diminta && (
+                  <p className="text-xs text-blue-700 font-semibold">Tamu minta: {it.payment_option_diminta === "dp50" ? "DP 50%" : "Bayar Penuh"}</p>
+                )}
                 {it.catatan && <p className="text-xs italic text-slate-500">"{it.catatan}"</p>}
                 {it.status === "waiting_payment" && it.status_efektif !== "lunas" && it.checkout_url && (
                   <a href={it.checkout_url} target="_blank" rel="noreferrer" className="text-xs text-blue-600 underline break-all">Link pembayaran</a>
