@@ -115,6 +115,12 @@ actions with care", bukan diabaikan): operasi destruktif (`rm -rf`, `git push --
 
 ## Fitur yang Sudah Ada (ringkas — detail lengkap di CHANGELOG.md)
 
+- **Jadwal Kerja Staf (2026-07-17, owner-only, `/jadwal-kerja`):** 7 staf diseed
+  (`backend/server.py`, aturan larangan shift per orang disimpan sebagai data
+  `shift_terlarang` di `db.staff_kerja`, bukan hardcode). AI Generate (OpenAI) + perbaikan
+  deterministik menjamin tiap staf PERSIS 4 hari off/bulan & tidak pernah shift terlarang,
+  apapun hasil AI-nya. Edit manual/tukar shift/publish/export PDF/riwayat — semua di
+  `backend/routes/jadwal_kerja.py`. Integrasi absensi belum dikerjakan (bukan Phase 1).
 - **Modul Reservasi & Priority Booking (Tahap 1+2, 2026-07-17, PRD lengkap sudah live):**
   AI WhatsApp kumpulkan data booking multi-turn → `db.booking_requests` (non-binding) →
   staf Terima/Tolak di `/booking-requests` (juga tampil sebagai alert di Dashboard) →
