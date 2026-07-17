@@ -40,6 +40,7 @@ async def startup():
     await db.audit_log.create_index("timestamp")
     await db.bookings.create_index("room_id")
     await db.bookings.create_index("jam_mulai")
+    await db.bookings.create_index([("room_id", 1), ("status", 1), ("jam_mulai", 1)])  # check_room_available/scheduling_engine hot path
     await db.bookings.create_index([("payment_status", 1), ("paid_at", 1)])
     await db.bookings.create_index("source")
     await db.bookings.create_index("ota_reservation_no", sparse=True)
@@ -49,6 +50,11 @@ async def startup():
     await db.availability_logs.create_index("changed_at")
     await db.integrations.create_index("provider", unique=True)
     await db.push_subscriptions.create_index("endpoint", unique=True)
+    await db.push_subscriptions.create_index("user_id")
+    await db.issues.create_index([("tipe", 1), ("status", 1)])
+    await db.issues.create_index("created_at")
+    await db.housekeeping_log.create_index([("room_id", 1), ("status", 1)])
+    await db.housekeeping_log.create_index("tanggal")
     await db.push_subscriptions.create_index("user_id")
 
     # Seed users
