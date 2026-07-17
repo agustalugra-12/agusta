@@ -482,6 +482,15 @@ async def unlink_telegram(user: dict = Depends(get_current_user)):
     return {"ok": True}
 
 
+async def kirim_alert_owner(pesan: str):
+    """Kirim pesan alert ke SEMUA owner yang sudah terhubung Telegram — kanal tambahan di
+    luar Web Push PMS (Payment Alert & Action Center), supaya owner tetap tahu ada
+    pembayaran masuk meski PMS-nya tidak sedang dibuka di HP/laptop mana pun."""
+    owners = await db.users.find({"role": "owner", "telegram_chat_id": {"$ne": None}}, {"_id": 0, "telegram_chat_id": 1}).to_list(50)
+    for u in owners:
+        await _kirim_pesan(BOT_CONFIG["owner"]["token"], u["telegram_chat_id"], pesan)
+
+
 async def background_telegram_daily_report_loop():
     """Kirim laporan akhir hari ke semua user (owner+staff) yang sudah terhubung Telegram,
     sekali sehari jam 22:00 WIB. Cek tiap 5 menit, jaga guard `last_sent_date` supaya tidak

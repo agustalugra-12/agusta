@@ -1,11 +1,13 @@
 import { Link, NavLink, Outlet, useNavigate } from "react-router-dom";
+import { toast } from "sonner";
 import { useAuth } from "@/context/AuthContext";
 import { Button } from "@/components/ui/button";
 import {
   LayoutDashboard, BedDouble, ShoppingCart, Boxes,
   Wallet, Sparkles, BarChart3, UserCog, ShieldCheck, LogOut, Hotel, Menu, HandCoins, DoorOpen, ListChecks, Mail, RefreshCw, CreditCard, MessageSquare, Shuffle, BedSingle, Send, Wand2, Tag, AlertTriangle, Wrench,
 } from "lucide-react";
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import { playAlertSound, unlockAlertSound } from "@/lib/alertSound";
 
 const navItems = [
   { to: "/", label: "Dashboard", icon: LayoutDashboard, exact: true },
@@ -39,6 +41,31 @@ export default function Layout() {
   const [open, setOpen] = useState(false);
 
   const items = navItems.filter((it) => !it.ownerOnly || user?.role === "owner");
+
+  // Unlock Web Audio pada interaksi pertama (kebijakan autoplay browser), lalu dengarkan
+  // relay dari service worker tiap ada push masuk (pembayaran/booking/komplain baru) untuk
+  // mainkan suara alert + toast in-app selagi tab PMS ini sedang dibuka — Payment Alert &
+  // Action Center (PRD), berlaku sama untuk resepsionis maupun owner yang sedang online.
+  useEffect(() => {
+    const unlock = () => { unlockAlertSound(); window.removeEventListener("click", unlock); window.removeEventListener("keydown", unlock); };
+    window.addEventListener("click", unlock);
+    window.addEventListener("keydown", unlock);
+
+    const onMessage = (event) => {
+      if (event.data?.type !== "pms-push") return;
+      playAlertSound();
+      toast(event.data.title || "Notifikasi", {
+        description: event.data.body || "",
+        action: event.data.url ? { label: "Lihat", onClick: () => nav(event.data.url) } : undefined,
+      });
+    };
+    navigator.serviceWorker?.addEventListener("message", onMessage);
+    return () => {
+      window.removeEventListener("click", unlock);
+      window.removeEventListener("keydown", unlock);
+      navigator.serviceWorker?.removeEventListener("message", onMessage);
+    };
+  }, [nav]);
 
   const doLogout = async () => {
     await logout();

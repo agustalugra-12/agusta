@@ -1,6 +1,7 @@
 from core import *
 from email_service import generate_voucher_pdf, send_voucher_email
 from routes.push import send_push
+from routes.telegram_bot import kirim_alert_owner
 import hmac
 import httpx
 
@@ -264,5 +265,12 @@ async def tripay_callback(request: Request):
                         "Pembayaran Diterima",
                         f"Booking {gb['kode']} - {gb.get('nama_tamu', '-')} - Kamar {gb.get('room_nomor', '-')} sudah dibayar",
                         url="/bookings",
+                    )
+                    await kirim_alert_owner(
+                        f"💰 Pembayaran Diterima\n\n"
+                        f"Booking {gb['kode']}\n"
+                        f"Tamu: {gb.get('nama_tamu', '-')}\n"
+                        f"Kamar: {gb.get('room_nomor', '-')}\n"
+                        f"Nominal: Rp {int(total_amount or 0):,}".replace(",", ".")
                     )
     return {"success": True}
