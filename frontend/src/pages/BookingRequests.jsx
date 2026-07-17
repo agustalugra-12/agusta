@@ -23,7 +23,7 @@ const STATUS_CLS = {
 // silang manual ke PMS RedDoorz, sesuatu yang tidak bisa dicek otomatis oleh sistem ini),
 // lalu sistem langsung membuat booking sungguhan + link bayar Tripay & mengirimkannya ke
 // tamu via WhatsApp (lihat POST /booking-requests/{id}/approve di backend).
-function SetujuiDialog({ req, onOpenChange, onDone }) {
+function SetujuiDialog({ req, onOpenChange, onApproved }) {
   const [rooms, setRooms] = useState([]);
   const [channels, setChannels] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -73,7 +73,7 @@ function SetujuiDialog({ req, onOpenChange, onDone }) {
         room_ids: selected, payment_option: opsi, method,
       });
       setHasil(data);
-      onDone();
+      onApproved(); // refresh daftar di belakang layar — dialog tetap terbuka menampilkan link bayar
     } catch (e) {
       setError(e?.response?.data?.detail || "Gagal menyetujui permintaan");
     } finally {
@@ -289,7 +289,7 @@ export default function BookingRequests() {
         </div>
       )}
 
-      <SetujuiDialog req={approveTarget} onOpenChange={(o) => { if (!o) setApproveTarget(null); }} onDone={() => { setApproveTarget(null); load(); }} />
+      <SetujuiDialog req={approveTarget} onOpenChange={(o) => { if (!o) setApproveTarget(null); }} onApproved={load} />
       <TolakDialog req={rejectTarget} onOpenChange={(o) => { if (!o) setRejectTarget(null); }} onDone={() => { setRejectTarget(null); load(); }} />
     </div>
   );
