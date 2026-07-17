@@ -587,6 +587,23 @@ class WebhookConfigUpdate(BaseModel):
     api_key: Optional[str] = None
     nomor_whatsapp: Optional[str] = None
 
+class BusinessRuleIn(BaseModel):
+    """PMS = Business Platform, pemilik kebenaran aturan bisnis (DP, cancellation, jam
+    checkin/checkout, promo, kebijakan umum) — ai-chat-bot (Brain Platform) menarik ini
+    lewat endpoint integrasi, bukan menyimpan salinan otoritatif sendiri."""
+    category: str
+    title: str
+    description: str
+    value: Optional[Dict[str, Any]] = None
+    is_active: bool = True
+
+class BusinessRuleUpdate(BaseModel):
+    category: Optional[str] = None
+    title: Optional[str] = None
+    description: Optional[str] = None
+    value: Optional[Dict[str, Any]] = None
+    is_active: Optional[bool] = None
+
 class SyncSettingsUpdate(BaseModel):
     """Dokumen tunggal di collection `sync_settings` (Pengaturan Sinkronisasi Ketersediaan)."""
     frekuensi_menit: Optional[int] = None

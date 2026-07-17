@@ -106,6 +106,24 @@ async def ai_bot_buat_tiket(body: AiBotTiketIn, _: None = Depends(verifikasi_ai_
     return {"ok": True, "tiket": tiket}
 
 
+@api.get("/integrasi-ai-bot/rules")
+async def ai_bot_rules(category: Optional[str] = None, _: None = Depends(verifikasi_ai_bot_key)):
+    """Business Rules (DP/cancellation/checkin/checkout/promo/dll) — PMS jadi satu-satunya
+    sumber kebenaran (lihat routes/business_rules.py), ai-chat-bot menarik ini untuk
+    dijadikan konteks AI menjawab tamu, bukan menyimpan salinan kebijakan sendiri yang bisa
+    basi. Hanya rule aktif yang diekspos, field internal (id/created_at/dll) disederhanakan."""
+    q: Dict[str, Any] = {"is_active": True}
+    if category:
+        q["category"] = category
+    rules = await db.business_rules.find(q, {"_id": 0}).to_list(500)
+    return {
+        "rules": [
+            {"category": r["category"], "title": r["title"], "description": r["description"], "value": r.get("value")}
+            for r in rules
+        ],
+    }
+
+
 class AiBotBookingRequestIn(BaseModel):
     nama_tamu: str
     no_hp: str
