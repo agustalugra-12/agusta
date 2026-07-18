@@ -124,6 +124,48 @@ async def ai_bot_rules(category: Optional[str] = None, _: None = Depends(verifik
     }
 
 
+@api.get("/integrasi-ai-bot/booking-status")
+async def ai_bot_booking_status(no_hp: str, _: None = Depends(verifikasi_ai_bot_key)):
+    """Status booking request tamu (dicari dari no_hp, 5 permintaan terbaru) — reuse
+    penuh logika pengayaan `status_efektif`/`booking_ringkasan` yang sama dipakai halaman
+    staf /booking-requests (lihat list_booking_requests), supaya AI menjawab status yang
+    sama persis dengan yang staf lihat, bukan hitungan terpisah yang bisa menyimpang."""
+    digits = re.sub(r"\D", "", no_hp or "")
+    if not digits:
+        return {"no_hp": no_hp, "permintaan": []}
+    variasi = {digits}
+    if digits.startswith("62"):
+        variasi.add("0" + digits[2:])
+    elif digits.startswith("0"):
+        variasi.add("62" + digits[1:])
+
+    items = await db.booking_requests.find(
+        {"no_hp": {"$in": list(variasi)}}, {"_id": 0}
+    ).sort("created_at", -1).to_list(5)
+
+    out = []
+    for it in items:
+        status_efektif = it["status"]
+        booking_ringkasan = None
+        if it.get("booking_ids"):
+            bks = await db.bookings.find({"id": {"$in": it["booking_ids"]}}, {"_id": 0}).to_list(20)
+            if bks:
+                booking_ringkasan = [{
+                    "kode": b["kode"], "room_nomor": b.get("room_nomor"), "room_tipe": b.get("room_tipe"),
+                    "sync_status": b.get("sync_status"),
+                    **status_bayar_booking(b),  # status_bayar, jumlah_dibayar, sisa_tagihan
+                } for b in bks]
+                if it["status"] == "waiting_payment" and all(b.get("payment_status") == "paid" for b in bks):
+                    status_efektif = "lunas"
+        out.append({
+            "kode": it["kode"], "tipe": it["tipe"], "room_tipe": it.get("room_tipe"),
+            "tanggal_checkin": it["tanggal_checkin"], "tanggal_checkout": it.get("tanggal_checkout"),
+            "status": status_efektif, "booking_ringkasan": booking_ringkasan,
+            "created_at": it["created_at"],
+        })
+    return {"no_hp": no_hp, "permintaan": out}
+
+
 class AiBotBookingRequestIn(BaseModel):
     nama_tamu: str
     no_hp: str
