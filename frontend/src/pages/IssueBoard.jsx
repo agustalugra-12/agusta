@@ -54,6 +54,7 @@ export default function IssueBoard({ tipe, title, subtitle }) {
         tipe, room_id: roomId || null, room_nomor: room?.nomor || "", deskripsi: deskripsi.trim(),
         ...(tipe === "complaint" ? { nama_tamu: namaTamu.trim(), prioritas } : {}),
         ...(tipe === "maintenance" ? { teknisi: teknisi.trim(), estimasi_selesai: estimasiSelesai || null } : {}),
+        ...(tipe === "service_request" ? { nama_tamu: namaTamu.trim() } : {}),
       });
       toast.success("Tercatat");
       setDeskripsi(""); setRoomId(""); setNamaTamu(""); setPrioritas("normal"); setTeknisi(""); setEstimasiSelesai("");
@@ -106,11 +107,15 @@ export default function IssueBoard({ tipe, title, subtitle }) {
               data-testid="issue-deskripsi"
               value={deskripsi}
               onChange={(e) => setDeskripsi(e.target.value)}
-              placeholder={tipe === "complaint" ? "Mis: Handuk belum ada di kamar" : "Mis: Shower rusak, air tidak keluar"}
+              placeholder={
+                tipe === "complaint" ? "Mis: Handuk belum ada di kamar" :
+                tipe === "service_request" ? "Mis: Extra bed x1, dikirim sebelum jam 20:00" :
+                "Mis: Shower rusak, air tidak keluar"
+              }
               rows={2}
             />
           </div>
-          {tipe === "complaint" ? (
+          {tipe === "complaint" && (
             <div className="grid sm:grid-cols-2 gap-3">
               <Input data-testid="issue-nama-tamu" value={namaTamu} onChange={(e) => setNamaTamu(e.target.value)} placeholder="Nama tamu (opsional)" />
               <select
@@ -124,11 +129,15 @@ export default function IssueBoard({ tipe, title, subtitle }) {
                 <option value="tinggi">Prioritas: Tinggi</option>
               </select>
             </div>
-          ) : (
+          )}
+          {tipe === "maintenance" && (
             <div className="grid sm:grid-cols-2 gap-3">
               <Input data-testid="issue-teknisi" value={teknisi} onChange={(e) => setTeknisi(e.target.value)} placeholder="Teknisi (opsional)" />
               <Input data-testid="issue-estimasi" type="datetime-local" value={estimasiSelesai} onChange={(e) => setEstimasiSelesai(e.target.value)} placeholder="Estimasi selesai" />
             </div>
+          )}
+          {tipe === "service_request" && (
+            <Input data-testid="issue-nama-tamu" value={namaTamu} onChange={(e) => setNamaTamu(e.target.value)} placeholder="Nama tamu (opsional)" />
           )}
           <Button data-testid="issue-submit" onClick={buat} disabled={submitting} className="bg-blue-700 hover:bg-blue-800">
             {submitting ? "Menyimpan..." : "Simpan"}
@@ -155,7 +164,7 @@ export default function IssueBoard({ tipe, title, subtitle }) {
                   <span className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded-full ${STATUS_CLS[it.status]}`}>{STATUS_LABEL[it.status]}</span>
                 </div>
               </div>
-              {tipe === "complaint" && it.nama_tamu && <div className="text-xs text-slate-500">Tamu: <b>{it.nama_tamu}</b></div>}
+              {(tipe === "complaint" || tipe === "service_request") && it.nama_tamu && <div className="text-xs text-slate-500">Tamu: <b>{it.nama_tamu}</b></div>}
               <p className="text-sm text-slate-700">{it.deskripsi}</p>
               {tipe === "maintenance" && (it.teknisi || it.estimasi_selesai) && (
                 <div className="text-xs text-slate-500 space-y-0.5">

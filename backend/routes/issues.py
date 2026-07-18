@@ -1,12 +1,15 @@
 from core import *
 from routes.push import send_push
 
-# ---- Complaint & Maintenance ----
-# Satu collection `issues` dipakai untuk 2 tipe (complaint/maintenance) — modelnya identik
-# (kamar, deskripsi, status open->in_progress->resolved), cuma beda label/konteks di frontend.
-# Klasifikasi otomatis dari AI WhatsApp (TV mati -> maintenance, handuk belum ada -> complaint)
-# menyusul di fase AI booking recommendation — endpoint ini dulu untuk pencatatan manual staf.
-ISSUE_TIPE = {"complaint", "maintenance"}
+# ---- Complaint & Maintenance & Permintaan Layanan ----
+# Satu collection `issues` dipakai untuk 3 tipe (complaint/maintenance/service_request) —
+# modelnya identik (kamar, deskripsi, status open->in_progress->resolved), cuma beda
+# label/konteks di frontend. service_request (extra bed/towel/cleaning/laundry/motor
+# rental/airport pickup/dll dari AI WhatsApp/ai-chat-bot) sengaja REUSE mekanisme ini alih-alih
+# collection/endpoint terpisah — secara sifat sama persis (staf perlu tindak lanjuti &
+# selesaikan), cuma beda konteks dengan komplain/maintenance.
+ISSUE_TIPE = {"complaint", "maintenance", "service_request"}
+ISSUE_TIPE_LABEL = {"complaint": "Komplain", "maintenance": "Maintenance", "service_request": "Permintaan Layanan"}
 ISSUE_STATUS = {"open", "in_progress", "resolved"}
 ISSUE_PRIORITAS = {"rendah", "normal", "tinggi"}
 
@@ -17,7 +20,7 @@ async def buat_issue(tipe: str, deskripsi: str, user: dict, room_id: Optional[st
     otomatis AI WhatsApp (routes/pesan_whatsapp.py) supaya audit log & push notif konsisten
     dari kedua jalur, tidak ada logika ganda yang bisa saling menyimpang."""
     if tipe not in ISSUE_TIPE:
-        raise HTTPException(400, "Tipe harus 'complaint' atau 'maintenance'")
+        raise HTTPException(400, f"Tipe harus salah satu dari: {', '.join(sorted(ISSUE_TIPE))}")
     if not deskripsi or not deskripsi.strip():
         raise HTTPException(400, "Deskripsi wajib diisi")
     prioritas = prioritas or "normal"
@@ -47,9 +50,10 @@ async def buat_issue(tipe: str, deskripsi: str, user: dict, room_id: Optional[st
         "resolved_at": None,
     }
     await db.issues.insert_one(doc)
-    label = "Komplain" if tipe == "complaint" else "Maintenance"
+    label = ISSUE_TIPE_LABEL[tipe]
+    push_url = {"complaint": "/komplain", "maintenance": "/maintenance", "service_request": "/service-requests"}[tipe]
     await log_activity(user, "create_issue", f"{label} kamar {doc['room_nomor'] or '-'}: {doc['deskripsi']}", entity=doc["room_nomor"])
-    await send_push(f"{label} Baru", f"Kamar {doc['room_nomor'] or '-'}: {doc['deskripsi']}", url="/komplain")
+    await send_push(f"{label} Baru", f"Kamar {doc['room_nomor'] or '-'}: {doc['deskripsi']}", url=push_url)
     doc.pop("_id", None)
     return doc
 

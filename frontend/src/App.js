@@ -30,6 +30,7 @@ import PengirimanVoucherOtomatis from "@/pages/PengirimanVoucherOtomatis";
 import RekomendasiCheckinDayUse from "@/pages/RekomendasiCheckinDayUse";
 import Komplain from "@/pages/Komplain";
 import Maintenance from "@/pages/Maintenance";
+import ServiceRequests from "@/pages/ServiceRequests";
 import BookingRequests from "@/pages/BookingRequests";
 import JadwalKerja from "@/pages/JadwalKerja";
 import BusinessRules from "@/pages/BusinessRules";
@@ -80,6 +81,7 @@ function AppRoutes() {
         <Route path="/rekomendasi-checkin" element={<RekomendasiCheckinDayUse />} />
         <Route path="/komplain" element={<Komplain />} />
         <Route path="/maintenance" element={<Maintenance />} />
+        <Route path="/service-requests" element={<ServiceRequests />} />
         <Route path="/jadwal-kerja" element={<JadwalKerja />} />
         <Route path="/business-rules" element={<Protected ownerOnly><BusinessRules /></Protected>} />
       </Route>
