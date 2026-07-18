@@ -6,7 +6,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
-import { Pencil, Trash2, Plus, CheckCircle2, XCircle } from "lucide-react";
+import { Pencil, Trash2, Plus, CheckCircle2, XCircle, X } from "lucide-react";
 import api from "@/lib/apiClient";
 
 const CATEGORY_LABEL = {
@@ -15,13 +15,41 @@ const CATEGORY_LABEL = {
 };
 const CATEGORY_OPTIONS = Object.keys(CATEGORY_LABEL);
 
-const emptyForm = { category: "dp", title: "", description: "", is_active: true };
+const emptyForm = { category: "dp", title: "", description: "", value: {}, is_active: true };
+
+function dictToPairs(dict) {
+  return Object.entries(dict || {}).map(([key, val]) => ({ key, val: String(val) }));
+}
+
+function pairsToDict(pairs) {
+  const dict = {};
+  for (const { key, val } of pairs) {
+    const k = key.trim();
+    if (k) dict[k] = val;
+  }
+  return dict;
+}
 
 function RuleFormDialog({ open, onOpenChange, prefill, isEdit, onSave }) {
   const [form, setForm] = useState(prefill || emptyForm);
+  const [pairs, setPairs] = useState(dictToPairs(prefill?.value));
+
+  const resetOnOpen = () => {
+    setForm(prefill || emptyForm);
+    setPairs(dictToPairs(prefill?.value));
+  };
+
+  const updatePair = (i, field, v) => setPairs((ps) => ps.map((p, idx) => idx === i ? { ...p, [field]: v } : p));
+  const removePair = (i) => setPairs((ps) => ps.filter((_, idx) => idx !== i));
+  const addPair = () => setPairs((ps) => [...ps, { key: "", val: "" }]);
+
+  const submit = () => {
+    onSave({ ...form, value: pairsToDict(pairs) });
+    onOpenChange(false);
+  };
 
   return (
-    <Dialog open={open} onOpenChange={(o) => { onOpenChange(o); if (o) setForm(prefill || emptyForm); }}>
+    <Dialog open={open} onOpenChange={(o) => { onOpenChange(o); if (o) resetOnOpen(); }}>
       <DialogContent>
         <DialogHeader>
           <DialogTitle data-testid="rule-form-title">{isEdit ? "Ubah Business Rule" : "Tambah Business Rule"}</DialogTitle>
@@ -49,6 +77,25 @@ function RuleFormDialog({ open, onOpenChange, prefill, isEdit, onSave }) {
               placeholder="Mis: DP minimal 50% dari total tagihan, dibayar saat konfirmasi booking. Sisa dibayar saat check-in."
               rows={4} className="mt-1.5" />
           </div>
+          <div>
+            <Label>Nilai Terstruktur (opsional — mis. persen: 50, jam: 14:00, dsb.)</Label>
+            <div className="space-y-1.5 mt-1.5">
+              {pairs.map((p, i) => (
+                <div key={i} className="flex items-center gap-1.5">
+                  <Input data-testid={`rule-form-value-key-${i}`} value={p.key} onChange={(e) => updatePair(i, "key", e.target.value)}
+                    placeholder="nama" className="w-1/3" />
+                  <Input data-testid={`rule-form-value-val-${i}`} value={p.val} onChange={(e) => updatePair(i, "val", e.target.value)}
+                    placeholder="nilai" className="flex-1" />
+                  <Button type="button" variant="ghost" size="icon" data-testid={`rule-form-value-remove-${i}`} onClick={() => removePair(i)} className="text-red-600 hover:bg-red-50 shrink-0">
+                    <X className="w-3.5 h-3.5" />
+                  </Button>
+                </div>
+              ))}
+              <Button type="button" variant="outline" size="sm" data-testid="rule-form-value-add" onClick={addPair} className="gap-1.5">
+                <Plus className="w-3 h-3" /> Tambah Nilai
+              </Button>
+            </div>
+          </div>
           <label className="flex items-center gap-2 cursor-pointer">
             <input type="checkbox" data-testid="rule-form-active" checked={form.is_active} onChange={(e) => setForm((f) => ({ ...f, is_active: e.target.checked }))} />
             <span className="text-sm">Aktif (dipakai AI untuk menjawab tamu)</span>
@@ -60,7 +107,7 @@ function RuleFormDialog({ open, onOpenChange, prefill, isEdit, onSave }) {
             data-testid="rule-form-save"
             className="bg-blue-700 hover:bg-blue-800"
             disabled={!form.title.trim() || !form.description.trim()}
-            onClick={() => { onSave(form); onOpenChange(false); }}
+            onClick={submit}
           >
             Simpan
           </Button>
@@ -161,6 +208,15 @@ export default function BusinessRules() {
                 </div>
                 <div className="font-semibold mt-1.5">{r.title}</div>
                 <div className="text-sm text-slate-600 mt-0.5 whitespace-pre-wrap">{r.description}</div>
+                {r.value && Object.keys(r.value).length > 0 && (
+                  <div className="flex flex-wrap gap-1.5 mt-2">
+                    {Object.entries(r.value).map(([k, v]) => (
+                      <span key={k} className="inline-flex px-2 py-0.5 rounded-md text-xs font-medium bg-slate-100 text-slate-700 border border-slate-200">
+                        {k}: {String(v)}
+                      </span>
+                    ))}
+                  </div>
+                )}
               </div>
               <div className="flex gap-1 shrink-0">
                 <Button data-testid={`rule-edit-${r.id}`} variant="ghost" size="icon" onClick={() => openEdit(r)}>
