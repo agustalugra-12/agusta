@@ -16,6 +16,7 @@ import {
   CalendarRange, Users as UsersIcon, Sparkles, Wrench, Calendar, MessageCircle, X, Inbox, Check,
 } from "lucide-react";
 import { SetujuiDialog, TolakDialog, ActionRequiredRedDoorz } from "@/pages/BookingRequests";
+import { PembatalanAlert } from "@/pages/Pembatalan";
 
 const STAT_CARDS = [
   { key: "kosong", label: "Kosong", icon: BedDouble, color: "#10B981" },
@@ -407,6 +408,7 @@ export default function Dashboard() {
 
       {/* Alerts */}
       <ActionRequiredRedDoorz />
+      <PembatalanAlert />
       {bookingRequests.length > 0 && (
         <div data-testid="booking-request-alert" className="rounded-xl bg-blue-50 border border-blue-200 p-4">
           <div className="flex items-start gap-3 mb-3">

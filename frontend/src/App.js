@@ -34,6 +34,7 @@ import ServiceRequests from "@/pages/ServiceRequests";
 import BookingRequests from "@/pages/BookingRequests";
 import JadwalKerja from "@/pages/JadwalKerja";
 import BusinessRules from "@/pages/BusinessRules";
+import Pembatalan from "@/pages/Pembatalan";
 import PublicBook from "@/pages/PublicBook";
 import "@/App.css";
 
@@ -84,6 +85,7 @@ function AppRoutes() {
         <Route path="/service-requests" element={<ServiceRequests />} />
         <Route path="/jadwal-kerja" element={<JadwalKerja />} />
         <Route path="/business-rules" element={<Protected ownerOnly><BusinessRules /></Protected>} />
+        <Route path="/pembatalan" element={<Pembatalan />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

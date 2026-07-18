@@ -4,6 +4,7 @@ from routes.public import public_availability
 from routes.issues import buat_issue
 from routes.booking_requests import buat_booking_request
 from routes.pesan_whatsapp import _cari_kamar_dari_no_hp
+from routes.pembatalan import ajukan_pembatalan_ai
 
 # ---- Integrasi AI Chat Bot Eksternal ----
 # Untuk "ai-chat-bot" (repo terpisah milik user, dirancang reusable lintas sistem — BUKAN
@@ -189,3 +190,21 @@ async def ai_bot_buat_booking_request(body: AiBotBookingRequestIn, _: None = Dep
         raise HTTPException(400, "tipe harus 'day_use' atau 'menginap'")
     hasil = await buat_booking_request(body.model_dump())
     return {"ok": True, "booking_request": hasil}
+
+
+class AiBotCancelRequestIn(BaseModel):
+    kode: str  # kode booking (BKO-...), BUKAN kode booking_request (REQ-...)
+    no_hp: str
+    alasan: Optional[str] = ""
+
+
+@api.post("/integrasi-ai-bot/cancel-request")
+async def ai_bot_ajukan_pembatalan(body: AiBotCancelRequestIn, _: None = Depends(verifikasi_ai_bot_key)):
+    """Non-binding — sama seperti booking-request, endpoint ini TIDAK PERNAH mengeksekusi
+    pembatalan sungguhan langsung (lihat routes/pembatalan.py). AI cuma menyampaikan info
+    (kode booking, nomor tamu, alasan) ke PMS; PMS mencatat & staf yang approve/reject
+    manual di Dashboard/halaman Pembatalan."""
+    hasil = await ajukan_pembatalan_ai(body.kode, body.no_hp, body.alasan or "")
+    if not hasil.get("ok"):
+        raise HTTPException(400, hasil.get("error") or "Gagal mengajukan pembatalan")
+    return hasil
