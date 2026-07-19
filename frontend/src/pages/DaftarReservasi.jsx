@@ -26,7 +26,11 @@ const STATUS_BADGE = {
   booking_paid: "bg-emerald-100 text-emerald-800", checked_in: "bg-violet-100 text-violet-800",
   cancelled: "bg-slate-200 text-slate-600", no_show: "bg-red-100 text-red-700",
 };
-const SOURCE_BADGE = { walk_in: "bg-slate-100 text-slate-700", online: "bg-blue-100 text-blue-800" };
+const SOURCE_BADGE = {
+  walk_in: "bg-slate-100 text-slate-700", online: "bg-blue-100 text-blue-800",
+  ota: "bg-purple-100 text-purple-800", whatsapp_request: "bg-emerald-100 text-emerald-800",
+};
+const SOURCE_LABEL = { online: "Online", ota: "OTA", whatsapp_request: "WhatsApp AI" };
 const CANCELLABLE = ["aktif", "booking_pending", "booking_paid"];
 
 export default function DaftarReservasi() {
@@ -65,6 +69,8 @@ function ReservasiTab() {
   const [selected, setSelected] = useState(null);
   const [editMode, setEditMode] = useState(false);
   const [editForm, setEditForm] = useState({ jam_mulai: "", jam_selesai: "" });
+  const [nominalOta, setNominalOta] = useState("");
+  const [konfirmasiSaving, setKonfirmasiSaving] = useState(false);
 
   const load = async () => {
     const params = {};
@@ -104,6 +110,18 @@ function ReservasiTab() {
       toast.success(`Reservasi ${selected.kode} dibatalkan`);
       setSelected(null); load();
     } catch (e) { toast.error(e?.response?.data?.detail || "Gagal"); }
+  };
+
+  const konfirmasiHargaOta = async () => {
+    const nominal = parseInt(nominalOta, 10);
+    if (!nominal || nominal <= 0) { toast.error("Isi nominal yang valid"); return; }
+    setKonfirmasiSaving(true);
+    try {
+      await api.post(`/bookings/${selected.id}/konfirmasi-harga-ota`, { total_nominal: nominal });
+      toast.success(`Nominal OTA untuk ${selected.kode} dikonfirmasi`);
+      setNominalOta(""); setSelected(null); load();
+    } catch (e) { toast.error(e?.response?.data?.detail || "Gagal"); }
+    finally { setKonfirmasiSaving(false); }
   };
 
   return (
@@ -155,12 +173,17 @@ function ReservasiTab() {
                 const sb = statusBayarOf(r);
                 return (
                 <tr key={r.id} data-testid={`reservasi-row-${r.kode}`} onClick={() => setSelected(r)} className="border-t border-slate-100 cursor-pointer hover:bg-slate-50">
-                  <td className="p-3 font-bold">{r.kode}</td>
+                  <td className="p-3 font-bold">
+                    {r.kode}
+                    {r.ota_harga_dikonfirmasi === false && (
+                      <span title="Nominal OTA belum dikonfirmasi" className="ml-1.5 inline-block w-2 h-2 rounded-full bg-amber-500 align-middle" />
+                    )}
+                  </td>
                   <td className="p-3">{r.nama_tamu}</td>
                   <td className="p-3">{r.room_nomor} ({r.room_tipe})</td>
                   <td className="p-3">{fmtDateTime(r.jam_mulai)}</td>
                   <td className="p-3">{fmtDateTime(r.jam_selesai)}</td>
-                  <td className="p-3"><span className={`inline-flex px-2 py-1 rounded-md text-xs font-medium ${SOURCE_BADGE[r.source] || "bg-slate-100 text-slate-700"}`}>{r.source === "online" ? "Online" : "Walk-in"}</span></td>
+                  <td className="p-3"><span className={`inline-flex px-2 py-1 rounded-md text-xs font-medium ${SOURCE_BADGE[r.source] || "bg-slate-100 text-slate-700"}`}>{SOURCE_LABEL[r.source] || "Walk-in"}</span></td>
                   <td className="p-3"><span className={`inline-flex px-2 py-1 rounded-md text-xs font-medium ${STATUS_BADGE[r.status] || "bg-slate-100 text-slate-700"}`}>{STATUS_LABEL[r.status] || r.status}</span></td>
                   <td className="p-3"><span data-testid={`reservasi-status-bayar-${r.kode}`} className={`inline-flex px-2 py-1 rounded-md text-xs font-medium ${STATUS_BAYAR_BADGE_CLASS[sb.status_bayar]}`}>{STATUS_BAYAR_LABEL[sb.status_bayar]}</span></td>
                 </tr>
@@ -185,7 +208,10 @@ function ReservasiTab() {
                 {(() => { const sb = statusBayarOf(selected); return (
                   <span data-testid="reservasi-detail-status-bayar" className={`text-[10px] uppercase font-bold px-2 py-1 rounded ${STATUS_BAYAR_BADGE_CLASS[sb.status_bayar]}`}>{STATUS_BAYAR_LABEL[sb.status_bayar]}</span>
                 ); })()}
-                <span className={`text-[10px] uppercase font-bold px-2 py-1 rounded ${SOURCE_BADGE[selected.source] || "bg-slate-100 text-slate-700"}`}>{selected.source === "online" ? "Online" : "Walk-in"}</span>
+                <span className={`text-[10px] uppercase font-bold px-2 py-1 rounded ${SOURCE_BADGE[selected.source] || "bg-slate-100 text-slate-700"}`}>{SOURCE_LABEL[selected.source] || "Walk-in"}</span>
+                {selected.ota_harga_dikonfirmasi === false && (
+                  <span data-testid="reservasi-harga-belum-dikonfirmasi" className="text-[10px] uppercase font-bold px-2 py-1 rounded bg-amber-100 text-amber-800">Nominal Belum Dikonfirmasi</span>
+                )}
               </div>
               <div><span className="text-slate-500">Tamu:</span> <b>{selected.nama_tamu}</b></div>
               {selected.no_hp && <div><span className="text-slate-500">HP:</span> {selected.no_hp}</div>}
@@ -214,6 +240,27 @@ function ReservasiTab() {
                   </div>
                 );
               })()}
+              {selected.ota_harga_dikonfirmasi === false && (
+                <div className="bg-amber-50 border border-amber-200 rounded p-2 mt-2 text-xs space-y-2" data-testid="reservasi-konfirmasi-harga-ota">
+                  <p className="text-amber-800">
+                    Nominal di atas ({fmtRp(selected.total)}) masih <b>estimasi</b> dari tarif publik PMS — email OTA "Prepaid"
+                    ini tidak mencantumkan nominal aslinya. Belum dihitung sebagai pendapatan di laporan sampai dikonfirmasi.
+                    Isi nominal settlement asli begitu laporan/invoice dari OTA diterima:
+                  </p>
+                  <div className="flex gap-2">
+                    <Input
+                      data-testid="input-nominal-ota" type="number" placeholder="Nominal asli (Rp)"
+                      value={nominalOta} onChange={(e) => setNominalOta(e.target.value)} className="h-8 text-xs"
+                    />
+                    <Button
+                      data-testid="btn-konfirmasi-harga-ota" size="sm" disabled={konfirmasiSaving}
+                      onClick={konfirmasiHargaOta} className="h-8 bg-amber-700 hover:bg-amber-800 shrink-0"
+                    >
+                      Konfirmasi
+                    </Button>
+                  </div>
+                </div>
+              )}
               {selected.catatan && <div className="italic text-slate-600">&ldquo;{selected.catatan}&rdquo;</div>}
               <div className="text-[10px] text-slate-400 pt-1">Dibuat oleh {selected.created_by}</div>
             </div>

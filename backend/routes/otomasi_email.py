@@ -361,7 +361,18 @@ async def buat_reservasi_otomatis(log_id: str, data: dict, sumber: str, subjek: 
         }})
         return
 
-    total_semua = int(data.get("harga") or 0) or (dipilih[0]["tarif_menginap"] * jumlah_kamar)  # OTA selalu tipe menginap
+    # Booking "Prepaid" RedDoorz TIDAK mencantumkan nominal di emailnya sama sekali (2026-07-19,
+    # ditemukan user) - beda dari booking biasa yang selalu ada field harga. Kalau begitu,
+    # total di sini TERPAKSA memakai tarif publik PMS sendiri sebagai PLACEHOLDER supaya kamar
+    # tetap ter-booking (nomor kamar/tanggal jauh lebih penting untuk anti-bentrok daripada
+    # nominalnya), TAPI ditandai `ota_harga_dikonfirmasi=False` - dikecualikan dari SEMUA
+    # laporan pendapatan (reports.py & laporan_analitik.py) sampai staf isi nominal settlement
+    # ASLI dari laporan/invoice RedDoorz lewat POST /bookings/{id}/konfirmasi-harga-ota. Ini
+    # karena tarif net yang OTA bayar ke hotel biasanya LEBIH RENDAH dari tarif publik (margin
+    # OTA) - mencatatnya sebagai pendapatan asli akan OVERSTATE laporan keuangan.
+    harga_dari_email = int(data.get("harga") or 0)
+    harga_dikonfirmasi = harga_dari_email > 0
+    total_semua = harga_dari_email or (dipilih[0]["tarif_menginap"] * jumlah_kamar)  # OTA selalu tipe menginap
     total_per_kamar = round(total_semua / jumlah_kamar)
     dibatalkan = data.get("status_pembayaran") == "Dibatalkan"
     reservation_ids = []
@@ -394,8 +405,14 @@ async def buat_reservasi_otomatis(log_id: str, data: dict, sumber: str, subjek: 
             # amount_due wajib diisi = total supaya status_bayar_booking() (dipakai Dashboard/
             # Reservasi/PDF) menyimpulkan "lunas", bukan "dp" — booking OTA tidak pernah lewat
             # payment_option/create-transaction (yang biasanya isi amount_due), jadi kalau
-            # dibiarkan kosong dianggap belum ada nominal terkumpul sama sekali.
-            update_fields.update({"payment_status": "paid", "status": "aktif", "paid_at": now_iso(), "amount_due": total_per_kamar})
+            # dibiarkan kosong dianggap belum ada nominal terkumpul sama sekali. payment_status
+            # TETAP "paid" walau harga belum dikonfirmasi (tamu Prepaid SUDAH bayar ke OTA -
+            # jangan sampai staf/tamu lihat status "belum bayar" yang salah); yang membedakan
+            # nominal asli vs estimasi murni `ota_harga_dikonfirmasi`, bukan payment_status.
+            update_fields.update({
+                "payment_status": "paid", "status": "aktif", "paid_at": now_iso(),
+                "amount_due": total_per_kamar, "ota_harga_dikonfirmasi": harga_dikonfirmasi,
+            })
         await db.bookings.update_one({"id": booking["id"]}, {"$set": update_fields})
         reservation_ids.append(booking["id"])
 

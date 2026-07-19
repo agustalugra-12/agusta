@@ -19,6 +19,7 @@ async def laporan_pendapatan(from_date: str = Query(...), to_date: str = Query(.
     bks = await db.bookings.find({
         "payment_status": "paid",
         "paid_at": {"$gte": start, "$lte": end},
+        "ota_harga_dikonfirmasi": {"$ne": False},
     }, {"_id": 0, "total": 1, "paid_at": 1}).to_list(5000)
     by_day: Dict[str, int] = {}
     for b in bks:
@@ -37,6 +38,7 @@ async def laporan_performa_saluran(channel: str = Query("Semua"),
     bks = await db.bookings.find({
         "source": {"$in": sources},
         "payment_status": "paid",
+        "ota_harga_dikonfirmasi": {"$ne": False},
     }, {"_id": 0, "source": 1, "total": 1}).to_list(10000)
     agg = {k: {"booking": 0, "pendapatan": 0} for k in keys}
     for b in bks:

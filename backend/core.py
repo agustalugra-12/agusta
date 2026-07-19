@@ -541,6 +541,10 @@ class ManualMarkPaidBody(BaseModel):
     metode: Optional[str] = "transfer_manual"
     nominal: Optional[int] = None  # if not provided, use total
 
+class KonfirmasiHargaOtaBody(BaseModel):
+    total_nominal: int  # nominal settlement ASLI dari OTA (mis. laporan RedDoorz), untuk SEMUA
+                         # kamar dalam 1 reservasi OTA ini (dibagi rata jika grup >1 kamar)
+
 class CollectBalanceBody(BaseModel):
     nominal: int
     metode: str = "cash"  # cash / qris

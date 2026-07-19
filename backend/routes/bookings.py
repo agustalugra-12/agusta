@@ -354,6 +354,49 @@ async def mark_paid_manual(bid: str, body: ManualMarkPaidBody, user: dict = Depe
             )
     return {"ok": True, "booking_kode": b["kode"], "amount": nominal, "status": "booking_paid"}
 
+@api.post("/bookings/{bid}/konfirmasi-harga-ota")
+async def konfirmasi_harga_ota(bid: str, body: KonfirmasiHargaOtaBody, user: dict = Depends(get_current_user)):
+    """Isi nominal settlement OTA yang SEBENARNYA (2026-07-19) - dipakai untuk booking RedDoorz
+    "Prepaid" yang emailnya TIDAK mencantumkan nominal sama sekali, sehingga saat dibuat
+    otomatis (`buat_reservasi_otomatis`, routes/otomasi_email.py) totalnya sempat memakai
+    ESTIMASI dari tarif publik PMS (ditandai `ota_harga_dikonfirmasi=False`, DIKECUALIKAN dari
+    semua laporan pendapatan sampai dikonfirmasi di sini - lihat reports.py & laporan_analitik.py)
+    karena tarif net yang OTA bayar ke hotel biasanya lebih rendah dari tarif publik, jadi
+    estimasi itu TIDAK BOLEH dianggap pendapatan asli. Staf isi nominal ini begitu laporan/
+    invoice settlement resmi dari OTA diterima (mis. rekap bulanan RedDoorz). `total_nominal`
+    dibagi rata ke SEMUA kamar dalam 1 reservasi OTA yang sama (`ota_reservation_no`), sama
+    seperti cara estimasi awal dihitung."""
+    b = await db.bookings.find_one({"id": bid})
+    if not b:
+        raise HTTPException(404, "Booking tidak ditemukan")
+    if b.get("source") != "ota":
+        raise HTTPException(400, "Endpoint ini hanya untuk booking dari OTA")
+    if b.get("ota_harga_dikonfirmasi") is not False:
+        raise HTTPException(400, "Booking ini tidak sedang menunggu konfirmasi nominal")
+    if body.total_nominal <= 0:
+        raise HTTPException(400, "Nominal harus lebih dari 0")
+
+    grup = (
+        await db.bookings.find({
+            "ota_reservation_no": b["ota_reservation_no"], "source": "ota",
+        }, {"_id": 0, "id": 1}).to_list(50)
+        if b.get("ota_reservation_no") else [{"id": b["id"]}]
+    )
+    per_kamar = round(body.total_nominal / max(1, len(grup)))
+    now = now_iso()
+    for gb in grup:
+        await db.bookings.update_one({"id": gb["id"]}, {"$set": {
+            "subtotal": per_kamar, "total": per_kamar, "amount_due": per_kamar,
+            "ota_harga_dikonfirmasi": True, "harga_dikonfirmasi_oleh": user["nama"],
+            "harga_dikonfirmasi_at": now, "updated_at": now,
+        }})
+    await log_activity(
+        user, "konfirmasi_harga_ota",
+        f"Konfirmasi nominal settlement OTA {b.get('kode')} ({len(grup)} kamar): Rp{body.total_nominal:,}".replace(",", "."),
+        entity=b.get("room_nomor", ""),
+    )
+    return await db.bookings.find_one({"id": bid}, {"_id": 0})
+
 @api.post("/bookings/{bid}/reddoorz-input-selesai")
 async def reddoorz_input_selesai(bid: str, user: dict = Depends(get_current_user)):
     """Tahap 2 Modul Reservasi: staf menandai sudah input booking Menginap ini secara manual

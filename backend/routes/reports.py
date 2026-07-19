@@ -261,9 +261,13 @@ async def report_summary(user: dict = Depends(get_current_user)):
     # masuk, sama seperti /reports/daily & /reports/rooms yang sudah lebih dulu diperbaiki 2026-07-13;
     # endpoint ini (dipakai Dashboard utama) sebelumnya kelewat, bikin "Pendapatan"/"Laba Bersih" di
     # Dashboard tidak sinkron dengan jumlah booking (yang sudah mencakup semua sumber sejak awal).
+    # ota_harga_dikonfirmasi=False dikecualikan (2026-07-19) - booking OTA "Prepaid" yang
+    # emailnya tidak mencantumkan nominal, sempat memakai ESTIMASI tarif publik PMS sebagai
+    # placeholder (lihat buat_reservasi_otomatis, routes/otomasi_email.py) - jangan dihitung
+    # sebagai pendapatan asli sampai staf konfirmasi nominal settlement sungguhan.
     bk_today = await db.bookings.find({
         "source": {"$in": ["ota", "online", "whatsapp"]}, "payment_status": "paid",
-        "paid_at": {"$gte": today_iso},
+        "paid_at": {"$gte": today_iso}, "ota_harga_dikonfirmasi": {"$ne": False},
     }, {"_id": 0, "total": 1}).to_list(1000)
     rev_booking_today = sum(int(b.get("total") or 0) for b in bk_today)
     # kasir today / month
@@ -278,7 +282,7 @@ async def report_summary(user: dict = Depends(get_current_user)):
     kasir_month = await db.kasir.find({"timestamp": {"$gte": month_start}}, {"_id": 0}).to_list(2000)
     bk_month = await db.bookings.find({
         "source": {"$in": ["ota", "online", "whatsapp"]}, "payment_status": "paid",
-        "paid_at": {"$gte": month_start},
+        "paid_at": {"$gte": month_start}, "ota_harga_dikonfirmasi": {"$ne": False},
     }, {"_id": 0, "total": 1}).to_list(5000)
     rev_booking_month = sum(int(b.get("total") or 0) for b in bk_month)
     # services (manual)
@@ -325,6 +329,7 @@ async def report_daily(from_date: str = Query(...), to_date: str = Query(...),
         "source": {"$in": ["ota", "online", "whatsapp"]},
         "payment_status": "paid",
         "paid_at": {"$gte": start, "$lte": end},
+        "ota_harga_dikonfirmasi": {"$ne": False},
     }, {"_id": 0, "total": 1, "paid_at": 1}).to_list(5000)
     ks = await db.kasir.find({"timestamp": {"$gte": start, "$lte": end}}, {"_id": 0}).to_list(5000)
     ex = await db.expenses.find({"tanggal": {"$gte": start, "$lte": end}}, {"_id": 0}).to_list(5000)
@@ -406,6 +411,7 @@ async def report_rooms(from_date: str = Query(...), to_date: str = Query(...),
         "source": {"$in": ["ota", "online", "whatsapp"]},
         "payment_status": "paid",
         "paid_at": {"$gte": start, "$lte": end},
+        "ota_harga_dikonfirmasi": {"$ne": False},
     }, {"_id": 0}).to_list(5000)
     booking_items = [{
         "id": b["id"], "trx_no": b.get("kode"),
