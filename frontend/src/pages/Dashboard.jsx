@@ -784,7 +784,14 @@ export default function Dashboard() {
                     {STATUS_BAYAR_LABEL[sb.status_bayar]}
                   </span>
                 ); })()}
-                {bookingDetail.source === "online" && <span className="text-[10px] uppercase font-bold px-2 py-1 rounded bg-violet-100 text-violet-800">Online</span>}
+                {bookingDetail.source !== "walk_in" && (
+                  <span className="text-[10px] uppercase font-bold px-2 py-1 rounded bg-violet-100 text-violet-800">
+                    {{ online: "Online", ota: "OTA", whatsapp_request: "WhatsApp AI" }[bookingDetail.source] || bookingDetail.source}
+                  </span>
+                )}
+                {bookingDetail.ota_harga_dikonfirmasi === false && (
+                  <span className="text-[10px] uppercase font-bold px-2 py-1 rounded bg-amber-100 text-amber-800">Nominal Belum Dikonfirmasi</span>
+                )}
               </div>
               <div><span className="text-slate-500">Tamu:</span> <b data-testid="booking-detail-nama">{bookingDetail.nama_tamu}</b></div>
               <div><span className="text-slate-500">Kamar:</span> {bookingDetail.room_nomor} ({bookingDetail.room_tipe})</div>

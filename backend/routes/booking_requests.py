@@ -165,6 +165,18 @@ async def buat_booking_request(data: Dict[str, Any]) -> Dict[str, Any]:
     BOOKING_FLOW_SYSTEM_PROMPT; None kalau belum disebut — staf yang putuskan saat approve)."""
     payment_option = data.get("payment_option")
 
+    # Guard tanggal masa lalu (2026-07-19, audit reliabilitas AI booking flow) - AI WhatsApp
+    # sekarang selalu diberi tanggal hari ini di prompt-nya (lihat build_dynamic_prompt di
+    # ai-chat-bot), tapi tetap divalidasi keras di sini sebagai lapis pertahanan kedua kalau
+    # model salah ekstrak tanggal (mis. tamu bilang "kemarin" bercanda, atau typo tahun) -
+    # jangan sampai booking_request nyangkut untuk tanggal yang sudah lewat, staf pasti bingung.
+    try:
+        tanggal_checkin_date = datetime.fromisoformat(data["tanggal_checkin"]).date()
+    except (ValueError, TypeError):
+        raise HTTPException(400, "Format tanggal_checkin tidak valid (harus YYYY-MM-DD)")
+    if tanggal_checkin_date < datetime.now().date():
+        raise HTTPException(400, "Tanggal check-in tidak boleh di masa lalu - tanya ulang tanggal yang benar ke tamu")
+
     # Preview diskon member (Program Loyalitas Kedatangan, dikonfirmasi user 2026-07-19) -
     # cuma INFORMASIONAL di tahap permintaan (supaya AI/staf tahu & tamu diberi tahu di
     # muka), dihitung ULANG & jadi final saat staf approve (lewat create_reservation) -
