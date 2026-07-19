@@ -1,11 +1,19 @@
 """Booking Request — Tahap 1 dari PRD "Modul Reservasi, Priority Booking & Payment Flow"
 (diberi lampu hijau user 2026-07-17, lihat CLAUDE.md & memory project_reservasi_priority_booking_prd).
 
-Entitas baru (`db.booking_requests`) — permintaan booking NON-BINDING yang dikumpulkan AI
-WhatsApp (routes/pesan_whatsapp.py), ditinjau manual staf (approve/reject di sini), baru
-menjadi booking sungguhan (`db.bookings`) setelah disetujui. AI WhatsApp TIDAK PERNAH punya
-akses membuat dokumen di sini secara langsung selain lewat `buat_booking_request()` — dan
-fungsi itu sendiri tidak pernah membuat booking, cuma permintaan.
+Entitas baru (`db.booking_requests`) — permintaan booking dikumpulkan AI WhatsApp
+(routes/pesan_whatsapp.py, atau ai-chat-bot lewat routes/integrasi_ai_bot.py), baru
+menjadi booking sungguhan (`db.bookings`) lewat `buat_booking_request()` — fungsi itu
+sendiri tidak pernah membuat booking, cuma permintaan.
+
+**Perubahan 2026-07-19 (dikonfirmasi user)**: Day Use dengan `payment_option` yang sudah
+jelas dari tamu sekarang di-AUTO-APPROVE (`_coba_auto_approve_day_use`) - kamar dipilih
+otomatis dari ketersediaan real-time, booking + transaksi Tripay dibuat langsung, link
+bayar auto-terkirim, TANPA menunggu staf klik Terima di PMS. Menginap TETAP WAJIB direview
+manual staf (butuh sinkron manual ke PMS RedDoorz, tidak bisa diotomatisasi sepenuhnya).
+Kalau auto-approve gagal/tidak berlaku (kamar penuh, >1 kamar, payment_option belum
+disebutkan tamu, dst), fallback ke alur lama: booking_request tetap non-binding
+"waiting_approval", staf review manual (approve/reject di bawah).
 
 Tahap 1 SENGAJA berhenti setelah tamu membayar (booking real dibuat & dibayar via Tripay
 persis seperti alur publik yang sudah ada — reuse `create_reservation`/`tripay_create_transaction`,
@@ -19,9 +27,81 @@ from reservation_service import create_reservation
 
 STATUS_TERBUKA = ["waiting_approval"]
 
+# Channel Tripay default untuk auto-approve Day Use (QRIS - paling universal di Indonesia,
+# hampir semua e-wallet/mobile banking bisa scan). Kode Tripay sungguhan "QRIS2", BUKAN
+# "QRIS" - dicek langsung ke GET /payments/tripay/channels sebelum dipakai di sini.
+AUTO_APPROVE_PAYMENT_METHOD = "QRIS2"
+
 
 def _kode_request() -> str:
     return f"REQ-{datetime.now().strftime('%y%m%d')}-{uuid.uuid4().hex[:4].upper()}"
+
+
+async def _coba_auto_approve_day_use(doc: Dict[str, Any]) -> None:
+    """Auto-approve + auto-kirim link bayar untuk booking Day Use yang tamu sudah sebutkan
+    preferensi DP/Lunas-nya sendiri (dikonfirmasi user 2026-07-19: Day Use tidak perlu lagi
+    ditinjau staf, langsung diproses berdasarkan ketersediaan kamar real-time - BEDA dari
+    Menginap yang TETAP wajib direview staf manual, lihat catatan Business Rules di
+    CLAUDE.md soal RedDoorz). Update `doc` di db.bookings_requests LANGSUNG kalau berhasil;
+    kalau gagal/tidak berlaku (bukan day_use, belum ada payment_option, kamar penuh,
+    >1 kamar, dst), diam-diam TIDAK melakukan apa pun - booking_request tetap
+    "waiting_approval" seperti biasa, staf yang proses manual seperti sebelumnya. Tidak
+    pernah melempar exception ke caller (auto-approve SELALU best-effort, kegagalannya
+    tidak boleh menggagalkan pembuatan booking_request itu sendiri)."""
+    try:
+        if doc["tipe"] != "day_use" or doc["payment_option_diminta"] not in ("dp50", "full"):
+            return
+        if doc["jumlah_kamar"] != 1:
+            return  # grup >1 kamar tetap lewat review staf (auto-pilih banyak kamar sekaligus lebih berisiko)
+
+        from routes.public import public_availability
+        avail = await public_availability(doc["tanggal_checkin"], tipe=doc.get("room_tipe"))
+        if not avail["rooms"]:
+            return  # kamar tipe itu penuh - biarkan staf yang tangani manual (mungkin bisa nego tipe lain)
+
+        room = avail["rooms"][0]
+        jam = doc.get("jam_checkin") or "14:00"
+        start = datetime.fromisoformat(f"{doc['tanggal_checkin']}T{jam}:00+07:00").astimezone(timezone.utc)
+        end = start + timedelta(hours=6)
+
+        booking = await create_reservation({
+            "room_id": room["id"], "nama_tamu": doc["nama_tamu"], "no_hp": doc["no_hp"],
+            "email": "", "no_identitas": "", "kendaraan": "",
+            "jumlah_tamu": doc.get("jumlah_tamu", 1),
+            "jam_mulai": start, "jam_selesai": end,
+            "catatan": doc.get("catatan") or "", "created_by": "AI WhatsApp (otomatis)",
+            "tipe": "day_use", "dengan_sarapan": False,
+        }, source="whatsapp_auto")
+
+        from routes.tripay import tripay_create_transaction
+        trx = await tripay_create_transaction(TripayCreateTransactionBody(
+            booking_id=booking["id"], payment_option=doc["payment_option_diminta"],
+            method=AUTO_APPROVE_PAYMENT_METHOD,
+        ))
+
+        now = now_iso()
+        await db.booking_requests.update_one({"id": doc["id"]}, {"$set": {
+            "status": "waiting_payment", "booking_ids": [booking["id"]], "group_id": None,
+            "approved_by": "AI WhatsApp (otomatis)", "approved_at": now, "updated_at": now,
+            "checkout_url": trx.get("checkout_url"), "total": booking["total"],
+        }})
+        await log_availability_change(room["id"], room["tipe"], 0, "booking_auto_approve_ai", booking_id=booking["id"])
+
+        pesan = (
+            f"Halo {doc['nama_tamu']}, booking Day Use Anda *otomatis dikonfirmasi* berdasarkan "
+            f"ketersediaan kamar saat ini!\n\n"
+            f"Kamar: {room['nomor']} ({room['tipe']})\n"
+            f"Total: Rp{int(booking['total']):,}".replace(",", ".") + "\n"
+            f"Silakan selesaikan pembayaran melalui link berikut:\n{trx.get('checkout_url')}"
+        )
+        from routes.pesan_whatsapp import _kirim_via_provider
+        await _kirim_via_provider(doc["no_hp"], pesan)
+    except Exception as e:
+        # Best-effort murni - kalau ADA yang gagal di tengah jalan (Tripay down, kamar
+        # keburu terisi race condition, dst), booking_request tetap "waiting_approval",
+        # staf tetap bisa proses manual seperti biasa. Tidak pernah bikin buat_booking_request
+        # gagal gara-gara ini.
+        logging.getLogger("booking_requests").warning(f"Auto-approve day_use {doc.get('kode')} gagal: {e}")
 
 
 async def buat_booking_request(data: Dict[str, Any]) -> Dict[str, Any]:
@@ -58,23 +138,42 @@ async def buat_booking_request(data: Dict[str, Any]) -> Dict[str, Any]:
 
     from routes.push import send_push
     from routes.telegram_bot import kirim_alert_owner
+
+    # Day Use dengan payment_option jelas: coba auto-approve + auto-kirim link bayar
+    # langsung (dikonfirmasi user 2026-07-19), TIDAK perlu menunggu staf klik Terima di
+    # PMS - beda dari Menginap yang tetap wajib direview manual. Best-effort, diam-diam
+    # tidak melakukan apa pun kalau gagal/tidak berlaku (lihat docstring fungsinya).
+    await _coba_auto_approve_day_use(doc)
+    doc = await db.booking_requests.find_one({"id": doc["id"]}, {"_id": 0}) or doc
+
     ringkas = (
         f"{doc['nama_tamu']} — {doc['tipe']} {doc['room_tipe'] or ''} x{doc['jumlah_kamar']}, "
         f"{doc['tanggal_checkin']}"
     )
-    await send_push("Permintaan Booking Baru", ringkas, url="/booking-requests")
-    await kirim_alert_owner(
-        f"📩 Permintaan Booking Baru ({doc['kode']})\n\n"
-        f"Nama: {doc['nama_tamu']}\nHP: {doc['no_hp']}\n"
-        f"Tipe: {doc['tipe']} — {doc['room_tipe'] or '(belum tentu)'} x{doc['jumlah_kamar']}, "
-        f"{doc['jumlah_tamu']} tamu\n"
-        f"Check-in: {doc['tanggal_checkin']}" + (f" {doc['jam_checkin']}" if doc.get("jam_checkin") else "") +
-        (f"\nCheck-out: {doc['tanggal_checkout']}" if doc.get("tanggal_checkout") else "") +
-        (f"\nTamu minta: {'DP 50%' if doc['payment_option_diminta'] == 'dp50' else 'Bayar Penuh'}" if doc.get("payment_option_diminta") else "") +
-        (f"\nKedatangan ke-{diskon_info['kedatangan_ke']}, diskon member {diskon_info['diskon_persen']}%" if diskon_info["diskon_persen"] else "") +
-        "\n\nTinjau di PMS → Booking Request."
-    )
-    doc.pop("_id", None)
+    if doc["status"] == "waiting_payment":
+        # Auto-approved - FYI ke owner, BUKAN alert "perlu ditinjau" (tidak ada aksi yang
+        # perlu staf lakukan, link bayar sudah otomatis terkirim ke tamu).
+        await kirim_alert_owner(
+            f"✅ Booking Day Use OTOMATIS terkonfirmasi ({doc['kode']})\n\n"
+            f"Nama: {doc['nama_tamu']}\nHP: {doc['no_hp']}\n"
+            f"Tipe: {doc['tipe']} — {doc['room_tipe'] or '-'}, {doc['tanggal_checkin']}"
+            + (f" {doc['jam_checkin']}" if doc.get("jam_checkin") else "") +
+            f"\nTotal: Rp{int(doc.get('total') or 0):,}".replace(",", ".") +
+            "\n\nLink pembayaran sudah otomatis terkirim ke tamu - tidak perlu tindakan."
+        )
+    else:
+        await send_push("Permintaan Booking Baru", ringkas, url="/booking-requests")
+        await kirim_alert_owner(
+            f"📩 Permintaan Booking Baru ({doc['kode']})\n\n"
+            f"Nama: {doc['nama_tamu']}\nHP: {doc['no_hp']}\n"
+            f"Tipe: {doc['tipe']} — {doc['room_tipe'] or '(belum tentu)'} x{doc['jumlah_kamar']}, "
+            f"{doc['jumlah_tamu']} tamu\n"
+            f"Check-in: {doc['tanggal_checkin']}" + (f" {doc['jam_checkin']}" if doc.get("jam_checkin") else "") +
+            (f"\nCheck-out: {doc['tanggal_checkout']}" if doc.get("tanggal_checkout") else "") +
+            (f"\nTamu minta: {'DP 50%' if doc['payment_option_diminta'] == 'dp50' else 'Bayar Penuh'}" if doc.get("payment_option_diminta") else "") +
+            (f"\nKedatangan ke-{diskon_info['kedatangan_ke']}, diskon member {diskon_info['diskon_persen']}%" if diskon_info["diskon_persen"] else "") +
+            "\n\nTinjau di PMS → Booking Request."
+        )
     return doc
 
 
