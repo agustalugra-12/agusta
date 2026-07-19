@@ -61,6 +61,7 @@ export function SetujuiDialog({ req, onOpenChange, onApproved }) {
   const [selected, setSelected] = useState([]);
   const [method, setMethod] = useState("");
   const [opsi, setOpsi] = useState("dp50");
+  const [manualOverride, setManualOverride] = useState(false);
   const [hasil, setHasil] = useState(null);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
@@ -69,9 +70,13 @@ export function SetujuiDialog({ req, onOpenChange, onApproved }) {
     if (!req) return;
     setLoading(true);
     setError(""); setSelected([]); setHasil(null);
-    // Default ke preferensi yang tamu SENDIRI sebutkan di WhatsApp (kalau ada) — staf tetap
-    // bisa ubah manual, ini cuma default supaya tidak ketinggalan/salah pilih dari yang diminta.
+    // Kalau tamu SENDIRI sudah sebutkan preferensi di chat, otomatis dipakai (bukan cuma
+    // default) - dikonfirmasi user 2026-07-19: staf tidak perlu pilih ulang sesuatu yang
+    // tamu sudah tentukan. Tombol "Ubah" (manualOverride) tetap tersedia untuk koreksi kalau
+    // tamu berubah pikiran/AI salah tangkap. Kalau tamu TIDAK sebutkan sama sekali
+    // (payment_option_diminta kosong), tetap tampil pilihan manual seperti biasa.
     setOpsi(req.payment_option_diminta || "dp50");
+    setManualOverride(!req.payment_option_diminta);
     const params = { tanggal: req.tanggal_checkin, tipe: req.room_tipe || undefined };
     if (req.tipe === "menginap" && req.tanggal_checkout) params.checkout = req.tanggal_checkout;
     Promise.all([
@@ -171,14 +176,24 @@ export function SetujuiDialog({ req, onOpenChange, onApproved }) {
                 </div>
                 <div>
                   <Label>Opsi Bayar</Label>
-                  <div className="grid grid-cols-2 gap-2 mt-1.5">
-                    <button type="button" onClick={() => setOpsi("dp50")} className={`p-2.5 rounded-lg border-2 text-left text-xs ${opsi === "dp50" ? "border-blue-600 bg-blue-50" : "border-slate-200"}`}>
-                      <div className="font-semibold">DP 50%</div>
-                    </button>
-                    <button type="button" onClick={() => setOpsi("full")} className={`p-2.5 rounded-lg border-2 text-left text-xs ${opsi === "full" ? "border-blue-600 bg-blue-50" : "border-slate-200"}`}>
-                      <div className="font-semibold">Lunas</div>
-                    </button>
-                  </div>
+                  {req.payment_option_diminta && !manualOverride ? (
+                    <div className="mt-1.5 flex items-center justify-between p-2.5 rounded-lg border-2 border-blue-600 bg-blue-50 text-xs" data-testid="opsi-bayar-locked">
+                      <div>
+                        <div className="font-semibold">{opsi === "dp50" ? "DP 50%" : "Lunas"}</div>
+                        <div className="text-slate-500">Otomatis — sesuai permintaan tamu di chat</div>
+                      </div>
+                      <button type="button" onClick={() => setManualOverride(true)} className="text-blue-700 underline shrink-0" data-testid="opsi-bayar-ubah">Ubah</button>
+                    </div>
+                  ) : (
+                    <div className="grid grid-cols-2 gap-2 mt-1.5">
+                      <button type="button" onClick={() => setOpsi("dp50")} className={`p-2.5 rounded-lg border-2 text-left text-xs ${opsi === "dp50" ? "border-blue-600 bg-blue-50" : "border-slate-200"}`}>
+                        <div className="font-semibold">DP 50%</div>
+                      </button>
+                      <button type="button" onClick={() => setOpsi("full")} className={`p-2.5 rounded-lg border-2 text-left text-xs ${opsi === "full" ? "border-blue-600 bg-blue-50" : "border-slate-200"}`}>
+                        <div className="font-semibold">Lunas</div>
+                      </button>
+                    </div>
+                  )}
                 </div>
               </>
             )}
