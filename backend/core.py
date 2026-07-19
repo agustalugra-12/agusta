@@ -325,6 +325,26 @@ def parse_iso(s: str, field: str) -> datetime:
     except Exception:
         raise HTTPException(400, f"Format {field} tidak valid (harus ISO 8601)")
 
+def hitung_kebijakan_pembatalan(jam_mulai_iso: str) -> dict:
+    """Kebijakan pembatalan TUNGGAL untuk SEMUA channel (2026-07-19, keputusan user
+    "samakan semua channel"): sebelumnya self-service website (public.py, beda per
+    tipe day_use/menginap 24/72 jam, biaya 10%) dan AI WhatsApp (pembatalan.py, H-7/H-3,
+    biaya 50%) punya 2 aturan berbeda, plus 2 artikel Knowledge Base ai-chat-bot yang beda
+    lagi dari keduanya - membingungkan tamu kalau ketemu angka beda-beda tergantung jalur.
+
+    Aturan final (SAMA untuk day_use & menginap, tidak dibedakan per tipe lagi):
+    - H-7 s/d H-3 sebelum check-in (masih >= 72 jam): refund 100% (biaya_persen 0).
+    - H-2 s/d hari check-in (< 72 jam): biaya 50%.
+
+    Dipakai bersama oleh routes/public.py (pembatalan mandiri tamu) & routes/pembatalan.py
+    (permintaan pembatalan via AI WhatsApp, staf yang approve) - SATU-SATUNYA sumber
+    kebenaran, jangan hitung ulang terpisah di kedua tempat itu lagi."""
+    jam_checkin = parse_iso(jam_mulai_iso, "jam_mulai")
+    jam_tersisa = (jam_checkin - datetime.now(timezone.utc)).total_seconds() / 3600
+    if jam_tersisa >= 72:
+        return {"label": "H-7 s/d H-3 (masih ≥ 72 jam sebelum check-in): refund 100%", "biaya_persen": 0, "gratis": True}
+    return {"label": "H-2 s/d Hari-H (<72 jam sebelum check-in): biaya 50%", "biaya_persen": 50, "gratis": False}
+
 # ---- Models ----
 class LoginIn(BaseModel):
     username: str

@@ -1,13 +1,13 @@
 """Pembatalan Booking via AI WhatsApp (dikonfirmasi user 2026-07-19).
 
 Beda dengan pembatalan mandiri tamu di public.py (`public_batalkan_booking` — self-service,
-eksekusi otomatis, kebijakan H-3/H-1 10%): AI TIDAK PERNAH mengeksekusi pembatalan
-sungguhan secara langsung (sama seperti create_booking) — peran AI cuma "memberikan info
-ke PMS", PMS yang mencatat sebagai permintaan (`cancel_request_status` di `db.bookings`),
-staf yang approve/reject manual. Kebijakan refund juga sengaja dipisah dari kebijakan
-self-service (supaya tidak mengubah alur yang sudah disetujui sebelumnya): H-7 s/d H-3
-(>=72 jam sebelum check-in) = refund 100%, H-2 s/d Hari-H (<72 jam) = biaya 50% — SAMA
-untuk day_use & menginap.
+eksekusi otomatis): AI TIDAK PERNAH mengeksekusi pembatalan sungguhan secara langsung (sama
+seperti create_booking) — peran AI cuma "memberikan info ke PMS", PMS yang mencatat sebagai
+permintaan (`cancel_request_status` di `db.bookings`), staf yang approve/reject manual.
+
+Kebijakan refund SAMA dengan self-service (disatukan 2026-07-19, keputusan user "samakan
+semua channel" - sebelumnya 2 aturan berbeda per channel membingungkan tamu) - lihat
+`hitung_kebijakan_pembatalan` di core.py untuk aturan & alasan lengkapnya.
 
 Refund sendiri (transfer uang) TETAP MANUAL oleh staf, sistem cuma menghitung nominal &
 melacak status: requested (menunggu staf) -> pending (disetujui, tunggu refund dikirim
@@ -17,17 +17,6 @@ lewat GET /cancellation-requests?status=riwayat)."""
 from core import *
 
 CANCEL_STATUS_AKTIF = ["requested", "pending"]
-
-
-def _hitung_kebijakan_pembatalan_ai(b: dict) -> dict:
-    """H-7 s/d H-3 (>=72 jam sebelum check-in): refund 100%. H-2 s/d Hari-H (<72 jam):
-    biaya 50%. SAMA untuk day_use & menginap (beda dari kebijakan self-service di
-    public.py yang split per tipe/24-72 jam) — aturan dikonfirmasi user 2026-07-19."""
-    jam_checkin = parse_iso(b["jam_mulai"], "jam_mulai")
-    jam_tersisa = (jam_checkin - datetime.now(timezone.utc)).total_seconds() / 3600
-    if jam_tersisa >= 72:
-        return {"label": "H-7 s/d H-3 (masih ≥ 72 jam sebelum check-in): refund 100%", "biaya_persen": 0}
-    return {"label": "H-2 s/d Hari-H (<72 jam sebelum check-in): biaya 50%", "biaya_persen": 50}
 
 
 def _phone_variants(no_hp: str) -> set:
@@ -55,7 +44,7 @@ async def ajukan_pembatalan_ai(kode: str, no_hp: str, alasan: str = "") -> Dict[
     if not digits or digits not in _phone_variants(b.get("no_hp")):
         return {"ok": False, "error": "Nomor WhatsApp tidak cocok dengan pemilik booking"}
 
-    policy = _hitung_kebijakan_pembatalan_ai(b)
+    policy = hitung_kebijakan_pembatalan(b["jam_mulai"])
     paid = int(b.get("amount_due") or 0) if b.get("payment_status") == "paid" else 0
     fee = round(paid * policy["biaya_persen"] / 100)
     refund_estimate = paid - fee
@@ -107,7 +96,7 @@ async def approve_cancellation_request(booking_id: str, user: dict = Depends(get
     if b.get("cancel_request_status") != "requested":
         raise HTTPException(400, f"Hanya permintaan berstatus 'requested' yang bisa disetujui (status saat ini: {b.get('cancel_request_status')})")
 
-    policy = _hitung_kebijakan_pembatalan_ai(b)
+    policy = hitung_kebijakan_pembatalan(b["jam_mulai"])
     paid = int(b.get("amount_due") or 0) if b.get("payment_status") == "paid" else 0
     fee = round(paid * policy["biaya_persen"] / 100)
     refund = paid - fee

@@ -265,31 +265,18 @@ async def public_create_booking(body: PublicBookingCreate):
     )
     return {"group_id": group_id, "bookings": created}
 
-def _batas_jam_bebas_biaya(tipe: str) -> int:
-    return 72 if tipe == "menginap" else 24  # H-3 menginap, H-1 day use
-
-
-def _hitung_kebijakan_pembatalan(b: dict) -> dict:
-    """Sama persis dengan calcCancelPolicy di PublicBook.jsx (frontend) — dipertahankan
-    identik supaya biaya yang ditampilkan ke tamu = biaya yang benar-benar dipotong saat
-    pembatalan mandiri sungguhan dieksekusi di endpoint ini."""
-    batas_jam = _batas_jam_bebas_biaya(b.get("tipe", "day_use"))
-    jam_checkin = parse_iso(b["jam_mulai"], "jam_mulai")
-    jam_tersisa = (jam_checkin - datetime.now(timezone.utc)).total_seconds() / 3600
-    dasar_biaya = int(b["total"]) if b.get("payment_status") == "paid" else int(b.get("dp_min") or 0)
-    if jam_tersisa < 0:
-        return {"label": "Hari check-in / lewat", "biaya": dasar_biaya, "gratis": False}
-    if jam_tersisa < batas_jam:
-        return {"label": f"Kurang dari {'H-3' if batas_jam == 72 else 'H-1'}", "biaya": round(dasar_biaya * 0.1), "gratis": False}
-    return {"label": f"Lebih dari {'H-3' if batas_jam == 72 else 'H-1'}", "biaya": 0, "gratis": True}
-
-
 @api.post("/public/bookings/{bid}/batalkan")
 async def public_batalkan_booking(bid: str, body: CancelWithFeeBody = CancelWithFeeBody()):
     """Pembatalan mandiri SUNGGUHAN oleh tamu (bukan cuma 'ajukan permintaan') — otomatis
     penuh tanpa approval staf, sesuai keputusan bisnis yang dikonfirmasi user 2026-07-11.
     Refund uang (kalau ada) tetap harus ditransfer manual oleh staf — sistem cuma
     menghitung & mencatat nominalnya (refund_amount), tidak memproses transfer sungguhan.
+
+    Kebijakan (`hitung_kebijakan_pembatalan` di core.py) SAMA dengan jalur AI WhatsApp
+    (disatukan 2026-07-19, keputusan user "samakan semua channel") - sebelumnya di sini
+    pakai aturan berbeda per tipe day_use/menginap (24/72 jam, biaya 10%), sekarang SAMA
+    persis: H-7 s/d H-3 = refund 100%, H-2 s/d hari check-in = biaya 50%, tidak dibedakan
+    tipe lagi.
     """
     b = await db.bookings.find_one({"id": bid})
     if not b:
@@ -297,11 +284,11 @@ async def public_batalkan_booking(bid: str, body: CancelWithFeeBody = CancelWith
     if b.get("status") not in ("aktif", "booking_pending", "booking_paid"):
         raise HTTPException(400, f"Booking tidak dapat dibatalkan (status: {b.get('status')})")
 
-    policy = _hitung_kebijakan_pembatalan(b)
-    biaya = policy["biaya"]
-    paid = int(b.get("amount_due") or 0)
+    policy = hitung_kebijakan_pembatalan(b["jam_mulai"])
     is_paid = b.get("payment_status") == "paid"
-    refund = max(0, paid - biaya) if is_paid else 0
+    paid = int(b.get("amount_due") or 0) if is_paid else 0
+    biaya = round(paid * policy["biaya_persen"] / 100)
+    refund = paid - biaya
 
     now = now_iso()
     update_fields = {

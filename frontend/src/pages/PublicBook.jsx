@@ -586,7 +586,7 @@ function BookingForm() {
                   {bookingTipe === "menginap"
                     ? "Booking Menginap akan dikonfirmasi admin sebelum link pembayaran dikirim."
                     : "Dengan menekan tombol, Anda menyetujui kebijakan reservasi."}
-                  {" "}Pembatalan gratis sampai {bookingTipe === "menginap" ? "H-3" : "H-1"} sebelum check-in, setelah itu dikenakan biaya 10% dari total pembayaran.
+                  {" "}Pembatalan gratis (refund 100%) sampai H-3 sebelum check-in, setelah itu (H-2 s/d hari check-in) dikenakan biaya 50% dari total pembayaran.
                 </p>
               </CardContent>
             </Card>
@@ -645,24 +645,21 @@ function Row({ icon: Icon, label, value }) {
   );
 }
 
-// Kebijakan pembatalan yang sama dengan yang sudah dijanjikan di pesan konfirmasi WA
-// (lihat buildBookingConfirmationMessage di apiClient.js): batas bebas biaya H-3 untuk
-// booking menginap, H-1 untuk day use; biaya 10% dari total jika sudah lewat batas, dan
-// tidak ada refund untuk No Show/hari-H. Booking publik saat ini selalu day_use, tapi
-// dibuat tipe-aware supaya tetap benar kalau nanti booking menginap dibuka untuk publik.
-function batasJamBebasBiaya(bk) {
-  return bk.tipe === "menginap" ? 72 : 24;
-}
+// Kebijakan pembatalan TUNGGAL untuk semua channel (disatukan 2026-07-19, keputusan user
+// "samakan semua channel" - sebelumnya beda per tipe day_use/menginap 24/72 jam & 10%,
+// sekarang SAMA persis dengan hitung_kebijakan_pembatalan di core.py & jalur AI WhatsApp):
+// H-7 s/d H-3 (>=72 jam sebelum check-in) = refund 100%, H-2 s/d hari check-in (<72 jam)
+// = biaya 50%, tidak dibedakan tipe lagi.
+const BATAS_JAM_BEBAS_BIAYA = 72;
 
 function calcCancelPolicy(bk) {
-  const batasJam = batasJamBebasBiaya(bk);
-  const batasLabel = bk.tipe === "menginap" ? "H-3" : "H-1";
   const jamCheckin = new Date(bk.jam_mulai);
   const jamTersisa = (jamCheckin.getTime() - Date.now()) / 3600000;
-  const dasarBiaya = bk.payment_status === "paid" ? Number(bk.total || 0) : Number(bk.dp_min || 0);
-  if (jamTersisa < 0) return { label: "Hari check-in / lewat", biaya: dasarBiaya, gratis: false };
-  if (jamTersisa < batasJam) return { label: `Kurang dari ${batasLabel}`, biaya: Math.round(dasarBiaya * 0.1), gratis: false };
-  return { label: `Lebih dari ${batasLabel}`, biaya: 0, gratis: true };
+  const paid = bk.payment_status === "paid" ? Number(bk.amount_due || 0) : 0;
+  if (jamTersisa >= BATAS_JAM_BEBAS_BIAYA) {
+    return { label: "H-7 s/d H-3 (masih ≥ 72 jam sebelum check-in): refund 100%", biaya: 0, gratis: true };
+  }
+  return { label: "H-2 s/d Hari-H (<72 jam sebelum check-in): biaya 50%", biaya: Math.round(paid * 0.5), gratis: false };
 }
 
 function CountdownBebasBiaya({ bk }) {
@@ -671,9 +668,7 @@ function CountdownBebasBiaya({ bk }) {
     const t = setInterval(() => setTick((n) => n + 1), 30000); // update tiap 30 detik, cukup untuk granularitas menit
     return () => clearInterval(t);
   }, []);
-  const batasJam = batasJamBebasBiaya(bk);
-  const batasLabel = bk.tipe === "menginap" ? "H-3" : "H-1";
-  const msTersisa = new Date(bk.jam_mulai).getTime() - batasJam * 3600000 - Date.now();
+  const msTersisa = new Date(bk.jam_mulai).getTime() - BATAS_JAM_BEBAS_BIAYA * 3600000 - Date.now();
   if (msTersisa <= 0) return null;
   const totalMenit = Math.floor(msTersisa / 60000);
   const hari = Math.floor(totalMenit / 1440);
@@ -681,7 +676,7 @@ function CountdownBebasBiaya({ bk }) {
   const menit = totalMenit % 60;
   return (
     <p className="text-xs text-emerald-700" data-testid="batalkan-countdown">
-      Waktu tersisa sebelum kena biaya ({batasLabel}): <b>{hari > 0 && `${hari}h `}{jam}j {menit}m</b>
+      Waktu tersisa sebelum kena biaya (H-3): <b>{hari > 0 && `${hari}h `}{jam}j {menit}m</b>
     </p>
   );
 }
@@ -718,8 +713,8 @@ function BatalkanPesananDialog({ bk, open, onOpenChange, onCancelled }) {
             <div className="bg-slate-50 border border-slate-200 rounded-lg p-3 text-xs space-y-1.5">
               <p className="font-semibold text-slate-700">Kebijakan Pembatalan</p>
               <p className="text-slate-600">
-                Gratis jika dibatalkan lebih dari {bk.tipe === "menginap" ? "3 hari (H-3)" : "24 jam (H-1)"} sebelum check-in.
-                Kurang dari itu dikenakan biaya 10% dari total tagihan. Tidak ada refund untuk pembatalan di hari check-in atau tidak datang (No Show).
+                Gratis (refund 100%) jika dibatalkan lebih dari 3 hari (H-3) sebelum check-in.
+                Kurang dari itu (H-2 s/d hari check-in) dikenakan biaya 50% dari total tagihan. Tidak ada refund untuk tamu yang tidak datang tanpa pembatalan (No Show).
               </p>
             </div>
             <div className="flex justify-between items-center bg-white border border-slate-200 rounded-lg p-3">
