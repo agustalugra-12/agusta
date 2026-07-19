@@ -1,5 +1,5 @@
 from core import *
-from reservation_service import check_room_available, create_reservation
+from reservation_service import check_room_available, create_reservation, room_locks
 from email_service import generate_voucher_pdf, send_voucher_email
 from routes.push import send_push
 from scheduling_engine import slot_dayuse_aman
@@ -343,13 +343,15 @@ async def public_retry_bayar(bid: str):
 
     mulai = parse_iso(b["jam_mulai"], "jam_mulai")
     selesai = parse_iso(b["jam_selesai"], "jam_selesai")
-    await check_room_available(b["room_id"], mulai, selesai)
-
     now = now_iso()
-    await db.bookings.update_one({"id": bid}, {
-        "$set": {"status": "booking_pending", "payment_status": "pending", "updated_at": now},
-        "$unset": {"cancelled_at": "", "cancel_reason": "", "cancel_fee": "", "refund_amount": ""},
-    })
+    # Celah check-lalu-tulis dibungkus lock (2026-07-19, audit anti-race-condition) - lihat
+    # catatan di reservation_service.py.
+    async with room_locks(b["room_id"]):
+        await check_room_available(b["room_id"], mulai, selesai)
+        await db.bookings.update_one({"id": bid}, {
+            "$set": {"status": "booking_pending", "payment_status": "pending", "updated_at": now},
+            "$unset": {"cancelled_at": "", "cancel_reason": "", "cancel_fee": "", "refund_amount": ""},
+        })
     await db.audit_log.insert_one({
         "id": str(uuid.uuid4()), "user_id": None, "username": "guest_self_service",
         "action": "retry_bayar",

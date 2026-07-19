@@ -9,7 +9,7 @@ import httpx
 from fastapi.responses import RedirectResponse
 from openai import OpenAI
 
-from reservation_service import check_room_available, create_reservation
+from reservation_service import check_room_available, create_reservation, room_locks
 
 _openai_client = OpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
 
@@ -572,33 +572,36 @@ async def proses_modifikasi_otomatis(log_id: str, data: dict, sumber: str, subje
     # SELURUH grup dilempar ke tinjauan staf (bukan reschedule sebagian), supaya staf melihat
     # keputusan yang konsisten untuk satu reservasi tamu, bukan campur aduk sebagian pindah
     # sebagian belum.
-    konflik = None
-    for b in bookings:
-        try:
-            await check_room_available(b["room_id"], new_start, new_end, exclude_booking_id=b["id"])
-        except HTTPException:
-            konflik = b
-            break
-    if konflik:
-        await _modifikasi_menunggu_review(
-            bookings, log_id, no_reservasi,
-            f"Jadwal baru ({new_start.date()}–{new_end.date()}) bentrok dengan reservasi lain di kamar {konflik.get('room_nomor', konflik['id'])} — tidak bisa direschedule otomatis untuk grup {len(bookings)} kamar ini.",
-        )
-        return
+    # Celah check-lalu-tulis dibungkus lock (2026-07-19, audit anti-race-condition) - lihat
+    # catatan di reservation_service.py.
+    async with room_locks(*[b["room_id"] for b in bookings]):
+        konflik = None
+        for b in bookings:
+            try:
+                await check_room_available(b["room_id"], new_start, new_end, exclude_booking_id=b["id"])
+            except HTTPException:
+                konflik = b
+                break
+        if konflik:
+            await _modifikasi_menunggu_review(
+                bookings, log_id, no_reservasi,
+                f"Jadwal baru ({new_start.date()}–{new_end.date()}) bentrok dengan reservasi lain di kamar {konflik.get('room_nomor', konflik['id'])} — tidak bisa direschedule otomatis untuk grup {len(bookings)} kamar ini.",
+            )
+            return
 
-    now = now_iso()
-    for b in bookings:
-        await db.bookings.update_one({"id": b["id"]}, {"$set": {
-            "jam_mulai": new_start.isoformat(), "jam_selesai": new_end.isoformat(),
-            "modifikasi_status": "direschedule", "modifikasi_reviewed_at": now, "modifikasi_reviewed_by": "ai_email_parser",
-            "updated_at": now, "updated_by": "ai_email_parser",
-        }, "$push": {"modifikasi_log_ids": log_id}})
-        await db.audit_log.insert_one({
-            "id": str(uuid.uuid4()), "user_id": None, "username": "ai_email_parser",
-            "action": "reschedule_ota_auto",
-            "detail": f'Reschedule otomatis {b["kode"]} (no. OTA {no_reservasi}) ke {new_start.isoformat()} – {new_end.isoformat()} dari email modifikasi "{subjek}"',
-            "entity": b.get("room_nomor", ""), "timestamp": now,
-        })
+        now = now_iso()
+        for b in bookings:
+            await db.bookings.update_one({"id": b["id"]}, {"$set": {
+                "jam_mulai": new_start.isoformat(), "jam_selesai": new_end.isoformat(),
+                "modifikasi_status": "direschedule", "modifikasi_reviewed_at": now, "modifikasi_reviewed_by": "ai_email_parser",
+                "updated_at": now, "updated_by": "ai_email_parser",
+            }, "$push": {"modifikasi_log_ids": log_id}})
+            await db.audit_log.insert_one({
+                "id": str(uuid.uuid4()), "user_id": None, "username": "ai_email_parser",
+                "action": "reschedule_ota_auto",
+                "detail": f'Reschedule otomatis {b["kode"]} (no. OTA {no_reservasi}) ke {new_start.isoformat()} – {new_end.isoformat()} dari email modifikasi "{subjek}"',
+                "entity": b.get("room_nomor", ""), "timestamp": now,
+            })
     await db.email_logs.update_one({"id": log_id}, {"$set": {
         "status": "Parsed_Success", "alasan": None,
         "reservation_id": bookings[0]["id"], "reservation_ids": [b["id"] for b in bookings],
@@ -852,14 +855,17 @@ async def modifikasi_reschedule(booking_id: str, body: ReschedulePMSBody, user: 
     end = parse_iso(body.jam_selesai, "jam_selesai")
     if end <= start:
         raise HTTPException(400, "Jam selesai harus setelah jam mulai")
-    await check_room_available(b["room_id"], start, end, exclude_booking_id=booking_id)
 
     now = now_iso()
-    await db.bookings.update_one({"id": booking_id}, {"$set": {
-        "jam_mulai": start.isoformat(), "jam_selesai": end.isoformat(),
-        "modifikasi_status": "direschedule", "modifikasi_reviewed_at": now, "modifikasi_reviewed_by": user["nama"],
-        "updated_at": now, "updated_by": user["nama"],
-    }})
+    # Celah check-lalu-tulis dibungkus lock (2026-07-19, audit anti-race-condition) - lihat
+    # catatan di reservation_service.py.
+    async with room_locks(b["room_id"]):
+        await check_room_available(b["room_id"], start, end, exclude_booking_id=booking_id)
+        await db.bookings.update_one({"id": booking_id}, {"$set": {
+            "jam_mulai": start.isoformat(), "jam_selesai": end.isoformat(),
+            "modifikasi_status": "direschedule", "modifikasi_reviewed_at": now, "modifikasi_reviewed_by": user["nama"],
+            "updated_at": now, "updated_by": user["nama"],
+        }})
     await db.email_logs.update_many(
         {"id": {"$in": b.get("modifikasi_log_ids", [])}},
         {"$set": {"status": "Parsed_Success", "aksi": "reservasi_direschedule", "alasan": None}},

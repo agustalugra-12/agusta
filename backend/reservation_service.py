@@ -7,8 +7,46 @@ routes/public.py (public_create_booking).
 Tahap 2: pembuatan reservasi (create_reservation). Logika ini sebelumnya
 ada di routes/public.py (public_create_booking) — dipusatkan supaya sumber
 booking lain (mis. OTA) bisa memakai alur yang sama.
-"""
+
+**Locking anti-race-condition (ditambahkan 2026-07-19, audit atas permintaan user)**:
+`check_room_available` sendiri HANYA membaca (find_one) — celah antara pengecekan itu
+dan tulis (insert/update) berikutnya di tiap caller adalah celah TOCTOU (time-of-check-
+time-of-use) klasik: 2 request yang nyaris bersamaan (mis. AI Day Use auto-approve vs
+staf Quick Book, atau 2 tamu rebutan kamar terakhir) bisa SAMA-SAMA lolos
+check_room_available sebelum salah satu sempat menulis, menghasilkan double-booking
+sungguhan. MongoDB di server ini jalan standalone (bukan replica set) jadi multi-document
+transaction TIDAK tersedia, dan backend jalan 1 proses uvicorn saja (tanpa --workers) -
+karena itu solusi paling sederhana & efektif adalah `asyncio.Lock` in-process per kamar
+(`room_locks` di bawah), yang membungkus SETIAP celah check-lalu-tulis di seluruh
+codebase (create_reservation di sini, plus routes/bookings.py, routes/public.py,
+routes/otomasi_email.py - cari pemanggil check_room_available lain untuk daftar
+lengkapnya). PENTING: ini HANYA melindungi selama backend tetap 1 proses/1 instance -
+kalau suatu saat di-scale ke multi-worker/multi-instance di belakang load balancer, lock
+in-process ini TIDAK CUKUP lagi, perlu locking di level DB (mis. upgrade MongoDB ke
+replica set untuk transaction, atau skema lock berbasis dokumen atomic findOneAndUpdate)."""
 from core import *
+import asyncio
+from collections import defaultdict
+from contextlib import asynccontextmanager
+
+_room_locks: Dict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
+
+
+@asynccontextmanager
+async def room_locks(*room_ids: str):
+    """Pegang lock in-process untuk 1+ kamar sekaligus (urutan diurutkan supaya tidak
+    pernah deadlock walau 2 request memesan grup kamar yang sama dengan urutan berbeda).
+    Bungkus SELURUH celah dari check_room_available sampai insert/update booking-nya
+    dengan ini di setiap tempat yang benar-benar menulis ke db.bookings."""
+    unik = sorted(set(room_ids))
+    locks = [_room_locks[rid] for rid in unik]
+    for lock in locks:
+        await lock.acquire()
+    try:
+        yield
+    finally:
+        for lock in locks:
+            lock.release()
 
 
 async def check_room_available(room_id: str, mulai: datetime, selesai: datetime,
@@ -63,8 +101,6 @@ async def create_reservation(data: Dict[str, Any], source: str = "public",
     if mulai.astimezone(timezone.utc).date() <= datetime.now(timezone.utc).date() and r["status"] != "kosong":
         raise HTTPException(400, "Kamar tidak tersedia")
 
-    await check_room_available(data["room_id"], mulai, selesai)
-
     extra_bed_qty = max(0, min(EXTRA_BED_MAX, int(data.get("extra_bed_qty") or 0)))
 
     if harga_override is not None:
@@ -112,7 +148,12 @@ async def create_reservation(data: Dict[str, Any], source: str = "public",
         "invoice_id": None, "payment_id": None,
         "created_at": now_iso(), "created_by": data["created_by"],
     }
-    await db.bookings.insert_one(doc)
+    # Celah check_room_available -> insert_one dibungkus lock in-process per kamar supaya
+    # 2 request nyaris bersamaan tidak bisa sama-sama lolos cek lalu sama-sama menulis
+    # (race condition anti-double-booking, lihat catatan di kepala file).
+    async with room_locks(data["room_id"]):
+        await check_room_available(data["room_id"], mulai, selesai)
+        await db.bookings.insert_one(doc)
     await log_availability_change(r["id"], r["tipe"], -1, "booking_dibuat", booking_id=doc["id"])
     await upsert_guest(data["nama_tamu"], data["no_hp"], data["no_identitas"], data["kendaraan"], count_kunjungan=False)
 
