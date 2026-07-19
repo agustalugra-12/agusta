@@ -5,6 +5,7 @@ from routes.issues import buat_issue
 from routes.booking_requests import buat_booking_request
 from routes.pesan_whatsapp import _cari_kamar_dari_no_hp
 from routes.pembatalan import ajukan_pembatalan_ai
+from scheduling_engine import rekomendasi_slot_kosong
 
 # ---- Integrasi AI Chat Bot Eksternal ----
 # Untuk "ai-chat-bot" (repo terpisah milik user, dirancang reusable lintas sistem — BUKAN
@@ -75,17 +76,39 @@ async def ai_bot_ketersediaan(
 ):
     """Ketersediaan & tarif kamar live per tanggal — logika sama dengan halaman publik
     `/book` (`public_availability`, termasuk fix hari checkout tidak dianggap booked),
-    bukan hitungan ulang terpisah."""
+    bukan hitungan ulang terpisah.
+
+    **Perubahan 2026-07-19**: sebelumnya tipe yang 0 kamar kosong SAMA SEKALI TIDAK MUNCUL
+    di hasil (AI tidak bisa membedakan "penuh" dari "tipe tidak ada") - sekarang SEMUA tipe
+    kamar yang ada selalu muncul, termasuk yang `kamar_tersedia: 0`, supaya AI bisa jujur
+    bilang "penuh" alih-alih menebak. Kalau penuhnya tanggal HARI INI khusus karena ada
+    kamar Day Use yang akan checkout (bukan Menginap - lihat `estimasi_kamar_siap` di
+    scheduling_engine.py), disertakan `estimasi_kosong_lagi` sebagai perkiraan jujur; kalau
+    penuh karena Menginap atau tanggal bukan hari ini, field itu TIDAK ADA sama sekali -
+    AI wajib bilang penuh apa adanya, tidak boleh menawarkan estimasi kosong."""
     tanggal = tanggal or datetime.now().strftime("%Y-%m-%d")
     hasil = await public_availability(tanggal=tanggal, tipe=tipe)
+
+    q: Dict[str, Any] = {"tipe": tipe} if tipe else {}
+    semua_kamar = await db.rooms.find(q, {"_id": 0, "tipe": 1, "tarif": 1, "tarif_menginap": 1}).to_list(500)
     per_tipe: Dict[str, Dict[str, Any]] = {}
+    for r in semua_kamar:
+        per_tipe.setdefault(r["tipe"], {"tarif_day_use": r["tarif"], "tarif_menginap": r["tarif_menginap"], "kamar_tersedia": 0})
     for r in hasil["rooms"]:
-        t = per_tipe.setdefault(
-            r["tipe"],
-            {"tarif_day_use": r["tarif"], "tarif_menginap": r["tarif_menginap"], "kamar_tersedia": 0},
-        )
-        t["kamar_tersedia"] += 1
-    return {"tanggal": tanggal, "ketersediaan": [{"tipe": t, **v} for t, v in per_tipe.items()]}
+        if r["tipe"] in per_tipe:
+            per_tipe[r["tipe"]]["kamar_tersedia"] += 1
+
+    is_today = tanggal == datetime.now().strftime("%Y-%m-%d")
+    out = []
+    for t, v in per_tipe.items():
+        item = {"tipe": t, **v}
+        if v["kamar_tersedia"] == 0 and is_today:
+            rekom = await rekomendasi_slot_kosong(t)
+            if rekom:
+                item["estimasi_kosong_lagi"] = rekom["siap_pakai"].isoformat()
+                item["estimasi_kamar_nomor"] = rekom["room_nomor"]
+        out.append(item)
+    return {"tanggal": tanggal, "ketersediaan": out}
 
 
 class AiBotTiketIn(BaseModel):

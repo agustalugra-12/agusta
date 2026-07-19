@@ -26,12 +26,16 @@ BOOKING_TERKONFIRMASI_STATUS = ["aktif", "booking_pending", "booking_paid", "che
 
 
 async def estimasi_kamar_siap(room_id: str) -> Optional[datetime]:
-    """Kalau kamar sedang ditempati booking yang aktif SEKARANG, kembalikan estimasi waktu
-    siap dipakai lagi (jam_selesai booking tsb + buffer housekeeping). None kalau kamar
-    tidak sedang ditempati booking apa pun saat ini."""
+    """Kalau kamar sedang ditempati booking DAY USE yang aktif SEKARANG, kembalikan estimasi
+    waktu siap dipakai lagi (jam_selesai booking tsb + buffer housekeeping). None kalau kamar
+    tidak sedang ditempati Day Use saat ini - SENGAJA dibatasi hanya Day Use (dikonfirmasi
+    user 2026-07-19): rekomendasi "kamar akan kosong lagi jam X" cuma jujur kalau penghuni
+    sekarang memang akan checkout hari ini. Tamu Menginap tidak checkout hari ini, jadi kamar
+    yang penuh karena Menginap TIDAK PERNAH dikasih estimasi - harus dijawab "penuh" apa
+    adanya, bukan janji palsu kapan kosong."""
     now = datetime.now(timezone.utc)
     aktif = await db.bookings.find_one({
-        "room_id": room_id, "status": {"$in": BOOKING_AKTIF_STATUS},
+        "room_id": room_id, "tipe": "day_use", "status": {"$in": BOOKING_AKTIF_STATUS},
         "jam_mulai": {"$lte": now.isoformat()}, "jam_selesai": {"$gt": now.isoformat()},
     }, sort=[("jam_selesai", 1)])
     if not aktif or not aktif.get("jam_selesai"):

@@ -11,9 +11,13 @@ jelas dari tamu sekarang di-AUTO-APPROVE (`_coba_auto_approve_day_use`) - kamar 
 otomatis dari ketersediaan real-time, booking + transaksi Tripay dibuat langsung, link
 bayar auto-terkirim, TANPA menunggu staf klik Terima di PMS. Menginap TETAP WAJIB direview
 manual staf (butuh sinkron manual ke PMS RedDoorz, tidak bisa diotomatisasi sepenuhnya).
-Kalau auto-approve gagal/tidak berlaku (kamar penuh, >1 kamar, payment_option belum
-disebutkan tamu, dst), fallback ke alur lama: booking_request tetap non-binding
-"waiting_approval", staf review manual (approve/reject di bawah).
+Kalau Day Use BENAR-BENAR penuh (tidak ada kamar kosong sama sekali di tanggal/tipe itu),
+`_auto_reject_penuh` langsung menolak otomatis & mengabari tamu SAAT ITU JUGA (status
+"rejected", `rejected_by="AI WhatsApp (otomatis)"`) - TIDAK dibiarkan nyangkut menunggu
+staf sadar sendiri, karena staf pun tidak akan pernah bisa approve request yang memang
+tidak ada kamarnya. Kalau auto-approve gagal/tidak berlaku karena alasan LAIN (>1 kamar,
+payment_option belum disebutkan tamu), fallback ke alur lama: booking_request tetap
+non-binding "waiting_approval", staf review manual (approve/reject di bawah).
 
 Tahap 1 SENGAJA berhenti setelah tamu membayar (booking real dibuat & dibayar via Tripay
 persis seperti alur publik yang sudah ada — reuse `create_reservation`/`tripay_create_transaction`,
@@ -37,17 +41,40 @@ def _kode_request() -> str:
     return f"REQ-{datetime.now().strftime('%y%m%d')}-{uuid.uuid4().hex[:4].upper()}"
 
 
+async def _auto_reject_penuh(doc: Dict[str, Any]) -> None:
+    """Day Use yang BENAR-BENAR tidak ada kamar kosong (bukan gagal krn payment_option belum
+    jelas atau >1 kamar) - langsung tolak otomatis & kabari tamu jujur SAAT ITU JUGA
+    (dikonfirmasi user 2026-07-19), JANGAN dibiarkan nyangkut "waiting_approval" menunggu
+    staf sadar sendiri - staf pun tidak akan pernah bisa approve ini (create_reservation
+    pasti gagal, memang tidak ada kamar). Konsisten dengan filosofi Day Use otomatis
+    end-to-end: hasil negatif pun harus otomatis & cepat, bukan cuma hasil positif."""
+    now = now_iso()
+    await db.booking_requests.update_one({"id": doc["id"]}, {"$set": {
+        "status": "rejected", "rejected_by": "AI WhatsApp (otomatis)",
+        "rejected_reason": "Kamar penuh - tidak ada kamar kosong pada tanggal & tipe yang diminta",
+        "updated_at": now,
+    }})
+    pesan = (
+        f"Mohon maaf {doc['nama_tamu']}, kamar {doc.get('room_tipe') or ''} untuk Day Use "
+        f"tanggal {doc['tanggal_checkin']} sedang penuh. Silakan coba tanggal lain atau tipe "
+        f"kamar lain, kami siap bantu."
+    )
+    from routes.pesan_whatsapp import _kirim_via_provider
+    await _kirim_via_provider(doc["no_hp"], pesan)
+
+
 async def _coba_auto_approve_day_use(doc: Dict[str, Any]) -> None:
     """Auto-approve + auto-kirim link bayar untuk booking Day Use yang tamu sudah sebutkan
     preferensi DP/Lunas-nya sendiri (dikonfirmasi user 2026-07-19: Day Use tidak perlu lagi
     ditinjau staf, langsung diproses berdasarkan ketersediaan kamar real-time - BEDA dari
     Menginap yang TETAP wajib direview staf manual, lihat catatan Business Rules di
-    CLAUDE.md soal RedDoorz). Update `doc` di db.bookings_requests LANGSUNG kalau berhasil;
-    kalau gagal/tidak berlaku (bukan day_use, belum ada payment_option, kamar penuh,
-    >1 kamar, dst), diam-diam TIDAK melakukan apa pun - booking_request tetap
-    "waiting_approval" seperti biasa, staf yang proses manual seperti sebelumnya. Tidak
-    pernah melempar exception ke caller (auto-approve SELALU best-effort, kegagalannya
-    tidak boleh menggagalkan pembuatan booking_request itu sendiri)."""
+    CLAUDE.md soal RedDoorz). Update `doc` di db.bookings_requests LANGSUNG kalau berhasil
+    ATAU kalau benar-benar penuh (auto-reject, lihat `_auto_reject_penuh`); kalau tidak
+    berlaku sama sekali (bukan day_use, belum ada payment_option, >1 kamar), diam-diam TIDAK
+    melakukan apa pun - booking_request tetap "waiting_approval" seperti biasa, staf yang
+    proses manual seperti sebelumnya. Tidak pernah melempar exception ke caller (auto-approve
+    SELALU best-effort, kegagalannya tidak boleh menggagalkan pembuatan booking_request itu
+    sendiri)."""
     try:
         if doc["tipe"] != "day_use" or doc["payment_option_diminta"] not in ("dp50", "full"):
             return
@@ -57,7 +84,8 @@ async def _coba_auto_approve_day_use(doc: Dict[str, Any]) -> None:
         from routes.public import public_availability
         avail = await public_availability(doc["tanggal_checkin"], tipe=doc.get("room_tipe"))
         if not avail["rooms"]:
-            return  # kamar tipe itu penuh - biarkan staf yang tangani manual (mungkin bisa nego tipe lain)
+            await _auto_reject_penuh(doc)
+            return
 
         room = avail["rooms"][0]
         jam = doc.get("jam_checkin") or "14:00"
@@ -160,6 +188,16 @@ async def buat_booking_request(data: Dict[str, Any]) -> Dict[str, Any]:
             + (f" {doc['jam_checkin']}" if doc.get("jam_checkin") else "") +
             f"\nTotal: Rp{int(doc.get('total') or 0):,}".replace(",", ".") +
             "\n\nLink pembayaran sudah otomatis terkirim ke tamu - tidak perlu tindakan."
+        )
+    elif doc["status"] == "rejected":
+        # Auto-reject karena benar-benar penuh - FYI juga (bukan "perlu ditinjau", tamu
+        # sudah otomatis dikabari penuh, tidak ada aksi staf yang perlu diambil).
+        await kirim_alert_owner(
+            f"❌ Booking Day Use OTOMATIS ditolak - kamar penuh ({doc['kode']})\n\n"
+            f"Nama: {doc['nama_tamu']}\nHP: {doc['no_hp']}\n"
+            f"Tipe: {doc['tipe']} — {doc['room_tipe'] or '-'}, {doc['tanggal_checkin']}"
+            + (f" {doc['jam_checkin']}" if doc.get("jam_checkin") else "") +
+            "\n\nTamu sudah otomatis dikabari kamar penuh - tidak perlu tindakan."
         )
     else:
         await send_push("Permintaan Booking Baru", ringkas, url="/booking-requests")
