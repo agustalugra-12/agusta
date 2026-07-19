@@ -70,13 +70,27 @@ async def create_reservation(data: Dict[str, Any], source: str = "public",
     if harga_override is not None:
         subtotal = harga_override["subtotal"]
         service_fee = harga_override["service_fee"]
-        total = harga_override["total"]
-        dp_min = harga_override["dp_min"]
     else:
         subtotal = r["tarif"] + extra_bed_qty * EXTRA_BED_PRICE
         service_fee = round(subtotal * SERVICE_FEE_PCT)
-        total = subtotal + service_fee
-        dp_min = round(total * 0.5)
+
+    # Program Loyalitas Kedatangan (diskon member, dikonfirmasi user 2026-07-19) - berlaku
+    # semua channel booking langsung ke Pelangi (publik/walk-in lewat sini, WhatsApp AI lewat
+    # booking_requests) KECUALI source="ota" (RedDoorz - subtotal itu apa adanya dari OTA,
+    # bukan tarif Pelangi sendiri, mendiskonnya akan merusak rekonsiliasi settlement).
+    # Selalu dihitung ULANG di sini (bukan dipercaya dari harga_override) - satu sumber
+    # kebenaran, konsisten di semua channel yang lewat create_reservation.
+    diskon_persen, diskon_rp, kedatangan_ke = 0, 0, None
+    if source != "ota":
+        diskon_info = await hitung_diskon_member(data.get("no_hp", ""), data.get("no_identitas", ""))
+        kedatangan_ke = diskon_info["kedatangan_ke"]
+        diskon_persen = diskon_info["diskon_persen"]
+        hasil_diskon = terapkan_diskon_member(subtotal, diskon_persen)
+        subtotal = hasil_diskon["subtotal"]
+        diskon_rp = hasil_diskon["diskon_rp"]
+
+    total = subtotal + service_fee
+    dp_min = round(total * 0.5)
 
     kode = f"BKO-{datetime.now().strftime('%Y%m%d%H%M%S')}-{uuid.uuid4().hex[:4].upper()}"
     doc = {
@@ -93,6 +107,7 @@ async def create_reservation(data: Dict[str, Any], source: str = "public",
         "status": "booking_pending",          # status booking utama (untuk public booking)
         "payment_status": "pending",          # pending | paid | expired | failed | refunded
         "subtotal": subtotal, "service_fee": service_fee, "total": total, "dp_min": dp_min,
+        "diskon_member_persen": diskon_persen, "diskon_member_rp": diskon_rp, "kedatangan_ke": kedatangan_ke,
         "source": source,                      # online | walk_in
         "invoice_id": None, "payment_id": None,
         "created_at": now_iso(), "created_by": data["created_by"],

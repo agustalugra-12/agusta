@@ -8,7 +8,7 @@ import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Search, X, Ban, CreditCard, MessageCircle, Phone, History } from "lucide-react";
+import { Search, X, Ban, CreditCard, MessageCircle, Phone, History, Sparkles } from "lucide-react";
 
 const toLocalInput = (iso) => { const d = new Date(iso); d.setMinutes(d.getMinutes() - d.getTimezoneOffset()); return d.toISOString().slice(0, 16); };
 
@@ -192,6 +192,9 @@ function ReservasiTab() {
                 return (
                   <div className="bg-slate-50 border border-slate-200 rounded p-2 mt-2 text-xs space-y-1">
                     <div className="flex justify-between"><span className="text-slate-500">Subtotal</span><b>{fmtRp(selected.subtotal || 0)}</b></div>
+                    {selected.diskon_member_persen > 0 && (
+                      <div className="flex justify-between text-amber-700"><span>✨ Diskon Member ({selected.diskon_member_persen}%, kedatangan ke-{selected.kedatangan_ke})</span><b>-{fmtRp(selected.diskon_member_rp || 0)}</b></div>
+                    )}
                     <div className="flex justify-between"><span className="text-slate-500">Service Fee 3%</span><b>{fmtRp(selected.service_fee || 0)}</b></div>
                     <div className="flex justify-between border-t pt-1 mt-1"><span className="font-bold">Total Booking</span><b className="text-blue-700">{fmtRp(selected.total)}</b></div>
                     {sb.jumlah_dibayar > 0 && <div className="flex justify-between"><span className="text-slate-500">Sudah Dibayar</span><b className="text-emerald-700">{fmtRp(sb.jumlah_dibayar)}</b></div>}
@@ -265,28 +268,35 @@ function TamuTab() {
   return (
     <div className="space-y-6">
       <Input data-testid="search-guest" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Cari nama, HP, atau No KTP..." className="h-12" />
-      <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
+      <div className="space-y-2">
         {guests.map(g => (
-          <Card key={g.id} className="border-slate-200">
-            <CardContent className="p-4 space-y-3">
-              <div>
+          <Card key={g.id} className="border-slate-200" data-testid={`guest-row-${g.id}`}>
+            <CardContent className="p-4 flex flex-wrap items-center gap-4">
+              <div className="min-w-[180px]">
                 <div className="font-bold text-base">{g.nama}</div>
                 <div className="text-xs text-slate-500">{g.no_hp || "-"} • {g.no_identitas || "-"}</div>
               </div>
-              <div className="grid grid-cols-2 gap-2 text-xs">
-                <div className="bg-slate-50 rounded-lg p-2"><div className="text-slate-500">Kunjungan</div><div className="font-bold">{g.total_kunjungan || 0}×</div></div>
-                <div className="bg-slate-50 rounded-lg p-2"><div className="text-slate-500">Total Trx</div><div className="font-bold">{fmtRp(g.total_transaksi || 0)}</div></div>
+              <div className="flex items-center gap-2 text-xs shrink-0">
+                <div className="bg-slate-50 rounded-lg px-2.5 py-1.5"><span className="text-slate-500">Kunjungan </span><span className="font-bold">{g.total_kunjungan || 0}×</span></div>
+                <div className="bg-slate-50 rounded-lg px-2.5 py-1.5"><span className="text-slate-500">Total Trx </span><span className="font-bold">{fmtRp(g.total_transaksi || 0)}</span></div>
+                {g.diskon_persen > 0 ? (
+                  <div className="inline-flex items-center gap-1 bg-amber-100 text-amber-800 rounded-lg px-2.5 py-1.5 font-semibold" data-testid={`guest-member-badge-${g.id}`}>
+                    <Sparkles className="w-3.5 h-3.5" /> Kedatangan ke-{g.kedatangan_ke}: diskon {g.diskon_persen}%
+                  </div>
+                ) : (
+                  <div className="text-slate-400 px-2.5 py-1.5">Kedatangan ke-{g.kedatangan_ke}: belum ada diskon</div>
+                )}
               </div>
-              <div className="text-xs text-slate-500">Terakhir: {fmtDateTime(g.last_visit)}</div>
-              <div className="flex gap-2">
-                {g.no_hp && <a href={waLink(g.no_hp)} target="_blank" rel="noreferrer" className="flex-1"><Button size="sm" variant="outline" className="w-full"><MessageCircle className="w-3.5 h-3.5 mr-1" /> WA</Button></a>}
-                {g.no_hp && <a href={`tel:${g.no_hp}`} className="flex-1"><Button size="sm" variant="outline" className="w-full"><Phone className="w-3.5 h-3.5 mr-1" /> Telepon</Button></a>}
+              <div className="text-xs text-slate-500 shrink-0">Terakhir: {fmtDateTime(g.last_visit)}</div>
+              <div className="flex gap-2 ml-auto shrink-0">
+                {g.no_hp && <a href={waLink(g.no_hp)} target="_blank" rel="noreferrer"><Button size="sm" variant="outline"><MessageCircle className="w-3.5 h-3.5 mr-1" /> WA</Button></a>}
+                {g.no_hp && <a href={`tel:${g.no_hp}`}><Button size="sm" variant="outline"><Phone className="w-3.5 h-3.5 mr-1" /> Telepon</Button></a>}
                 <Button size="sm" variant="outline" onClick={() => showHistory(g)} data-testid={`hist-${g.id}`}><History className="w-3.5 h-3.5" /></Button>
               </div>
             </CardContent>
           </Card>
         ))}
-        {guests.length === 0 && <div className="col-span-full text-slate-500 text-center py-10">Belum ada data tamu</div>}
+        {guests.length === 0 && <div className="text-slate-500 text-center py-10">Belum ada data tamu</div>}
       </div>
 
       <Dialog open={!!history} onOpenChange={(o) => !o && setHistory(null)}>

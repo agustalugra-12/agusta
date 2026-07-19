@@ -61,6 +61,17 @@ async def create_booking(body: BookingCreate, user: dict = Depends(get_current_u
             days = max(1, -(-hours // 24))
             subtotal = unit_tarif * days
         service_fee = round(subtotal * SERVICE_FEE_PCT)
+
+        # Program Loyalitas Kedatangan (diskon member, dikonfirmasi user 2026-07-19) - reuse
+        # fungsi yang sama dipakai create_reservation supaya diskonnya konsisten lintas
+        # channel (Quick Book staf di sini vs public/AI WhatsApp lewat reservation_service.py).
+        diskon_info = await hitung_diskon_member(body.no_hp, body.no_identitas)
+        kedatangan_ke = diskon_info["kedatangan_ke"]
+        diskon_persen = diskon_info["diskon_persen"]
+        hasil_diskon = terapkan_diskon_member(subtotal, diskon_persen)
+        subtotal = hasil_diskon["subtotal"]
+        diskon_rp = hasil_diskon["diskon_rp"]
+
         total = subtotal + service_fee
         doc = {
             "id": str(uuid.uuid4()), "kode": kode,
@@ -71,6 +82,7 @@ async def create_booking(body: BookingCreate, user: dict = Depends(get_current_u
             "catatan": body.catatan, "status": "aktif",
             "dengan_sarapan": bool(body.dengan_sarapan) if body.tipe == "menginap" else False,
             "subtotal": subtotal, "service_fee": service_fee, "total": total,
+            "diskon_member_persen": diskon_persen, "diskon_member_rp": diskon_rp, "kedatangan_ke": kedatangan_ke,
             "source": "walk_in",
             "created_at": now_iso(), "created_by": user["nama"],
         }

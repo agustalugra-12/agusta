@@ -153,6 +153,54 @@ async def log_availability_change(room_id: str, room_tipe: str, stock_change: in
     })
     await push_sync_event("ketersediaan", f"Stok {room_tipe} berubah ({stock_change:+d}): {reason}")
 
+async def cari_guest(no_hp: str = "", no_identitas: str = "") -> Optional[Dict[str, Any]]:
+    """Resolusi identitas tamu di `db.guests` - dicari lewat no_identitas dulu (lebih pasti
+    unik per orang), fallback no_hp. Satu fungsi dipakai upsert_guest (tulis) DAN
+    hitung_diskon_member (baca) supaya tidak ada logika pencarian ganda yang bisa
+    menyimpang."""
+    if no_identitas:
+        guest = await db.guests.find_one({"no_identitas": no_identitas})
+        if guest:
+            return guest
+    if no_hp:
+        return await db.guests.find_one({"no_hp": no_hp})
+    return None
+
+
+# ---- Program Loyalitas Kedatangan (diskon member) ----
+# Dikonfirmasi user 2026-07-19: persentase diskon subtotal kamar berdasarkan urutan
+# kedatangan tamu (kedatangan ke-1 = pertama kali datang). Siklus 10 kedatangan, lalu
+# reset otomatis (kedatangan ke-11 dihitung sebagai posisi 1 lagi, dst) - modulo, TIDAK
+# perlu field reset terpisah & TIDAK mereset total_kunjungan (tetap angka kunjungan
+# seumur hidup apa adanya, cuma dipakai sebagai basis hitung posisi siklus).
+DISKON_MEMBER_TABLE = {1: 0, 2: 10, 3: 0, 4: 10, 5: 30, 6: 0, 7: 10, 8: 0, 9: 10, 10: 100}
+
+
+def diskon_member_untuk_total_kunjungan(total_kunjungan: int) -> Dict[str, int]:
+    """Bagian murni (tanpa akses DB) dari hitung_diskon_member - dipakai juga di
+    GET /guests (halaman Data Tamu) supaya badge diskon per tamu tidak perlu query
+    tambahan per baris, cukup dari total_kunjungan yang sudah ada di tangan."""
+    kedatangan_ke = (total_kunjungan or 0) + 1
+    posisi = ((kedatangan_ke - 1) % 10) + 1
+    return {"kedatangan_ke": kedatangan_ke, "diskon_persen": DISKON_MEMBER_TABLE[posisi]}
+
+
+async def hitung_diskon_member(no_hp: str = "", no_identitas: str = "") -> Dict[str, int]:
+    """`kedatangan_ke` = total_kunjungan tercatat SAAT INI + 1 (kedatangan yang sedang
+    dibuat booking-nya sekarang, karena total_kunjungan cuma naik saat check-in sungguhan
+    terjadi - lihat upsert_guest). Tamu baru (belum pernah tercatat) = kedatangan ke-1."""
+    guest = await cari_guest(no_hp, no_identitas)
+    return diskon_member_untuk_total_kunjungan((guest or {}).get("total_kunjungan", 0))
+
+
+def terapkan_diskon_member(subtotal: int, diskon_persen: int) -> Dict[str, int]:
+    """Diskon HANYA memotong subtotal kamar - service_fee tetap dihitung/dibayar penuh dari
+    subtotal SEBELUM diskon (keputusan user 2026-07-19), dipanggil dengan subtotal asli
+    (sebelum dipotong) supaya service_fee di caller tidak perlu dihitung ulang."""
+    diskon_rp = round(subtotal * diskon_persen / 100) if diskon_persen else 0
+    return {"subtotal": subtotal - diskon_rp, "diskon_rp": diskon_rp}
+
+
 async def upsert_guest(nama: str, no_hp: str = "", no_identitas: str = "", kendaraan: str = "",
                         count_kunjungan: bool = True) -> str:
     """Catat/perbarui 1 data tamu di `db.guests` — dipanggil dari SEMUA jalur yang menghasilkan
@@ -166,11 +214,7 @@ async def upsert_guest(nama: str, no_hp: str = "", no_identitas: str = "", kenda
     dengan False dari create/update booking supaya angka kunjungan tetap berarti "berapa kali
     benar-benar menginap/check-in", bukan ikut naik tiap booking dibuat/diedit/dibatalkan).
     """
-    guest = None
-    if no_identitas:
-        guest = await db.guests.find_one({"no_identitas": no_identitas})
-    if not guest and no_hp:
-        guest = await db.guests.find_one({"no_hp": no_hp})
+    guest = await cari_guest(no_hp, no_identitas)
     if guest:
         update: Dict[str, Any] = {"$set": {
             "nama": nama,

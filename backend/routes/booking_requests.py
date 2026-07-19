@@ -33,6 +33,13 @@ async def buat_booking_request(data: Dict[str, Any]) -> Dict[str, Any]:
     payment_option (dp50|full — preferensi tamu KALAU disebutkan sendiri di chat, lihat
     BOOKING_FLOW_SYSTEM_PROMPT; None kalau belum disebut — staf yang putuskan saat approve)."""
     payment_option = data.get("payment_option")
+
+    # Preview diskon member (Program Loyalitas Kedatangan, dikonfirmasi user 2026-07-19) -
+    # cuma INFORMASIONAL di tahap permintaan (supaya AI/staf tahu & tamu diberi tahu di
+    # muka), dihitung ULANG & jadi final saat staf approve (lewat create_reservation) -
+    # kalau ada jeda waktu & total_kunjungan berubah, angka final yang berlaku.
+    diskon_info = await hitung_diskon_member(data["no_hp"])
+
     doc = {
         "id": str(uuid.uuid4()), "kode": _kode_request(),
         "nama_tamu": data["nama_tamu"], "no_hp": data["no_hp"],
@@ -42,6 +49,7 @@ async def buat_booking_request(data: Dict[str, Any]) -> Dict[str, Any]:
         "tanggal_checkin": data["tanggal_checkin"], "jam_checkin": data.get("jam_checkin"),
         "tanggal_checkout": data.get("tanggal_checkout"), "catatan": data.get("catatan") or "",
         "payment_option_diminta": payment_option if payment_option in ("dp50", "full") else None,
+        "preview_kedatangan_ke": diskon_info["kedatangan_ke"], "preview_diskon_persen": diskon_info["diskon_persen"],
         "status": "waiting_approval", "source": "whatsapp",
         "booking_ids": [], "group_id": None,
         "created_at": now_iso(), "updated_at": now_iso(),
@@ -63,6 +71,7 @@ async def buat_booking_request(data: Dict[str, Any]) -> Dict[str, Any]:
         f"Check-in: {doc['tanggal_checkin']}" + (f" {doc['jam_checkin']}" if doc.get("jam_checkin") else "") +
         (f"\nCheck-out: {doc['tanggal_checkout']}" if doc.get("tanggal_checkout") else "") +
         (f"\nTamu minta: {'DP 50%' if doc['payment_option_diminta'] == 'dp50' else 'Bayar Penuh'}" if doc.get("payment_option_diminta") else "") +
+        (f"\nKedatangan ke-{diskon_info['kedatangan_ke']}, diskon member {diskon_info['diskon_persen']}%" if diskon_info["diskon_persen"] else "") +
         "\n\nTinjau di PMS → Booking Request."
     )
     doc.pop("_id", None)

@@ -375,6 +375,9 @@ export default function BookingRequests() {
                 {it.payment_option_diminta && (
                   <p className="text-xs text-blue-700 font-semibold">Tamu minta: {it.payment_option_diminta === "dp50" ? "DP 50%" : "Bayar Penuh"}</p>
                 )}
+                {it.preview_diskon_persen > 0 && (
+                  <p className="text-xs text-amber-700 font-semibold">✨ Kedatangan ke-{it.preview_kedatangan_ke}: diskon member {it.preview_diskon_persen}%</p>
+                )}
                 {it.catatan && <p className="text-xs italic text-slate-500">"{it.catatan}"</p>}
                 {it.status === "waiting_payment" && it.status_efektif !== "lunas" && it.checkout_url && (
                   <a href={it.checkout_url} target="_blank" rel="noreferrer" className="text-xs text-blue-600 underline break-all">Link pembayaran</a>

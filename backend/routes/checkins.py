@@ -183,7 +183,12 @@ async def list_guests(q: Optional[str] = None, user: dict = Depends(get_current_
             {"no_hp": {"$regex": q, "$options": "i"}},
             {"no_identitas": {"$regex": q, "$options": "i"}},
         ]}
-    items = await db.guests.find(query, {"_id": 0}).sort("last_visit", -1).to_list(500)
+    items = await db.guests.find(query, {"_id": 0}).to_list(500)
+    for it in items:
+        it.update(diskon_member_untuk_total_kunjungan(it.get("total_kunjungan", 0)))
+    # sort di Python (case-insensitive) - default Mongo sort per byte (huruf besar/kecil/angka
+    # tercampur tidak sesuai urutan A-Z yang wajar dilihat orang), aman untuk skala tamu (<=500)
+    items.sort(key=lambda g: (g.get("nama") or "").lower())
     return items
 
 @api.get("/guests/{guest_id}/history")
