@@ -187,7 +187,36 @@ async def ai_bot_booking_status(no_hp: str, _: None = Depends(verifikasi_ai_bot_
             "status": status_efektif, "booking_ringkasan": booking_ringkasan,
             "created_at": it["created_at"],
         })
-    return {"no_hp": no_hp, "permintaan": out}
+
+    # Bookings LANGSUNG (public /book, walk-in Quick Book, OTA) TIDAK PERNAH punya dokumen
+    # booking_requests (2026-07-19, ditemukan saat audit reliabilitas) - sebelumnya tamu yang
+    # booking Day Use lewat website publik lalu coba batalkan via chat AI WhatsApp SELALU
+    # dijawab "tidak ditemukan", padahal booking-nya nyata & ajukan_pembatalan_ai
+    # (routes/pembatalan.py) sendiri sudah bekerja untuk booking manapun by kode - gap-nya
+    # murni di pencarian ini. Disatukan di sini supaya AI bisa temukan & bantu batalkan
+    # booking dari channel manapun, bukan cuma yang dia buat sendiri.
+    sudah_termasuk = {b["kode"] for it in out for b in (it.get("booking_ringkasan") or [])}
+    direct_bookings = await db.bookings.find({
+        "no_hp": {"$in": list(variasi)},
+        "status": {"$in": ["aktif", "booking_pending", "booking_paid", "checked_in"]},
+    }, {"_id": 0}).sort("created_at", -1).to_list(5)
+    for b in direct_bookings:
+        if b["kode"] in sudah_termasuk:
+            continue
+        sb = status_bayar_booking(b)
+        out.append({
+            "kode": b["kode"], "tipe": b.get("tipe"), "room_tipe": b.get("room_tipe"),
+            "tanggal_checkin": (b.get("jam_mulai") or "")[:10],
+            "tanggal_checkout": (b.get("jam_selesai") or "")[:10] if b.get("tipe") == "menginap" else None,
+            "status": "lunas" if sb["status_bayar"] == "lunas" else "waiting_payment",
+            "booking_ringkasan": [{
+                "kode": b["kode"], "room_nomor": b.get("room_nomor"), "room_tipe": b.get("room_tipe"),
+                "sync_status": b.get("sync_status"), **sb,
+            }],
+            "created_at": b.get("created_at"),
+        })
+    out.sort(key=lambda x: x.get("created_at") or "", reverse=True)
+    return {"no_hp": no_hp, "permintaan": out[:5]}
 
 
 class AiBotBookingRequestIn(BaseModel):
