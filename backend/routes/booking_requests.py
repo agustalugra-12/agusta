@@ -28,8 +28,31 @@ email konfirmasi RedDoorz diterima, dan mematikan/redirect tombol Book Now publi
 """
 from core import *
 from reservation_service import create_reservation
+import asyncio
+from collections import defaultdict
+from contextlib import asynccontextmanager
 
 STATUS_TERBUKA = ["waiting_approval"]
+
+# Lock in-process per booking_request (2026-07-19, lanjutan audit anti-race-condition -
+# lihat room_locks di reservation_service.py untuk pola & alasan yang sama: MongoDB
+# standalone tanpa transaction, backend 1 proses). Mencegah 2 staf approve/reject
+# permintaan yang SAMA nyaris bersamaan sama-sama lolos cek status "waiting_approval"
+# sebelum salah satu sempat menulis - yang bisa menghasilkan 2 booking asli (+2 transaksi
+# Tripay) dari 1 permintaan tamu. Ini BUKAN soal bentrok kamar (itu sudah aman lewat
+# room_locks di create_reservation, kamar berbeda pun bisa dipilih tiap approval) - ini
+# soal jangan sampai 1 permintaan tamu diproses/dipenuhi dua kali.
+_request_locks: Dict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
+
+
+@asynccontextmanager
+async def _request_lock(rid: str):
+    lock = _request_locks[rid]
+    await lock.acquire()
+    try:
+        yield
+    finally:
+        lock.release()
 
 # Channel Tripay default untuk auto-approve Day Use (QRIS - paling universal di Indonesia,
 # hampir semua e-wallet/mobile banking bisa scan). Kode Tripay sungguhan "QRIS2", BUKAN
@@ -270,125 +293,134 @@ async def approve_booking_request(rid: str, body: BookingRequestApprove, user: d
     sama seperti alur publik) untuk tiap kamar via create_reservation (tetap lewat
     check_room_available — hard validator anti-overbooking yang sama, tidak dilewati), lalu
     langsung membuat transaksi Tripay & mengirim link bayar ke tamu lewat WhatsApp."""
-    req = await db.booking_requests.find_one({"id": rid})
-    if not req:
-        raise HTTPException(404, "Permintaan booking tidak ditemukan")
-    if req["status"] not in STATUS_TERBUKA:
-        raise HTTPException(400, f"Hanya permintaan waiting_approval yang bisa disetujui (status: {req['status']})")
-    if body.payment_option not in ("dp50", "full"):
-        raise HTTPException(400, "payment_option harus 'dp50' atau 'full'")
-    room_ids = list(dict.fromkeys(body.room_ids or []))
-    if len(room_ids) != req.get("jumlah_kamar", 1):
-        raise HTTPException(400, f"Pilih tepat {req.get('jumlah_kamar', 1)} kamar sesuai permintaan")
+    # Seluruh proses dibungkus _request_lock(rid) (2026-07-19, audit anti-race-condition
+    # lanjutan) - termasuk pengecekan status "waiting_approval" itu sendiri, supaya kalau 2
+    # staf klik Terima nyaris bersamaan, yang kedua benar-benar membaca status TERBARU
+    # (bukan status basi dari sebelum yang pertama selesai) dan ditolak dengan bersih,
+    # bukan sama-sama lolos dan membuat 2 booking asli dari 1 permintaan.
+    async with _request_lock(rid):
+        req = await db.booking_requests.find_one({"id": rid})
+        if not req:
+            raise HTTPException(404, "Permintaan booking tidak ditemukan")
+        if req["status"] not in STATUS_TERBUKA:
+            raise HTTPException(400, f"Hanya permintaan waiting_approval yang bisa disetujui (status: {req['status']})")
+        if body.payment_option not in ("dp50", "full"):
+            raise HTTPException(400, "payment_option harus 'dp50' atau 'full'")
+        room_ids = list(dict.fromkeys(body.room_ids or []))
+        if len(room_ids) != req.get("jumlah_kamar", 1):
+            raise HTTPException(400, f"Pilih tepat {req.get('jumlah_kamar', 1)} kamar sesuai permintaan")
 
-    tipe = req["tipe"]
-    if tipe == "menginap":
-        if not req.get("tanggal_checkout"):
-            raise HTTPException(400, "Permintaan ini tidak punya tanggal_checkout — tidak bisa disetujui sebagai menginap")
-        try:
-            ci = datetime.fromisoformat(f"{req['tanggal_checkin']}T14:00:00+07:00")
-            co = datetime.fromisoformat(f"{req['tanggal_checkout']}T12:00:00+07:00")
-        except Exception:
-            raise HTTPException(400, "Tanggal check-in/checkout pada permintaan tidak valid")
-        if co <= ci:
-            raise HTTPException(400, "Tanggal check-out harus setelah check-in")
-        start, end = ci.astimezone(timezone.utc), co.astimezone(timezone.utc)
-        nights = max(1, (co.date() - ci.date()).days)
-    else:
-        try:
-            jam = req.get("jam_checkin") or "14:00"
-            start = datetime.fromisoformat(f"{req['tanggal_checkin']}T{jam}:00+07:00").astimezone(timezone.utc)
-        except Exception:
-            raise HTTPException(400, "Tanggal/jam check-in pada permintaan tidak valid")
-        end = start + timedelta(hours=6)
-        nights = 1
-
-    created_bookings = []
-    for room_id in room_ids:
-        r = await db.rooms.find_one({"id": room_id})
-        if not r:
-            raise HTTPException(404, f"Kamar tidak ditemukan (id {room_id})")
-        harga_override = None
+        tipe = req["tipe"]
         if tipe == "menginap":
-            subtotal = int(r["tarif_menginap"]) * nights
-            service_fee = round(subtotal * SERVICE_FEE_PCT)
-            total = subtotal + service_fee
-            harga_override = {"subtotal": subtotal, "service_fee": service_fee, "total": total, "dp_min": round(total * 0.5)}
-        data = {
-            "room_id": room_id, "nama_tamu": req["nama_tamu"], "no_hp": req["no_hp"],
-            "email": "", "no_identitas": "", "kendaraan": "",
-            "jumlah_tamu": req.get("jumlah_tamu", 1),
-            "jam_mulai": start, "jam_selesai": end,
-            "catatan": req.get("catatan") or "", "created_by": user["nama"],
-            "tipe": tipe, "dengan_sarapan": False,
-        }
-        booking = await create_reservation(data, source="whatsapp_request", harga_override=harga_override)
-        # Tahap 2 (PRD Modul Reservasi): booking Menginap dari Booking Request TIDAK langsung
-        # dianggap "Confirmed" — admin harus input manual ke PMS RedDoorz dulu, baru dianggap
-        # pasti setelah email konfirmasi RedDoorz cocok (lihat otomasi_email.py). Day Use tidak
-        # pernah masuk RedDoorz (aturan lama, tidak berubah), jadi langsung "not_required".
-        sync_status = "waiting_reddoorz_input" if tipe == "menginap" else "not_required"
-        await db.bookings.update_one({"id": booking["id"]}, {"$set": {"sync_status": sync_status}})
-        booking["sync_status"] = sync_status
-        created_bookings.append(booking)
+            if not req.get("tanggal_checkout"):
+                raise HTTPException(400, "Permintaan ini tidak punya tanggal_checkout — tidak bisa disetujui sebagai menginap")
+            try:
+                ci = datetime.fromisoformat(f"{req['tanggal_checkin']}T14:00:00+07:00")
+                co = datetime.fromisoformat(f"{req['tanggal_checkout']}T12:00:00+07:00")
+            except Exception:
+                raise HTTPException(400, "Tanggal check-in/checkout pada permintaan tidak valid")
+            if co <= ci:
+                raise HTTPException(400, "Tanggal check-out harus setelah check-in")
+            start, end = ci.astimezone(timezone.utc), co.astimezone(timezone.utc)
+            nights = max(1, (co.date() - ci.date()).days)
+        else:
+            try:
+                jam = req.get("jam_checkin") or "14:00"
+                start = datetime.fromisoformat(f"{req['tanggal_checkin']}T{jam}:00+07:00").astimezone(timezone.utc)
+            except Exception:
+                raise HTTPException(400, "Tanggal/jam check-in pada permintaan tidak valid")
+            end = start + timedelta(hours=6)
+            nights = 1
 
-    group_id = None
-    if len(created_bookings) > 1:
-        group_id = str(uuid.uuid4())
-        for b in created_bookings:
-            await db.bookings.update_one({"id": b["id"]}, {"$set": {"group_id": group_id}})
+        created_bookings = []
+        for room_id in room_ids:
+            r = await db.rooms.find_one({"id": room_id})
+            if not r:
+                raise HTTPException(404, f"Kamar tidak ditemukan (id {room_id})")
+            harga_override = None
+            if tipe == "menginap":
+                subtotal = int(r["tarif_menginap"]) * nights
+                service_fee = round(subtotal * SERVICE_FEE_PCT)
+                total = subtotal + service_fee
+                harga_override = {"subtotal": subtotal, "service_fee": service_fee, "total": total, "dp_min": round(total * 0.5)}
+            data = {
+                "room_id": room_id, "nama_tamu": req["nama_tamu"], "no_hp": req["no_hp"],
+                "email": "", "no_identitas": "", "kendaraan": "",
+                "jumlah_tamu": req.get("jumlah_tamu", 1),
+                "jam_mulai": start, "jam_selesai": end,
+                "catatan": req.get("catatan") or "", "created_by": user["nama"],
+                "tipe": tipe, "dengan_sarapan": False,
+            }
+            booking = await create_reservation(data, source="whatsapp_request", harga_override=harga_override)
+            # Tahap 2 (PRD Modul Reservasi): booking Menginap dari Booking Request TIDAK langsung
+            # dianggap "Confirmed" — admin harus input manual ke PMS RedDoorz dulu, baru dianggap
+            # pasti setelah email konfirmasi RedDoorz cocok (lihat otomasi_email.py). Day Use tidak
+            # pernah masuk RedDoorz (aturan lama, tidak berubah), jadi langsung "not_required".
+            sync_status = "waiting_reddoorz_input" if tipe == "menginap" else "not_required"
+            await db.bookings.update_one({"id": booking["id"]}, {"$set": {"sync_status": sync_status}})
+            booking["sync_status"] = sync_status
+            created_bookings.append(booking)
 
-    total_group = sum(int(b["total"]) for b in created_bookings)
+        group_id = None
+        if len(created_bookings) > 1:
+            group_id = str(uuid.uuid4())
+            for b in created_bookings:
+                await db.bookings.update_one({"id": b["id"]}, {"$set": {"group_id": group_id}})
 
-    from routes.tripay import tripay_create_transaction
-    trx = await tripay_create_transaction(TripayCreateTransactionBody(
-        booking_id=created_bookings[0]["id"], payment_option=body.payment_option, method=body.method,
-    ))
+        total_group = sum(int(b["total"]) for b in created_bookings)
 
-    now = now_iso()
-    await db.booking_requests.update_one({"id": rid}, {"$set": {
-        "status": "waiting_payment", "booking_ids": [b["id"] for b in created_bookings], "group_id": group_id,
-        "approved_by": user["nama"], "approved_at": now, "updated_at": now,
-        "checkout_url": trx.get("checkout_url"), "total": total_group,
-    }})
-    await log_activity(user, "approve_booking_request", f"Setujui permintaan booking {req['kode']} ({req['nama_tamu']})")
+        from routes.tripay import tripay_create_transaction
+        trx = await tripay_create_transaction(TripayCreateTransactionBody(
+            booking_id=created_bookings[0]["id"], payment_option=body.payment_option, method=body.method,
+        ))
 
-    pesan = (
-        f"Halo {req['nama_tamu']}, permintaan booking Anda kami *setujui*!\n\n"
-        f"Total: Rp{total_group:,}".replace(",", ".") + "\n"
-        f"Silakan selesaikan pembayaran melalui link berikut:\n{trx.get('checkout_url')}"
-    )
-    try:
-        from routes.pesan_whatsapp import _kirim_via_provider
-        await _kirim_via_provider(req["no_hp"], pesan)
-    except Exception as e:
-        logging.getLogger("booking_requests").warning(f"Gagal kirim link bayar ke {req['no_hp']}: {e}")
+        now = now_iso()
+        await db.booking_requests.update_one({"id": rid}, {"$set": {
+            "status": "waiting_payment", "booking_ids": [b["id"] for b in created_bookings], "group_id": group_id,
+            "approved_by": user["nama"], "approved_at": now, "updated_at": now,
+            "checkout_url": trx.get("checkout_url"), "total": total_group,
+        }})
+        await log_activity(user, "approve_booking_request", f"Setujui permintaan booking {req['kode']} ({req['nama_tamu']})")
+
+        pesan = (
+            f"Halo {req['nama_tamu']}, permintaan booking Anda kami *setujui*!\n\n"
+            f"Total: Rp{total_group:,}".replace(",", ".") + "\n"
+            f"Silakan selesaikan pembayaran melalui link berikut:\n{trx.get('checkout_url')}"
+        )
+        try:
+            from routes.pesan_whatsapp import _kirim_via_provider
+            await _kirim_via_provider(req["no_hp"], pesan)
+        except Exception as e:
+            logging.getLogger("booking_requests").warning(f"Gagal kirim link bayar ke {req['no_hp']}: {e}")
 
     return await db.booking_requests.find_one({"id": rid}, {"_id": 0})
 
 
 @api.post("/booking-requests/{rid}/reject")
 async def reject_booking_request(rid: str, body: BookingRequestReject, user: dict = Depends(get_current_user)):
-    req = await db.booking_requests.find_one({"id": rid})
-    if not req:
-        raise HTTPException(404, "Permintaan booking tidak ditemukan")
-    if req["status"] not in STATUS_TERBUKA:
-        raise HTTPException(400, f"Hanya permintaan waiting_approval yang bisa ditolak (status: {req['status']})")
-    now = now_iso()
-    await db.booking_requests.update_one({"id": rid}, {"$set": {
-        "status": "rejected", "rejected_by": user["nama"], "rejected_reason": body.alasan or "", "updated_at": now,
-    }})
-    await log_activity(user, "reject_booking_request", f"Tolak permintaan booking {req['kode']} ({req['nama_tamu']}): {body.alasan or '-'}")
+    # Lock sama (_request_lock) dengan approve - satu rid tidak boleh di-approve & ditolak
+    # bersamaan oleh 2 staf berbeda juga (2026-07-19, audit anti-race-condition lanjutan).
+    async with _request_lock(rid):
+        req = await db.booking_requests.find_one({"id": rid})
+        if not req:
+            raise HTTPException(404, "Permintaan booking tidak ditemukan")
+        if req["status"] not in STATUS_TERBUKA:
+            raise HTTPException(400, f"Hanya permintaan waiting_approval yang bisa ditolak (status: {req['status']})")
+        now = now_iso()
+        await db.booking_requests.update_one({"id": rid}, {"$set": {
+            "status": "rejected", "rejected_by": user["nama"], "rejected_reason": body.alasan or "", "updated_at": now,
+        }})
+        await log_activity(user, "reject_booking_request", f"Tolak permintaan booking {req['kode']} ({req['nama_tamu']}): {body.alasan or '-'}")
 
-    pesan = (
-        f"Mohon maaf {req['nama_tamu']}, untuk permintaan booking tanggal {req['tanggal_checkin']} "
-        f"kami belum bisa memenuhi" + (f": {body.alasan}." if body.alasan else " saat ini.") +
-        " Silakan hubungi kami lagi untuk tanggal lain, kami siap bantu."
-    )
-    try:
-        from routes.pesan_whatsapp import _kirim_via_provider
-        await _kirim_via_provider(req["no_hp"], pesan)
-    except Exception as e:
-        logging.getLogger("booking_requests").warning(f"Gagal kirim pesan tolak ke {req['no_hp']}: {e}")
+        pesan = (
+            f"Mohon maaf {req['nama_tamu']}, untuk permintaan booking tanggal {req['tanggal_checkin']} "
+            f"kami belum bisa memenuhi" + (f": {body.alasan}." if body.alasan else " saat ini.") +
+            " Silakan hubungi kami lagi untuk tanggal lain, kami siap bantu."
+        )
+        try:
+            from routes.pesan_whatsapp import _kirim_via_provider
+            await _kirim_via_provider(req["no_hp"], pesan)
+        except Exception as e:
+            logging.getLogger("booking_requests").warning(f"Gagal kirim pesan tolak ke {req['no_hp']}: {e}")
 
     return await db.booking_requests.find_one({"id": rid}, {"_id": 0})
