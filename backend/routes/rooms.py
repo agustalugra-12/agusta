@@ -1,6 +1,10 @@
 from core import *
 from routes.push import send_push
 
+UPLOAD_DIR_ROOMS = ROOT_DIR / "uploads" / "rooms"
+UPLOAD_DIR_ROOMS.mkdir(parents=True, exist_ok=True)
+_EXT_FOTO_DIIZINKAN = {"jpg", "jpeg", "png", "webp"}
+
 # ---- Rooms ----
 @api.get("/rooms")
 async def list_rooms(user: dict = Depends(get_current_user)):
@@ -21,6 +25,8 @@ async def create_room(body: RoomCreate, user: dict = Depends(require_owner)):
         "tarif_menginap": body.tarif_menginap,
         "status": "kosong",
         "info": {},  # menginap info: nama_tamu, checkin_date, checkout_date, catatan
+        "foto_urls": [],
+        "foto_utama": "",
         "created_at": now_iso(),
     }
     await db.rooms.insert_one(doc)
@@ -34,10 +40,50 @@ async def update_room(room_id: str, body: RoomUpdate, user: dict = Depends(requi
     if not r:
         raise HTTPException(404, "Kamar tidak ditemukan")
     updates = {k: v for k, v in body.model_dump().items() if v is not None}
+    if "foto_utama" in updates and updates["foto_utama"] not in (r.get("foto_urls") or []):
+        raise HTTPException(400, "Foto utama harus salah satu foto yang sudah diupload untuk kamar ini")
     if updates:
         await db.rooms.update_one({"id": room_id}, {"$set": updates})
     await log_activity(user, "update_room", f"Update kamar {r['nomor']}")
     return {"ok": True}
+
+@api.post("/rooms/{room_id}/foto")
+async def upload_room_foto(room_id: str, file: UploadFile = File(...), user: dict = Depends(require_owner)):
+    r = await db.rooms.find_one({"id": room_id})
+    if not r:
+        raise HTTPException(404, "Kamar tidak ditemukan")
+    ext = (file.filename.rsplit(".", 1)[-1].lower() if file.filename and "." in file.filename else "")
+    if ext not in _EXT_FOTO_DIIZINKAN:
+        raise HTTPException(400, "Format foto harus JPG, PNG, atau WEBP")
+    content = await file.read()
+    if len(content) > 5 * 1024 * 1024:
+        raise HTTPException(400, "Ukuran foto maksimal 5MB")
+    fname = f"{uuid.uuid4().hex}.{ext}"
+    (UPLOAD_DIR_ROOMS / fname).write_bytes(content)
+    url = f"/uploads/rooms/{fname}"
+    foto_urls = (r.get("foto_urls") or []) + [url]
+    updates = {"foto_urls": foto_urls}
+    if not r.get("foto_utama"):
+        updates["foto_utama"] = url
+    await db.rooms.update_one({"id": room_id}, {"$set": updates})
+    await log_activity(user, "upload_room_foto", f"Upload foto kamar {r['nomor']}")
+    return {"foto_urls": foto_urls, "foto_utama": updates.get("foto_utama", r.get("foto_utama", ""))}
+
+@api.delete("/rooms/{room_id}/foto")
+async def delete_room_foto(room_id: str, url: str, user: dict = Depends(require_owner)):
+    r = await db.rooms.find_one({"id": room_id})
+    if not r:
+        raise HTTPException(404, "Kamar tidak ditemukan")
+    foto_urls = [u for u in (r.get("foto_urls") or []) if u != url]
+    updates = {"foto_urls": foto_urls}
+    if r.get("foto_utama") == url:
+        updates["foto_utama"] = foto_urls[0] if foto_urls else ""
+    await db.rooms.update_one({"id": room_id}, {"$set": updates})
+    fpath = UPLOAD_DIR_ROOMS / url.rsplit("/", 1)[-1]
+    if fpath.exists() and fpath.is_relative_to(UPLOAD_DIR_ROOMS):
+        fpath.unlink()
+    await log_activity(user, "delete_room_foto", f"Hapus foto kamar {r['nomor']}")
+    return {"foto_urls": foto_urls, "foto_utama": updates.get("foto_utama", r.get("foto_utama", ""))}
 
 @api.delete("/rooms/{room_id}")
 async def delete_room(room_id: str, user: dict = Depends(require_owner)):

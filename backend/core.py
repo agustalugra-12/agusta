@@ -21,7 +21,7 @@ from typing import List, Optional, Dict, Any
 
 import jwt
 import bcrypt
-from fastapi import APIRouter, HTTPException, Depends, Request, Response, Query
+from fastapi import APIRouter, HTTPException, Depends, Request, Response, Query, UploadFile, File
 from motor.motor_asyncio import AsyncIOMotorClient
 from pydantic import BaseModel, Field
 
@@ -369,6 +369,7 @@ class RoomUpdate(BaseModel):
     tipe: Optional[str] = None
     tarif: Optional[int] = None
     tarif_menginap: Optional[int] = None
+    foto_utama: Optional[str] = None  # harus salah satu dari foto_urls kamar ini
 
 class RoomStatusUpdate(BaseModel):
     status: str  # kosong, day_use, menginap, perlu_dibersihkan, maintenance
