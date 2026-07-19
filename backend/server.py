@@ -63,7 +63,13 @@ async def startup():
     await db.jadwal_kerja.create_index([("year", 1), ("month", 1)], unique=True)
     await db.jadwal_shifts.create_index([("jadwal_id", 1), ("staff_id", 1), ("tanggal", 1)], unique=True)
 
-    # Seed users
+    # Seed users - SEKALI SAJA saat akun belum ada. Sebelumnya ada cabang elif yang
+    # menimpa password_hash tiap restart kalau tidak cocok dengan ADMIN_PASSWORD/
+    # RECEPTIONIST_PASSWORD env (default "owner123"/"resep123" kalau env belum diisi) -
+    # bug keamanan nyata: password yang diganti sendiri oleh owner/staf lewat PUT /auth/me
+    # atau PUT /users/{id} diam-diam KEMBALI ke password lama/default tiap kali service
+    # restart/deploy. Dihapus 2026-07-19 - begitu akun ada, password_hash HANYA boleh
+    # berubah lewat endpoint ganti password yang eksplisit.
     async def ensure_user(username, password, nama, role):
         existing = await db.users.find_one({"username": username})
         if not existing:
@@ -76,11 +82,6 @@ async def startup():
                 "status": "aktif",
                 "created_at": now_iso(),
             })
-        elif not verify_password(password, existing.get("password_hash", "")):
-            await db.users.update_one(
-                {"username": username},
-                {"$set": {"password_hash": hash_password(password)}},
-            )
 
     await ensure_user(
         os.environ.get("ADMIN_USERNAME", "owner"),
