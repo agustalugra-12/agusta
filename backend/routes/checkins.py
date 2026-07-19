@@ -191,6 +191,45 @@ async def list_guests(q: Optional[str] = None, user: dict = Depends(get_current_
     items.sort(key=lambda g: (g.get("nama") or "").lower())
     return items
 
+@api.post("/guests")
+async def create_guest(body: GuestCreate, user: dict = Depends(get_current_user)):
+    """Tambah data tamu manual (bukan dari booking/check-in) - mis. tamu lama yang mau
+    dicatat riwayatnya, atau kontak yang perlu didata sebelum booking pertama."""
+    if not body.no_hp and not body.no_identitas:
+        raise HTTPException(400, "Isi minimal salah satu: No HP atau No KTP")
+    existing = await cari_guest(body.no_hp, body.no_identitas)
+    if existing:
+        raise HTTPException(400, f"Tamu dengan No HP/KTP ini sudah ada: {existing['nama']}")
+    doc = {
+        "id": str(uuid.uuid4()), "nama": body.nama.strip(),
+        "no_hp": body.no_hp.strip(), "no_identitas": body.no_identitas.strip(), "kendaraan": body.kendaraan.strip(),
+        "total_kunjungan": 0, "total_transaksi": 0, "last_visit": None, "created_at": now_iso(),
+    }
+    await db.guests.insert_one(doc)
+    await log_activity(user, "create_guest", f"Tambah data tamu {doc['nama']}")
+    doc.pop("_id", None)
+    doc.update(diskon_member_untuk_total_kunjungan(0))
+    return doc
+
+@api.put("/guests/{guest_id}")
+async def update_guest(guest_id: str, body: GuestUpdate, user: dict = Depends(get_current_user)):
+    g = await db.guests.find_one({"id": guest_id})
+    if not g:
+        raise HTTPException(404, "Data tamu tidak ditemukan")
+    updates = {k: v.strip() if isinstance(v, str) else v for k, v in body.model_dump().items() if v is not None}
+    no_hp = updates.get("no_hp", g.get("no_hp"))
+    no_identitas = updates.get("no_identitas", g.get("no_identitas"))
+    if no_hp or no_identitas:
+        other = await cari_guest(no_hp, no_identitas)
+        if other and other["id"] != guest_id:
+            raise HTTPException(400, f"No HP/KTP ini sudah dipakai tamu lain: {other['nama']}")
+    if updates:
+        await db.guests.update_one({"id": guest_id}, {"$set": updates})
+    await log_activity(user, "update_guest", f"Update data tamu {updates.get('nama', g.get('nama'))}")
+    fresh = await db.guests.find_one({"id": guest_id}, {"_id": 0})
+    fresh.update(diskon_member_untuk_total_kunjungan(fresh.get("total_kunjungan", 0)))
+    return fresh
+
 @api.get("/guests/{guest_id}/history")
 async def guest_history(guest_id: str, user: dict = Depends(get_current_user)):
     items = await db.checkins.find({"guest_id": guest_id}, {"_id": 0}).sort("jam_checkin", -1).to_list(500)

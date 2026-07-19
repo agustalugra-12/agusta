@@ -376,6 +376,18 @@ class RoomStatusUpdate(BaseModel):
     catatan: Optional[str] = ""
     nama_tamu: Optional[str] = ""
 
+class GuestCreate(BaseModel):
+    nama: str
+    no_hp: str = ""
+    no_identitas: str = ""
+    kendaraan: str = ""
+
+class GuestUpdate(BaseModel):
+    nama: Optional[str] = None
+    no_hp: Optional[str] = None
+    no_identitas: Optional[str] = None
+    kendaraan: Optional[str] = None
+
 class CheckinCreate(BaseModel):
     nama_tamu: str
     no_hp: str = ""
