@@ -208,31 +208,50 @@ async def public_create_booking(body: PublicBookingCreate):
     extra_bed_qty = max(0, min(EXTRA_BED_MAX, int(body.extra_bed_qty or 0)))
     group_id = str(uuid.uuid4()) if len(rooms) > 1 else None
     created = []
-    for r in rooms:
-        harga_override = None
-        if body.tipe == "menginap":
-            tarif_per_malam = r["tarif_menginap"] + (BREAKFAST_PRICE if body.dengan_sarapan else 0)
-            subtotal = tarif_per_malam * nights + extra_bed_qty * EXTRA_BED_PRICE * nights
-            service_fee = round(subtotal * SERVICE_FEE_PCT)
-            total = subtotal + service_fee
-            harga_override = {"subtotal": subtotal, "service_fee": service_fee, "total": total, "dp_min": round(total * 0.5)}
-        data = {
-            "room_id": r["id"],
-            "nama_tamu": body.nama_tamu, "no_hp": body.no_hp,
-            "email": email,
-            "no_identitas": body.no_identitas, "kendaraan": body.kendaraan,
-            "jumlah_tamu": body.jumlah_tamu, "extra_bed_qty": body.extra_bed_qty,
-            "jam_mulai": start, "jam_selesai": end,
-            "catatan": body.catatan,
-            "created_by": body.nama_tamu,
-            "tipe": body.tipe,
-            "dengan_sarapan": body.dengan_sarapan,
-        }
-        booking = await create_reservation(data, source="online", harga_override=harga_override)
-        if group_id:
-            await db.bookings.update_one({"id": booking["id"]}, {"$set": {"group_id": group_id}})
-            booking["group_id"] = group_id
-        created.append(booking)
+    try:
+        for r in rooms:
+            harga_override = None
+            if body.tipe == "menginap":
+                tarif_per_malam = r["tarif_menginap"] + (BREAKFAST_PRICE if body.dengan_sarapan else 0)
+                subtotal = tarif_per_malam * nights + extra_bed_qty * EXTRA_BED_PRICE * nights
+                service_fee = round(subtotal * SERVICE_FEE_PCT)
+                total = subtotal + service_fee
+                harga_override = {"subtotal": subtotal, "service_fee": service_fee, "total": total, "dp_min": round(total * 0.5)}
+            data = {
+                "room_id": r["id"],
+                "nama_tamu": body.nama_tamu, "no_hp": body.no_hp,
+                "email": email,
+                "no_identitas": body.no_identitas, "kendaraan": body.kendaraan,
+                "jumlah_tamu": body.jumlah_tamu, "extra_bed_qty": body.extra_bed_qty,
+                "jam_mulai": start, "jam_selesai": end,
+                "catatan": body.catatan,
+                "created_by": body.nama_tamu,
+                "tipe": body.tipe,
+                "dengan_sarapan": body.dengan_sarapan,
+            }
+            booking = await create_reservation(data, source="online", harga_override=harga_override)
+            if group_id:
+                await db.bookings.update_one({"id": booking["id"]}, {"$set": {"group_id": group_id}})
+                booking["group_id"] = group_id
+            created.append(booking)
+    except Exception:
+        # Rollback all-or-nothing (2026-07-19, audit anti-race-condition lanjutan): pre-check
+        # di atas (baris ~200) tidak atomik dengan create_reservation di sini (yang punya lock
+        # per-kamar sendiri) - kalau kamar ke-2+ dalam grup ternyata direbut request lain di
+        # celah waktu antara pre-check dan create_reservation, kamar ke-1 yang sudah TERLANJUR
+        # dibuat perlu dibatalkan lagi supaya tidak ada booking grup yang nyangkut separuh jalan
+        # (tamu sedang menunggu live di halaman checkout, harus dapat error yang bersih & kamar
+        # yang gagal betul-betul lepas lagi, bukan "kepesan tapi tidak lengkap").
+        for b in created:
+            await db.bookings.update_one({"id": b["id"]}, {"$set": {
+                "status": "cancelled", "cancelled_at": now_iso(),
+                "cancelled_by": "system_rollback_group_booking_gagal",
+            }})
+            await log_availability_change(
+                b["room_id"], b.get("room_tipe", ""), 1, "booking_dibatalkan_rollback_group_gagal",
+                booking_id=b["id"],
+            )
+        raise
 
     if len(created) == 1:
         total_rp = f"Rp{int(created[0].get('total', 0)):,}".replace(",", ".")
