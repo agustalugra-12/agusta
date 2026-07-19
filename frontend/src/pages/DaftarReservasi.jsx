@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
 import api, { fmtDateTime, fmtRp, waLink, bookingConfirmationWaLink, statusBayarOf, STATUS_BAYAR_LABEL, STATUS_BAYAR_BADGE_CLASS } from "@/lib/apiClient";
 import { Card, CardContent } from "@/components/ui/card";
@@ -8,7 +8,7 @@ import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Search, X, Ban, CreditCard, MessageCircle, Phone, History, Sparkles } from "lucide-react";
+import { Search, X, Ban, CreditCard, MessageCircle, Phone, History, Sparkles, Plus, PencilLine } from "lucide-react";
 
 const toLocalInput = (iso) => { const d = new Date(iso); d.setMinutes(d.getMinutes() - d.getTimezoneOffset()); return d.toISOString().slice(0, 16); };
 
@@ -30,7 +30,13 @@ const SOURCE_BADGE = { walk_in: "bg-slate-100 text-slate-700", online: "bg-blue-
 const CANCELLABLE = ["aktif", "booking_pending", "booking_paid"];
 
 export default function DaftarReservasi() {
-  const [tab, setTab] = useState("reservasi");
+  // Tab awal bisa didorong lewat URL (?tab=tamu) — dipakai sidebar "Data Tamu" supaya
+  // langsung buka tab Tamu, bukan cuma tab Reservasi default (permintaan user 2026-07-19:
+  // Data Tamu sebelumnya cuma tab tersembunyi di dalam halaman Reservasi, kurang mudah
+  // ditemukan lewat sidebar).
+  const [searchParams, setSearchParams] = useSearchParams();
+  const [tab, setTab] = useState(searchParams.get("tab") === "tamu" ? "tamu" : "reservasi");
+  const gantiTab = (t) => { setTab(t); setSearchParams(t === "tamu" ? { tab: "tamu" } : {}, { replace: true }); };
   return (
     <div className="space-y-6" data-testid="daftar-reservasi-page">
       <div>
@@ -39,7 +45,7 @@ export default function DaftarReservasi() {
         <p className="text-slate-500 mt-1">Semua pemesanan (walk-in &amp; online) dan riwayat tamu dalam satu halaman.</p>
       </div>
 
-      <Tabs value={tab} onValueChange={setTab}>
+      <Tabs value={tab} onValueChange={gantiTab}>
         <TabsList>
           <TabsTrigger value="reservasi" data-testid="tab-reservasi">Reservasi</TabsTrigger>
           <TabsTrigger value="tamu" data-testid="tab-tamu">Tamu</TabsTrigger>
@@ -248,10 +254,16 @@ function ReservasiTab() {
   );
 }
 
+const emptyGuestForm = { nama: "", no_hp: "", no_identitas: "", kendaraan: "" };
+
 function TamuTab() {
   const [q, setQ] = useState("");
   const [guests, setGuests] = useState([]);
   const [history, setHistory] = useState(null);
+  const [formOpen, setFormOpen] = useState(false);
+  const [editingGuest, setEditingGuest] = useState(null);
+  const [guestForm, setGuestForm] = useState(emptyGuestForm);
+  const [saving, setSaving] = useState(false);
 
   const load = async () => {
     const { data } = await api.get("/guests", { params: q ? { q } : {} });
@@ -265,9 +277,40 @@ function TamuTab() {
     setHistory({ guest: g, items: data });
   };
 
+  const openAddGuest = () => { setEditingGuest(null); setGuestForm(emptyGuestForm); setFormOpen(true); };
+  const openEditGuest = (g) => { setEditingGuest(g); setGuestForm({ nama: g.nama, no_hp: g.no_hp || "", no_identitas: g.no_identitas || "", kendaraan: g.kendaraan || "" }); setFormOpen(true); };
+
+  const saveGuest = async () => {
+    if (!guestForm.nama.trim()) { toast.error("Nama wajib diisi"); return; }
+    if (!editingGuest && !guestForm.no_hp.trim() && !guestForm.no_identitas.trim()) {
+      toast.error("Isi minimal salah satu: No HP atau No KTP"); return;
+    }
+    setSaving(true);
+    try {
+      if (editingGuest) {
+        await api.put(`/guests/${editingGuest.id}`, guestForm);
+        toast.success("Data tamu diperbarui");
+      } else {
+        await api.post("/guests", guestForm);
+        toast.success("Tamu ditambahkan");
+      }
+      setFormOpen(false);
+      load();
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Gagal menyimpan");
+    } finally {
+      setSaving(false);
+    }
+  };
+
   return (
     <div className="space-y-6">
-      <Input data-testid="search-guest" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Cari nama, HP, atau No KTP..." className="h-12" />
+      <div className="flex flex-col sm:flex-row gap-3">
+        <Input data-testid="search-guest" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Cari nama, HP, atau No KTP..." className="h-12 flex-1" />
+        <Button data-testid="guest-add-btn" onClick={openAddGuest} className="h-12 gap-1.5 bg-blue-700 hover:bg-blue-800 shrink-0">
+          <Plus className="w-4 h-4" /> Tambah Tamu
+        </Button>
+      </div>
       <div className="space-y-2">
         {guests.map(g => (
           <Card key={g.id} className="border-slate-200" data-testid={`guest-row-${g.id}`}>
@@ -292,6 +335,7 @@ function TamuTab() {
                 {g.no_hp && <a href={waLink(g.no_hp)} target="_blank" rel="noreferrer"><Button size="sm" variant="outline"><MessageCircle className="w-3.5 h-3.5 mr-1" /> WA</Button></a>}
                 {g.no_hp && <a href={`tel:${g.no_hp}`}><Button size="sm" variant="outline"><Phone className="w-3.5 h-3.5 mr-1" /> Telepon</Button></a>}
                 <Button size="sm" variant="outline" onClick={() => showHistory(g)} data-testid={`hist-${g.id}`}><History className="w-3.5 h-3.5" /></Button>
+                <Button size="sm" variant="outline" onClick={() => openEditGuest(g)} data-testid={`guest-edit-${g.id}`}><PencilLine className="w-3.5 h-3.5" /></Button>
               </div>
             </CardContent>
           </Card>
@@ -315,6 +359,39 @@ function TamuTab() {
             ))}
             {(history?.items || []).length === 0 && <div className="text-slate-500 text-center py-6">Belum ada riwayat</div>}
           </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={formOpen} onOpenChange={setFormOpen}>
+        <DialogContent>
+          <DialogHeader><DialogTitle>{editingGuest ? `Edit Tamu — ${editingGuest.nama}` : "Tambah Tamu"}</DialogTitle></DialogHeader>
+          <div className="space-y-3 text-sm">
+            <div>
+              <Label>Nama</Label>
+              <Input data-testid="guest-form-nama" value={guestForm.nama} onChange={(e) => setGuestForm((f) => ({ ...f, nama: e.target.value }))} className="mt-1.5" />
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <Label>No HP</Label>
+                <Input data-testid="guest-form-hp" value={guestForm.no_hp} onChange={(e) => setGuestForm((f) => ({ ...f, no_hp: e.target.value }))} placeholder="628xxxxxxxxxx" className="mt-1.5" />
+              </div>
+              <div>
+                <Label>No KTP</Label>
+                <Input data-testid="guest-form-ktp" value={guestForm.no_identitas} onChange={(e) => setGuestForm((f) => ({ ...f, no_identitas: e.target.value }))} className="mt-1.5" />
+              </div>
+            </div>
+            <div>
+              <Label>Kendaraan</Label>
+              <Input data-testid="guest-form-kendaraan" value={guestForm.kendaraan} onChange={(e) => setGuestForm((f) => ({ ...f, kendaraan: e.target.value }))} placeholder="Plat nomor (opsional)" className="mt-1.5" />
+            </div>
+            {!editingGuest && <p className="text-xs text-slate-500">Isi minimal salah satu: No HP atau No KTP.</p>}
+          </div>
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setFormOpen(false)}>Batal</Button>
+            <Button data-testid="guest-form-save" className="bg-blue-700 hover:bg-blue-800" disabled={saving} onClick={saveGuest}>
+              {saving ? "Menyimpan..." : "Simpan"}
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
     </div>

@@ -4,7 +4,7 @@ import { useAuth } from "@/context/AuthContext";
 import { Button } from "@/components/ui/button";
 import {
   LayoutDashboard, BedDouble, ShoppingCart, Boxes,
-  Wallet, Sparkles, BarChart3, UserCog, ShieldCheck, LogOut, Hotel, Menu, HandCoins, DoorOpen, ListChecks, Mail, RefreshCw, CreditCard, MessageSquare, Shuffle, BedSingle, Send, Wand2, Tag, AlertTriangle, Wrench, Inbox, CalendarClock, Gavel, Bell, Ban,
+  Wallet, Sparkles, BarChart3, UserCog, ShieldCheck, LogOut, Hotel, Menu, HandCoins, DoorOpen, ListChecks, Mail, RefreshCw, CreditCard, MessageSquare, Shuffle, BedSingle, Send, Wand2, Tag, AlertTriangle, Wrench, Inbox, CalendarClock, Gavel, Bell, Ban, Users,
 } from "lucide-react";
 import { useState, useEffect } from "react";
 import { playAlertSound, unlockAlertSound } from "@/lib/alertSound";
@@ -14,6 +14,7 @@ const navItems = [
   { to: "/kasir", label: "Kasir", icon: ShoppingCart },
   { to: "/ketersediaan", label: "Ketersediaan", icon: DoorOpen },
   { to: "/reservasi", label: "Reservasi", icon: ListChecks },
+  { to: "/reservasi?tab=tamu", label: "Data Tamu", icon: Users },
   { to: "/booking-requests", label: "Booking Request", icon: Inbox },
   { to: "/pembatalan", label: "Pembatalan", icon: Ban },
   { to: "/otomasi-email", label: "Otomasi Email", icon: Mail, ownerOnly: true },
