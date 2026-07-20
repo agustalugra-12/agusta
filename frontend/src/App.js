@@ -35,6 +35,7 @@ import BookingRequests from "@/pages/BookingRequests";
 import JadwalKerja from "@/pages/JadwalKerja";
 import BusinessRules from "@/pages/BusinessRules";
 import Pembatalan from "@/pages/Pembatalan";
+import Payroll from "@/pages/Payroll";
 import PublicBook from "@/pages/PublicBook";
 import "@/App.css";
 
@@ -86,6 +87,7 @@ function AppRoutes() {
         <Route path="/jadwal-kerja" element={<JadwalKerja />} />
         <Route path="/business-rules" element={<Protected ownerOnly><BusinessRules /></Protected>} />
         <Route path="/pembatalan" element={<Pembatalan />} />
+        <Route path="/payroll" element={<Protected ownerOnly><Payroll /></Protected>} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

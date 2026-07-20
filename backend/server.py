@@ -62,6 +62,9 @@ async def startup():
     await db.wa_booking_sessions.create_index("no_hp", unique=True)
     await db.jadwal_kerja.create_index([("year", 1), ("month", 1)], unique=True)
     await db.jadwal_shifts.create_index([("jadwal_id", 1), ("staff_id", 1), ("tanggal", 1)], unique=True)
+    await db.kasbon.create_index("staff_id")
+    await db.payroll.create_index([("staff_id", 1), ("periode", 1)], unique=True)
+    await db.payroll.create_index("periode")
 
     # Seed users - SEKALI SAJA saat akun belum ada. Sebelumnya ada cabang elif yang
     # menimpa password_hash tiap restart kalau tidak cocok dengan ADMIN_PASSWORD/

@@ -4,7 +4,7 @@ import { useAuth } from "@/context/AuthContext";
 import { Button } from "@/components/ui/button";
 import {
   LayoutDashboard, BedDouble, ShoppingCart, Boxes,
-  Wallet, Sparkles, BarChart3, UserCog, ShieldCheck, LogOut, Hotel, Menu, HandCoins, DoorOpen, ListChecks, Mail, RefreshCw, CreditCard, MessageSquare, Shuffle, BedSingle, Send, Wand2, Tag, AlertTriangle, Wrench, Inbox, CalendarClock, Gavel, Bell, Ban, Users,
+  Wallet, Sparkles, BarChart3, UserCog, ShieldCheck, LogOut, Hotel, Menu, HandCoins, DoorOpen, ListChecks, Mail, RefreshCw, CreditCard, MessageSquare, Shuffle, BedSingle, Send, Wand2, Tag, AlertTriangle, Wrench, Inbox, CalendarClock, Gavel, Bell, Ban, Users, BadgeDollarSign,
 } from "lucide-react";
 import { useState, useEffect } from "react";
 import { playAlertSound, unlockAlertSound } from "@/lib/alertSound";
@@ -36,6 +36,7 @@ const navItems = [
   { to: "/service-requests", label: "Permintaan Layanan", icon: Bell },
   { to: "/laporan", label: "Laporan", icon: BarChart3 },
   { to: "/jadwal-kerja", label: "Jadwal Kerja", icon: CalendarClock },
+  { to: "/payroll", label: "Payroll", icon: BadgeDollarSign, ownerOnly: true },
   { to: "/business-rules", label: "Business Rules", icon: Gavel, ownerOnly: true },
   { to: "/pengguna", label: "Pengguna", icon: UserCog, ownerOnly: true },
   { to: "/audit", label: "Audit Log", icon: ShieldCheck, ownerOnly: true },

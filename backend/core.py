@@ -777,6 +777,61 @@ class JadwalSwapBody(BaseModel):
     staff_id_b: str
     tanggal_b: str
 
+# ---- Payroll (2026-07-20, permintaan user) ----
+# SENGAJA collection staf terpisah dari `staff_kerja` (roster shift) - payroll butuh field
+# beda (gaji pokok, posisi) dan owner ingin bebas isi/edit staf untuk payroll tanpa terikat
+# ke aturan shift. Nama staf boleh sama persis dengan staff_kerja kalau memang orang yang
+# sama, tapi tidak ada relasi/foreign key otomatis - dua daftar independen.
+class StaffProfilCreate(BaseModel):
+    nama: str
+    posisi: str = ""
+    gaji_pokok: int = 0  # per bulan, Rupiah - owner isi manual, boleh 0/kosong dulu
+    aktif: bool = True
+    catatan: str = ""
+
+class StaffProfilUpdate(BaseModel):
+    nama: Optional[str] = None
+    posisi: Optional[str] = None
+    gaji_pokok: Optional[int] = None
+    aktif: Optional[bool] = None
+    catatan: Optional[str] = None
+
+class KasbonCreate(BaseModel):
+    staff_id: str
+    nominal: int
+    tanggal: str  # YYYY-MM-DD
+    alasan: str = ""
+
+class KasbonUpdate(BaseModel):
+    """Edit manual - dipakai kalau owner mau koreksi nominal/alasan, atau tandai lunas
+    manual di luar mekanisme potong-otomatis-dari-payroll."""
+    nominal: Optional[int] = None
+    tanggal: Optional[str] = None
+    alasan: Optional[str] = None
+    sisa: Optional[int] = None
+
+class PayrollCreate(BaseModel):
+    """Semua nominal opsional & bisa diisi manual oleh owner (permintaan user "flexible") -
+    gaji_pokok & potongan_kasbon PRE-FILL otomatis dari staff_profil/kasbon aktif kalau tidak
+    diisi eksplisit, tapi owner boleh override angka apa pun sebelum simpan."""
+    staff_id: str
+    periode: str  # YYYY-MM
+    gaji_pokok: Optional[int] = None  # None = pre-fill dari staff_profil.gaji_pokok
+    service_charge: int = 0
+    tunjangan_lain: int = 0
+    potongan_kasbon: Optional[int] = None  # None = pre-fill otomatis dari sisa kasbon aktif
+    potongan_lain: int = 0
+    catatan: str = ""
+
+class PayrollUpdate(BaseModel):
+    gaji_pokok: Optional[int] = None
+    service_charge: Optional[int] = None
+    tunjangan_lain: Optional[int] = None
+    potongan_kasbon: Optional[int] = None
+    potongan_lain: Optional[int] = None
+    catatan: Optional[str] = None
+    status: Optional[str] = None  # draft | dibayar
+
 class RateBulkUpdateBody(BaseModel):
     """Body untuk Update Harga Massal (halaman Kalender Harga): terapkan satu harga ke
     rentang tanggal [dari, sampai] untuk satu tipe kamar, atau 'Semua' tipe sekaligus."""
