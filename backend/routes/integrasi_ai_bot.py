@@ -132,7 +132,14 @@ async def ai_bot_buat_tiket(body: AiBotTiketIn, _: None = Depends(verifikasi_ai_
     tidak persis cocok dengan yang tercatat di checkin/booking aktif)."""
     room_id, room_nomor = None, ""
     if body.room_nomor:
-        r = await db.rooms.find_one({"nomor": body.room_nomor.strip()})
+        raw = body.room_nomor.strip()
+        r = await db.rooms.find_one({"nomor": raw})
+        if not r:
+            # AI kadang kirim teks bebas ("kamar 12"/"room 12") bukan cuma angka murni
+            # seperti tersimpan di db.rooms.nomor ("12") - coba ekstrak angkanya.
+            m = re.search(r"\d+", raw)
+            if m:
+                r = await db.rooms.find_one({"nomor": m.group(0)})
         if r:
             room_id, room_nomor = r["id"], r["nomor"]
     if not room_id:
