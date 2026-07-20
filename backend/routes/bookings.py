@@ -1,6 +1,6 @@
 from core import *
 from reservation_service import check_room_available, room_locks
-from email_service import generate_voucher_pdf, send_voucher_email
+from email_service import generate_voucher_pdf, send_voucher_email, kirim_voucher_wa
 
 @api.post("/bookings")
 async def create_booking(body: BookingCreate, user: dict = Depends(get_current_user)):
@@ -348,6 +348,7 @@ async def mark_paid_manual(bid: str, body: ManualMarkPaidBody, user: dict = Depe
             b_paid = {**b, "status": "booking_paid", "payment_status": "paid"}
             pdf_bytes = generate_voucher_pdf(b_paid)
             await send_voucher_email(b_paid, pdf_bytes)
+            await kirim_voucher_wa(b_paid, pdf_bytes)
         except Exception as e:
             logging.getLogger("bookings").warning(
                 f"Gagal kirim voucher otomatis (manual paid) booking {b['kode']}: {e}"

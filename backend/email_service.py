@@ -172,3 +172,56 @@ async def send_voucher_email(b: dict, pdf_bytes: bytes) -> dict:
         logger.warning("Gagal kirim voucher email booking %s: %s", b.get("kode"), log_entry["error"])
     await db.email_send_log.insert_one(log_entry)
     return log_entry
+
+
+def _voucher_wa_caption(b: dict) -> str:
+    sb = status_bayar_booking(b)
+    tipe_label = "Menginap" if b.get("tipe") == "menginap" else "Day Use"
+    baris = [
+        f"Halo {b.get('nama_tamu', 'Tamu')}! Booking Anda di *Pelangi Homestay* sudah *dikonfirmasi*.",
+        "",
+        f"Kode Booking: *{b.get('kode', '')}*",
+        f"Tipe: {tipe_label}",
+        f"Kamar: {b.get('room_nomor', '-')} ({b.get('room_tipe', '-')})",
+        f"Check-in: {_fmt_tanggal(b.get('jam_mulai', ''))}",
+    ]
+    if b.get("tipe") == "menginap" and b.get("jam_selesai"):
+        baris.append(f"Check-out: {_fmt_tanggal(b['jam_selesai'])}")
+    if sb["status_bayar"] == "dp":
+        baris.append(f"\nStatus: *DP diterima* — sisa {_fmt_rp(sb['sisa_tagihan'])} dilunasi saat check-in di lokasi.")
+    else:
+        baris.append("\nStatus: *LUNAS* — tidak ada sisa pembayaran.")
+    baris.append("\nVoucher/bukti reservasi terlampir. Mohon tunjukkan voucher ini saat kedatangan. Sampai jumpa!")
+    return "\n".join(baris)
+
+
+async def kirim_voucher_wa(b: dict, pdf_bytes: bytes) -> dict:
+    """Kirim voucher PDF ke WhatsApp tamu begitu pembayaran (DP atau lunas) sukses - berlaku
+    Day Use maupun Menginap (2026-07-20, permintaan user: tamu mau tahu booking sudah masuk
+    lewat WA saat itu juga, bukan cuma email yang jarang langsung dicek). Sengaja best-effort
+    (dipanggil di titik yang sama dengan send_voucher_email, tidak boleh menggagalkan alur
+    pembayaran utama kalau WA gagal terkirim) - tetap dicatat ke email_send_log yang sama
+    (field `metode="WhatsApp"`, sudah diantisipasi frontend Log Pengiriman sebelumnya, cuma
+    belum pernah ada pengirimnya)."""
+    log_entry = {
+        "id": str(uuid.uuid4()), "booking_id": b["id"], "kode_booking": b["kode"],
+        "nama_tamu": b.get("nama_tamu", ""), "tujuan_email": b.get("no_hp", ""),
+        "metode": "WhatsApp", "status": "Gagal", "error": None, "waktu": now_iso(),
+    }
+    if not b.get("no_hp"):
+        log_entry["error"] = "Booking tidak punya nomor WhatsApp tamu"
+    else:
+        from routes.pesan_whatsapp import _kirim_dokumen_via_provider
+        ok, err = await _kirim_dokumen_via_provider(
+            b["no_hp"], f"voucher-{b['kode']}.pdf", "application/pdf",
+            base64.b64encode(pdf_bytes).decode(), _voucher_wa_caption(b),
+        )
+        if ok:
+            log_entry["status"] = "Terkirim"
+        else:
+            log_entry["error"] = err
+
+    if log_entry["status"] != "Terkirim":
+        logger.warning("Gagal kirim voucher WA booking %s: %s", b.get("kode"), log_entry["error"])
+    await db.email_send_log.insert_one(log_entry)
+    return log_entry

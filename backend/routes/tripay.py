@@ -1,5 +1,5 @@
 from core import *
-from email_service import generate_voucher_pdf, send_voucher_email
+from email_service import generate_voucher_pdf, send_voucher_email, kirim_voucher_wa
 from routes.push import send_push
 from routes.telegram_bot import kirim_alert_owner
 import hmac
@@ -257,6 +257,9 @@ async def tripay_callback(request: Request):
                         gb_paid = {**gb, "status": new_status, "payment_status": new_payment}
                         pdf_bytes = generate_voucher_pdf(gb_paid)
                         await send_voucher_email(gb_paid, pdf_bytes)
+                        # Kirim voucher via WA juga (2026-07-20, permintaan user) - tamu
+                        # tahu bookingnya sudah masuk saat itu juga, berlaku day_use & menginap.
+                        await kirim_voucher_wa(gb_paid, pdf_bytes)
                     except Exception as e:
                         logging.getLogger("tripay").warning(
                             f"Gagal kirim voucher otomatis (Tripay) booking {gb['kode']}: {e}"
