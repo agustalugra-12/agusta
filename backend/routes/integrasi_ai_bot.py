@@ -116,13 +116,29 @@ class AiBotTiketIn(BaseModel):
     deskripsi: str
     no_hp: str
     nama_tamu: str = ""
+    room_nomor: Optional[str] = None  # kalau tamu sebutkan nomor kamarnya sendiri di chat (2026-07-20)
 
 
 @api.post("/integrasi-ai-bot/tiket")
 async def ai_bot_buat_tiket(body: AiBotTiketIn, _: None = Depends(verifikasi_ai_bot_key)):
     """Sama seperti `_klasifikasi_dan_buat_tiket` di pesan_whatsapp.py — tapi klasifikasinya
-    sudah dilakukan ai-chat-bot sendiri, di sini cuma menulis tiketnya."""
-    room_id, room_nomor = await _cari_kamar_dari_no_hp(body.no_hp)
+    sudah dilakukan ai-chat-bot sendiri, di sini cuma menulis tiketnya.
+
+    room_nomor yang tamu sebutkan LANGSUNG di chat lebih diprioritaskan daripada pencarian
+    otomatis by no_hp (2026-07-20, ditemukan lewat tes live: guest_service belum pernah
+    dites sama sekali karena nomor WA Resepsionis belum pernah dihubungkan - begitu dites
+    via Simulator, tiket maintenance/service_request selalu punya room_nomor KOSONG walau
+    tamu jelas menyebut nomor kamarnya, karena pencarian by no_hp gagal kalau nomor WA tamu
+    tidak persis cocok dengan yang tercatat di checkin/booking aktif)."""
+    room_id, room_nomor = None, ""
+    if body.room_nomor:
+        r = await db.rooms.find_one({"nomor": body.room_nomor.strip()})
+        if r:
+            room_id, room_nomor = r["id"], r["nomor"]
+    if not room_id:
+        room_id, room_nomor = await _cari_kamar_dari_no_hp(body.no_hp)
+    if not room_id and body.room_nomor:
+        room_nomor = body.room_nomor.strip()  # tidak match db.rooms persis, tetap tampilkan apa adanya
     tiket = await buat_issue(
         body.tipe, body.deskripsi, {"id": "ai-chat-bot", "nama": "AI Chat Bot", "role": "owner"},
         room_id=room_id, room_nomor=room_nomor, nama_tamu=body.nama_tamu,
