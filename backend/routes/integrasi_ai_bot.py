@@ -283,3 +283,19 @@ async def ai_bot_ajukan_pembatalan(body: AiBotCancelRequestIn, _: None = Depends
     if not hasil.get("ok"):
         raise HTTPException(400, hasil.get("error") or "Gagal mengajukan pembatalan")
     return hasil
+
+
+class AiBotAlertIn(BaseModel):
+    pesan: str
+
+
+@api.post("/integrasi-ai-bot/alert-owner")
+async def ai_bot_alert_owner(body: AiBotAlertIn, _: None = Depends(verifikasi_ai_bot_key)):
+    """Relay alert Telegram ke owner (2026-07-20) - dipakai ai-chat-bot untuk lapor masalah
+    infrastrukturnya sendiri (mis. koneksi WhatsApp/WAHA terputus) lewat channel yang SUDAH
+    ada & sudah terhubung ke HP owner (Telegram bot PMS), bukan bikin integrasi Telegram
+    terpisah lagi di ai-chat-bot. Sengaja generik (cuma terima teks bebas) - ai-chat-bot
+    yang menentukan isinya, PMS cuma jadi jalur kirim."""
+    from routes.telegram_bot import kirim_alert_owner
+    await kirim_alert_owner(body.pesan)
+    return {"ok": True}
