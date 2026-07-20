@@ -19,6 +19,11 @@ Data model (3 collection baru, independen dari `staff_kerja`/roster shift):
                         sekali, supaya aman diedit/dihapus sebelum final).
 """
 from core import *
+import io
+import base64
+from reportlab.lib.pagesizes import A5
+from reportlab.lib.units import mm
+from reportlab.pdfgen import canvas
 
 PAYROLL_STATUS = ["draft", "dibayar"]
 
@@ -43,6 +48,7 @@ async def create_staff_profil(body: StaffProfilCreate, user: dict = Depends(requ
     now = now_iso()
     doc = {
         "id": str(uuid.uuid4()), "nama": body.nama.strip(), "posisi": body.posisi.strip(),
+        "no_hp": body.no_hp.strip(),
         "gaji_pokok": max(0, int(body.gaji_pokok or 0)), "aktif": body.aktif,
         "catatan": body.catatan.strip(), "created_at": now, "updated_at": now,
         "created_by": user["nama"],
@@ -63,6 +69,8 @@ async def update_staff_profil(sid: str, body: StaffProfilUpdate, user: dict = De
         upd["nama"] = upd["nama"].strip()
     if "posisi" in upd:
         upd["posisi"] = upd["posisi"].strip()
+    if "no_hp" in upd:
+        upd["no_hp"] = upd["no_hp"].strip()
     if "catatan" in upd:
         upd["catatan"] = upd["catatan"].strip()
     if "gaji_pokok" in upd:
@@ -281,4 +289,108 @@ async def delete_payroll(pid: str, user: dict = Depends(require_owner)):
         raise HTTPException(400, "Payroll yang sudah dibayar tidak bisa dihapus - riwayat & potongan kasbon harus tetap tercatat")
     await db.payroll.delete_one({"id": pid})
     await log_activity(user, "delete_payroll", f"Hapus draft payroll {p['staff_nama']} periode {p['periode']}")
+    return {"ok": True}
+
+
+# ---- Slip Gaji PDF & Kirim WhatsApp (2026-07-20) ----
+
+def _fmt_rp_pdf(n) -> str:
+    return f"Rp {int(n or 0):,}".replace(",", ".")
+
+
+def generate_slip_gaji_pdf(p: Dict[str, Any], staff: Dict[str, Any]) -> bytes:
+    """Slip gaji 1 halaman A5 - pola sama dengan generate_voucher_pdf di email_service.py
+    (reportlab canvas sederhana), memuat rincian gaji pokok/service charge/tunjangan/
+    potongan kasbon & lainnya, plus total diterima."""
+    buf = io.BytesIO()
+    c = canvas.Canvas(buf, pagesize=A5)
+    w, h = A5
+    y = h - 20 * mm
+
+    c.setFont("Helvetica-Bold", 16)
+    c.drawString(15 * mm, y, "Pelangi Homestay")
+    y -= 7 * mm
+    c.setFont("Helvetica", 9)
+    c.drawString(15 * mm, y, f"Slip Gaji — Periode {p['periode']}")
+    y -= 10 * mm
+    c.line(15 * mm, y, w - 15 * mm, y)
+    y -= 8 * mm
+
+    def baris(label, value, bold=False):
+        nonlocal y
+        c.setFont("Helvetica", 10)
+        c.drawString(15 * mm, y, label)
+        c.setFont("Helvetica-Bold" if bold else "Helvetica", 10)
+        c.drawRightString(w - 15 * mm, y, str(value))
+        y -= 7 * mm
+
+    baris("Nama", staff["nama"], bold=True)
+    if staff.get("posisi"):
+        baris("Posisi", staff["posisi"])
+    y -= 3 * mm
+    c.line(15 * mm, y, w - 15 * mm, y)
+    y -= 8 * mm
+
+    baris("Gaji Pokok", _fmt_rp_pdf(p["gaji_pokok"]))
+    if p.get("service_charge"):
+        baris("Service Charge", _fmt_rp_pdf(p["service_charge"]))
+    if p.get("tunjangan_lain"):
+        baris("Tunjangan Lain", _fmt_rp_pdf(p["tunjangan_lain"]))
+    if p.get("potongan_kasbon"):
+        baris("Potongan Kasbon", f"-{_fmt_rp_pdf(p['potongan_kasbon'])}")
+    if p.get("potongan_lain"):
+        baris("Potongan Lain", f"-{_fmt_rp_pdf(p['potongan_lain'])}")
+    y -= 3 * mm
+    c.line(15 * mm, y, w - 15 * mm, y)
+    y -= 8 * mm
+    baris("Total Diterima", _fmt_rp_pdf(p["total_diterima"]), bold=True)
+
+    if p.get("catatan"):
+        y -= 5 * mm
+        c.setFont("Helvetica-Oblique", 9)
+        c.drawString(15 * mm, y, f"Catatan: {p['catatan']}")
+
+    y = 20 * mm
+    c.setFont("Helvetica", 8)
+    status_label = "LUNAS DIBAYAR" if p["status"] == "dibayar" else "DRAFT (belum final)"
+    c.drawString(15 * mm, y, f"Status: {status_label}")
+    if p.get("dibayar_at"):
+        c.drawString(15 * mm, y - 5 * mm, f"Dibayar: {p['dibayar_at'][:10]}")
+
+    c.showPage()
+    c.save()
+    buf.seek(0)
+    return buf.read()
+
+
+@api.post("/payroll/{pid}/kirim-wa")
+async def kirim_slip_gaji_wa(pid: str, user: dict = Depends(require_owner)):
+    """Generate slip gaji PDF & kirim langsung ke WhatsApp staf yang bersangkutan (butuh
+    no_hp terisi di staff_profil, dan koneksi WhatsApp/webhook aktif - sama seperti jalur
+    _kirim_via_provider yang sudah dipakai notifikasi booking/pembatalan)."""
+    p = await db.payroll.find_one({"id": pid}, {"_id": 0})
+    if not p:
+        raise HTTPException(404, "Payroll tidak ditemukan")
+    s = await db.staff_profil.find_one({"id": p["staff_id"]}, {"_id": 0})
+    if not s:
+        raise HTTPException(404, "Data staf tidak ditemukan")
+    if not s.get("no_hp"):
+        raise HTTPException(400, f"Nomor WhatsApp {s['nama']} belum diisi - lengkapi dulu di Data Staf")
+
+    pdf_bytes = generate_slip_gaji_pdf(p, s)
+    caption = (
+        f"Slip gaji {s['nama']} periode {p['periode']} — Total diterima {_fmt_rp_pdf(p['total_diterima'])}."
+        + (" (Draft, belum final)" if p["status"] != "dibayar" else "")
+    )
+    from routes.pesan_whatsapp import _kirim_dokumen_via_provider
+    ok, err = await _kirim_dokumen_via_provider(
+        s["no_hp"], f"slip-gaji-{p['periode']}.pdf", "application/pdf",
+        base64.b64encode(pdf_bytes).decode("ascii"), caption,
+    )
+    await log_activity(
+        user, "kirim_slip_gaji_wa",
+        f"Kirim slip gaji {s['nama']} periode {p['periode']} via WA: {'berhasil' if ok else f'gagal ({err})'}",
+    )
+    if not ok:
+        raise HTTPException(502, f"Gagal mengirim ke WhatsApp: {err}")
     return {"ok": True}

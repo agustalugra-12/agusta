@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Plus, Trash2, PencilLine, CheckCircle2 } from "lucide-react";
+import { Plus, Trash2, PencilLine, CheckCircle2, MessageCircle } from "lucide-react";
 
 const todayPeriode = () => new Date().toISOString().slice(0, 7);
 
@@ -39,7 +39,7 @@ export default function Payroll() {
 
 // ---------------- Data Staf ----------------
 
-const emptyStaf = { nama: "", posisi: "", gaji_pokok: "", aktif: true, catatan: "" };
+const emptyStaf = { nama: "", posisi: "", no_hp: "", gaji_pokok: "", aktif: true, catatan: "" };
 
 function StafTab() {
   const [staff, setStaff] = useState([]);
@@ -57,7 +57,7 @@ function StafTab() {
   const openAdd = () => { setEditing(null); setForm(emptyStaf); setFormOpen(true); };
   const openEdit = (s) => {
     setEditing(s);
-    setForm({ nama: s.nama, posisi: s.posisi || "", gaji_pokok: String(s.gaji_pokok || 0), aktif: s.aktif, catatan: s.catatan || "" });
+    setForm({ nama: s.nama, posisi: s.posisi || "", no_hp: s.no_hp || "", gaji_pokok: String(s.gaji_pokok || 0), aktif: s.aktif, catatan: s.catatan || "" });
     setFormOpen(true);
   };
 
@@ -140,6 +140,7 @@ function StafTab() {
           <div className="space-y-3 text-sm">
             <div><Label>Nama</Label><Input data-testid="input-staf-nama" value={form.nama} onChange={(e) => setForm((f) => ({ ...f, nama: e.target.value }))} /></div>
             <div><Label>Posisi</Label><Input data-testid="input-staf-posisi" value={form.posisi} onChange={(e) => setForm((f) => ({ ...f, posisi: e.target.value }))} placeholder="mis. Resepsionis, Housekeeping" /></div>
+            <div><Label>Nomor WhatsApp</Label><Input data-testid="input-staf-nohp" value={form.no_hp} onChange={(e) => setForm((f) => ({ ...f, no_hp: e.target.value }))} placeholder="untuk kirim slip gaji, mis. 08123456789" /></div>
             <div><Label>Gaji Pokok / Bulan (Rp)</Label><Input data-testid="input-staf-gaji" type="number" value={form.gaji_pokok} onChange={(e) => setForm((f) => ({ ...f, gaji_pokok: e.target.value }))} /></div>
             <div className="flex items-center gap-2"><Switch checked={form.aktif} onCheckedChange={(v) => setForm((f) => ({ ...f, aktif: v }))} /><Label>Aktif</Label></div>
             <div><Label>Catatan (opsional)</Label><Input value={form.catatan} onChange={(e) => setForm((f) => ({ ...f, catatan: e.target.value }))} /></div>
@@ -364,6 +365,16 @@ function PayrollTab() {
     } catch (e) { toast.error(e?.response?.data?.detail || "Gagal menghapus"); }
   };
 
+  const [sendingWa, setSendingWa] = useState(false);
+  const kirimWa = async () => {
+    setSendingWa(true);
+    try {
+      await api.post(`/payroll/${selected.id}/kirim-wa`);
+      toast.success(`Slip gaji ${selected.staff_nama} terkirim ke WhatsApp`);
+    } catch (e) { toast.error(e?.response?.data?.detail || "Gagal mengirim ke WhatsApp"); }
+    finally { setSendingWa(false); }
+  };
+
   return (
     <div className="space-y-4">
       <Card className="border-slate-200">
@@ -467,6 +478,9 @@ function PayrollTab() {
             </div>
           )}
           <DialogFooter className="flex-wrap gap-2">
+            <Button data-testid="btn-kirim-wa-payroll" variant="outline" onClick={kirimWa} disabled={sendingWa} className="gap-1.5 text-emerald-700 border-emerald-300 hover:bg-emerald-50">
+              <MessageCircle className="w-4 h-4" /> {sendingWa ? "Mengirim..." : "Kirim WA"}
+            </Button>
             {selected?.status === "draft" && (
               <>
                 <Button variant="ghost" onClick={() => setSelected(null)}>Tutup</Button>

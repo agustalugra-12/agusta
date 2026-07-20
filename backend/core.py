@@ -785,6 +785,7 @@ class JadwalSwapBody(BaseModel):
 class StaffProfilCreate(BaseModel):
     nama: str
     posisi: str = ""
+    no_hp: str = ""  # untuk kirim slip gaji/kasbon via WhatsApp (2026-07-20)
     gaji_pokok: int = 0  # per bulan, Rupiah - owner isi manual, boleh 0/kosong dulu
     aktif: bool = True
     catatan: str = ""
@@ -792,6 +793,7 @@ class StaffProfilCreate(BaseModel):
 class StaffProfilUpdate(BaseModel):
     nama: Optional[str] = None
     posisi: Optional[str] = None
+    no_hp: Optional[str] = None
     gaji_pokok: Optional[int] = None
     aktif: Optional[bool] = None
     catatan: Optional[str] = None

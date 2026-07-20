@@ -339,6 +339,30 @@ async def _kirim_via_provider(no_hp: str, pesan: str) -> tuple[bool, Optional[st
         return False, f"Gagal menghubungi provider: {e}"
 
 
+async def _kirim_dokumen_via_provider(no_hp: str, filename: str, mimetype: str, data_base64: str, caption: str = "") -> tuple[bool, Optional[str]]:
+    """Kirim FILE (PDF slip gaji, dst) lewat provider yang sama dengan _kirim_via_provider
+    (2026-07-20, permintaan user kirim slip gaji via WA) - dipakai routes/payroll.py.
+    Endpoint dokumen diturunkan dari `webhook_url` yang sudah dikonfigurasi (ganti segmen
+    path terakhir "send-message" -> "send-document") supaya tidak perlu field konfigurasi
+    terpisah - kedua endpoint ada di server ai-chat-bot yang sama, kredensial `api_key` sama."""
+    cfg = await db.webhook_config.find_one({})
+    if not cfg or not cfg.get("aktif") or not cfg.get("webhook_url") or not cfg.get("api_key"):
+        return False, "Webhook belum dikonfigurasi/aktif"
+    doc_url = cfg["webhook_url"].rsplit("/", 1)[0] + "/send-document"
+    try:
+        async with httpx.AsyncClient(timeout=30) as http:
+            resp = await http.post(
+                doc_url,
+                headers={"Authorization": f"Bearer {cfg['api_key']}"},
+                json={"to": no_hp, "filename": filename, "mimetype": mimetype, "data_base64": data_base64, "caption": caption},
+            )
+        if resp.status_code >= 400:
+            return False, f"Provider merespons HTTP {resp.status_code}: {resp.text[:200]}"
+        return True, None
+    except Exception as e:
+        return False, f"Gagal menghubungi provider: {e}"
+
+
 @api.post("/webhook/whatsapp/incoming")
 async def whatsapp_incoming(request: Request, token: Optional[str] = None):
     """Endpoint publik yang dipanggil provider WhatsApp saat ada pesan masuk. Kontrak
