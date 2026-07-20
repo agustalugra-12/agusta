@@ -64,6 +64,42 @@ def _kode_request() -> str:
     return f"REQ-{datetime.now().strftime('%y%m%d')}-{uuid.uuid4().hex[:4].upper()}"
 
 
+async def _hitung_preview_harga(data: Dict[str, Any], diskon_persen: int) -> Optional[Dict[str, Any]]:
+    """Preview rincian harga (subtotal, diskon, service fee 3%, total) SEBELUM kamar
+    spesifik dipilih/staf approve - pakai tarif TIPE kamar (sama untuk semua kamar tipe itu
+    di db.rooms), supaya AI bisa jelaskan rincian ke tamu SAAT itu juga (2026-07-20,
+    permintaan user: tamu harus dijelaskan harga kamar, service 3%, & diskon yang didapat
+    setelah menawarkan DP/lunas). None kalau room_tipe tidak ditemukan - AI tetap bisa
+    lanjut tanpa rincian (fallback aman, bukan tool gagal total)."""
+    if not data.get("room_tipe"):
+        return None
+    room = await db.rooms.find_one({"tipe": data["room_tipe"]})
+    if not room:
+        return None
+    jumlah_kamar = max(1, int(data.get("jumlah_kamar") or 1))
+    if data.get("tipe") == "menginap":
+        try:
+            ci = datetime.fromisoformat(data["tanggal_checkin"]).date()
+            co = datetime.fromisoformat(data["tanggal_checkout"]).date()
+            nights = max(1, (co - ci).days)
+        except Exception:
+            nights = 1
+        tarif_per_kamar = int(room["tarif_menginap"]) * nights
+    else:
+        tarif_per_kamar = int(room["tarif"])
+    subtotal_sebelum_diskon = tarif_per_kamar * jumlah_kamar
+    hasil_diskon = terapkan_diskon_member(subtotal_sebelum_diskon, diskon_persen)
+    subtotal = hasil_diskon["subtotal"]
+    diskon_rp = hasil_diskon["diskon_rp"]
+    service_fee = round(subtotal * SERVICE_FEE_PCT)
+    total = subtotal + service_fee
+    return {
+        "tarif_kamar": subtotal_sebelum_diskon, "diskon_rp": diskon_rp,
+        "subtotal_setelah_diskon": subtotal, "service_fee": service_fee,
+        "service_fee_persen": int(SERVICE_FEE_PCT * 100), "total": total,
+    }
+
+
 async def _auto_reject_penuh(doc: Dict[str, Any]) -> None:
     """Day Use yang BENAR-BENAR tidak ada kamar kosong (bukan gagal krn payment_option belum
     jelas atau >1 kamar) - langsung tolak otomatis & kabari tamu jujur SAAT ITU JUGA
@@ -182,6 +218,7 @@ async def buat_booking_request(data: Dict[str, Any]) -> Dict[str, Any]:
     # muka), dihitung ULANG & jadi final saat staf approve (lewat create_reservation) -
     # kalau ada jeda waktu & total_kunjungan berubah, angka final yang berlaku.
     diskon_info = await hitung_diskon_member(data["no_hp"])
+    preview_harga = await _hitung_preview_harga(data, diskon_info["diskon_persen"])
 
     doc = {
         "id": str(uuid.uuid4()), "kode": _kode_request(),
@@ -193,6 +230,7 @@ async def buat_booking_request(data: Dict[str, Any]) -> Dict[str, Any]:
         "tanggal_checkout": data.get("tanggal_checkout"), "catatan": data.get("catatan") or "",
         "payment_option_diminta": payment_option if payment_option in ("dp50", "full") else None,
         "preview_kedatangan_ke": diskon_info["kedatangan_ke"], "preview_diskon_persen": diskon_info["diskon_persen"],
+        "preview_harga": preview_harga,
         "status": "waiting_approval", "source": "whatsapp",
         "booking_ids": [], "group_id": None,
         "created_at": now_iso(), "updated_at": now_iso(),
