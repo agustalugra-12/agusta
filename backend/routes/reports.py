@@ -296,9 +296,15 @@ async def report_summary(user: dict = Depends(get_current_user)):
     exp_month = await db.expenses.find({"tanggal": {"$gte": month_start}}, {"_id": 0}).to_list(2000)
     total_exp_today = sum(e.get("nominal", 0) for e in exp_today)
     total_exp_month = sum(e.get("nominal", 0) for e in exp_month)
+    # Okupansi harian (2026-07-21, permintaan user) - kamar yang TIDAK "kosong" (day_use,
+    # menginap, dipesan_hari_ini, perlu_dibersihkan, maintenance) dianggap terisi/tidak
+    # tersedia utk tamu walk-in hari ini - definisi operasional, bukan cuma "ada tamu
+    # menginap semalam" (perlu_dibersihkan/maintenance juga bikin kamar tidak bisa dipakai).
+    okupansi_persen = round((len(rooms) - counts["kosong"]) / len(rooms) * 100, 1) if rooms else 0
     return {
         "rooms": counts,
         "total_rooms": len(rooms),
+        "okupansi_persen": okupansi_persen,
         "tamu_hari_ini": len(ci_today),
         "checkout_hari_ini": len(co_today),
         "pendapatan_hari_ini": rev_room_today + rev_booking_today + rev_kasir_today + rev_svc_today,
@@ -312,6 +318,37 @@ async def report_summary(user: dict = Depends(get_current_user)):
         "pengeluaran_bulan_ini": total_exp_month,
         "laba_bersih_bulan_ini": rev_month - total_exp_month,
     }
+
+@api.get("/reports/kedatangan-harian")
+async def report_kedatangan_harian(user: dict = Depends(get_current_user)):
+    """Jumlah kedatangan tamu per hari, 30 hari terakhir (2026-07-21, permintaan user -
+    grafik tren kedatangan di Dashboard utama). Sumber `db.bookings.jam_mulai` (tanggal
+    check-in), BUKAN `db.checkins` - collection itu jarang terisi (cuma jalur check-in
+    manual staf tertentu yang menulis ke situ, sebagian besar booking online/OTA/AI tidak
+    pernah membuat dokumen di sana), jadi tidak representatif untuk tren. Booking
+    `cancelled` dikecualikan (tidak pernah benar-benar datang). Dihitung per booking
+    (1 booking = 1 "kedatangan", konsisten dgn cara kamar dihitung terisi/tidaknya),
+    bukan per kepala (jumlah_tamu) - lebih mudah dibaca staf sebagai tren reservasi."""
+    end_date = datetime.now(timezone.utc).date()
+    start_date = end_date - timedelta(days=29)
+    start_dt = datetime.combine(start_date, datetime.min.time()).replace(tzinfo=timezone.utc)
+    bookings = await db.bookings.find({
+        "status": {"$ne": "cancelled"},
+        "jam_mulai": {"$gte": start_dt.isoformat()},
+    }, {"_id": 0, "jam_mulai": 1}).to_list(5000)
+    per_tanggal: Dict[str, int] = {}
+    for b in bookings:
+        try:
+            tgl = parse_iso(b["jam_mulai"], "jam_mulai").date().isoformat()
+        except Exception:
+            continue
+        per_tanggal[tgl] = per_tanggal.get(tgl, 0) + 1
+    out = []
+    for i in range(30):
+        d = (start_date + timedelta(days=i)).isoformat()
+        out.append({"tanggal": d, "jumlah": per_tanggal.get(d, 0)})
+    return out
+
 
 @api.get("/reports/daily")
 async def report_daily(from_date: str = Query(...), to_date: str = Query(...),

@@ -1,7 +1,8 @@
 import { useEffect, useState, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
-import api, { fmtRp, statusLabel, statusColor, bookingConfirmationWaLink, statusBayarOf, STATUS_BAYAR_LABEL, STATUS_BAYAR_BADGE_CLASS } from "@/lib/apiClient";
+import api, { fmtRp, fmtDate, statusLabel, statusColor, bookingConfirmationWaLink, statusBayarOf, STATUS_BAYAR_LABEL, STATUS_BAYAR_BADGE_CLASS } from "@/lib/apiClient";
+import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid } from "recharts";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import {
@@ -13,7 +14,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { useAuth } from "@/context/AuthContext";
 import {
   BedDouble, AlertTriangle, Hourglass, Clock, Wallet,
-  CalendarRange, Users as UsersIcon, Sparkles, Wrench, Calendar, MessageCircle, X, Inbox, Check,
+  CalendarRange, Users as UsersIcon, Sparkles, Wrench, Calendar, MessageCircle, X, Inbox, Check, Percent,
 } from "lucide-react";
 import { SetujuiDialog, TolakDialog, ActionRequiredRedDoorz } from "@/pages/BookingRequests";
 import { PembatalanAlert } from "@/pages/Pembatalan";
@@ -47,6 +48,7 @@ export default function Dashboard() {
   const [bookings, setBookings] = useState([]);
   const [widgets, setWidgets] = useState(null);
   const [bookingRequests, setBookingRequests] = useState([]); // waiting_approval — supaya owner/resepsionis lihat langsung dari Dashboard, tidak perlu buka halaman terpisah
+  const [kedatanganHarian, setKedatanganHarian] = useState([]); // grafik kedatangan tamu 30 hari (2026-07-21, permintaan user)
   const [approveReqTarget, setApproveReqTarget] = useState(null);
   const [rejectReqTarget, setRejectReqTarget] = useState(null);
   const [filterDate, setFilterDate] = useState(todayLocal());
@@ -141,13 +143,14 @@ export default function Dashboard() {
 
   const load = async () => {
     try {
-      const [s, r, c, b, w, br] = await Promise.all([
+      const [s, r, c, b, w, br, kd] = await Promise.all([
         api.get("/reports/summary"),
         api.get("/rooms"),
         api.get("/checkins", { params: { status: "aktif" } }),
         api.get("/bookings"),
         api.get("/reports/booking-widgets"),
         api.get("/booking-requests", { params: { status: "waiting_approval" } }),
+        api.get("/reports/kedatangan-harian"),
       ]);
       // tampilkan semua booking yang menempati kamar: aktif, booking_pending, booking_paid
       // sync_status waiting_reddoorz_* (Tahap 2 Modul Reservasi) — booking Menginap dari
@@ -158,6 +161,7 @@ export default function Dashboard() {
         && !["waiting_reddoorz_input", "waiting_reddoorz_sync"].includes(x.sync_status));
       setSummary(s.data); setRooms(r.data); setActive(c.data); setBookings(occupying); setWidgets(w.data);
       setBookingRequests(br.data);
+      setKedatanganHarian(kd.data);
     } catch (e) { console.error(e); }
   };
 
@@ -481,12 +485,32 @@ export default function Dashboard() {
         ))}
       </div>
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3 sm:gap-4">
+        <RevCard icon={Percent} label="Okupansi Hari Ini" value={`${summary?.okupansi_persen ?? 0}%`} hint={`${(summary?.total_rooms || 0) - (summary?.rooms?.kosong || 0)} dari ${summary?.total_rooms ?? 0} kamar terisi`} />
         <RevCard icon={UsersIcon} label="Tamu Hari Ini" value={summary?.tamu_hari_ini ?? "—"} hint={`${summary?.checkout_hari_ini ?? 0} sudah check-out`} />
         <RevCard icon={Wallet} label="Pendapatan Hari Ini" value={fmtRp(summary?.pendapatan_hari_ini || 0)} hint={`Kamar ${fmtRp(summary?.pendapatan_kamar_hari_ini || 0)} • Kasir ${fmtRp(summary?.pendapatan_kasir_hari_ini || 0)}`} />
         <RevCard icon={CalendarRange} label="Pendapatan Bulan Ini" value={fmtRp(summary?.pendapatan_bulan_ini || 0)} hint="Total semua transaksi" />
         <RevCard icon={Wallet} label="Laba Bersih Bulan" value={fmtRp(summary?.laba_bersih_bulan_ini || 0)} hint={`Pengeluaran ${fmtRp(summary?.pengeluaran_bulan_ini || 0)}`} />
       </div>
+
+      {/* Grafik Kedatangan Tamu 30 Hari (2026-07-21, permintaan user) */}
+      <Card className="border-slate-200">
+        <CardContent className="p-4 sm:p-6">
+          <h2 className="text-lg font-bold mb-1">Kedatangan Tamu (30 Hari Terakhir)</h2>
+          <p className="text-xs text-slate-500 mb-4">Jumlah booking per tanggal check-in, semua tipe & channel (kecuali yang dibatalkan)</p>
+          <div className="h-64 w-full">
+            <ResponsiveContainer>
+              <BarChart data={kedatanganHarian} margin={{ top: 5, right: 10, left: -20, bottom: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                <XAxis dataKey="tanggal" tick={{ fontSize: 10 }} tickFormatter={(d) => d.slice(5)} interval={2} />
+                <YAxis allowDecimals={false} tick={{ fontSize: 11 }} />
+                <Tooltip labelFormatter={(d) => fmtDate(d)} formatter={(v) => [v, "Kedatangan"]} />
+                <Bar dataKey="jumlah" fill="#2563EB" radius={[4, 4, 0, 0]} />
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        </CardContent>
+      </Card>
 
       {/* Online Booking Widgets (Fase D) */}
       <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-3">
