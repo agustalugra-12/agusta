@@ -344,6 +344,26 @@ def status_bayar_booking(b: dict) -> dict:
         status_bayar = "lunas" if total > 0 and terkumpul >= total else "dp"
     return {"status_bayar": status_bayar, "jumlah_dibayar": terkumpul, "sisa_tagihan": max(0, total - terkumpul)}
 
+DISKON_AI_MAX_PERSEN = 10
+
+def hitung_diskon_ai_diskresi(malam: int, jumlah_kamar: int) -> int:
+    """Diskon diskresi yang AI boleh berikan KALAU DAN HANYA KALAU tamu sendiri yang minta
+    diskon (kebijakan bisnis user 2026-07-21, tujuan: jaga margin, AI tidak boleh menawarkan
+    duluan). Dihitung SERVER-SIDE dari data booking sungguhan (bukan dipercaya dari angka
+    yang AI kirim) - AI cuma mengirim sinyal "tamu minta diskon" (lihat
+    diskon_diminta_tamu di buat_booking_request), server yang menentukan persentase
+    persisnya supaya tidak ada risiko AI salah hitung/menjanjikan angka yang tidak sesuai
+    kebijakan.
+
+    Berdasarkan lama menginap ATAU jumlah kamar (ambil yang TERBESAR, TIDAK dijumlah):
+    - 2 malam: 5% | 3-4 malam: 8% | >=5 malam: 10%
+    - 2-3 kamar: 5% | 4-5 kamar: 8% | >=6 kamar: 10%
+    Maksimum 10% (DISKON_AI_MAX_PERSEN) - tidak pernah lebih tanpa persetujuan admin."""
+    diskon_malam = 10 if malam >= 5 else 8 if malam >= 3 else 5 if malam >= 2 else 0
+    diskon_kamar = 10 if jumlah_kamar >= 6 else 8 if jumlah_kamar >= 4 else 5 if jumlah_kamar >= 2 else 0
+    return min(DISKON_AI_MAX_PERSEN, max(diskon_malam, diskon_kamar))
+
+
 def parse_iso(s: str, field: str) -> datetime:
     try:
         d = datetime.fromisoformat(s.replace("Z", "+00:00"))

@@ -206,6 +206,13 @@ async def public_create_booking(body: PublicBookingCreate):
         rooms.append(r)
 
     extra_bed_qty = max(0, min(EXTRA_BED_MAX, int(body.extra_bed_qty or 0)))
+    # Aturan okupansi (2026-07-21, permintaan user): 1 kamar standar 2 dewasa + 1 anak,
+    # extra bed (jadi 3 dewasa + 1 anak) HANYA berlaku utk tipe Cottage - Standard sama
+    # sekali tidak bisa pakai extra bed. Sebelumnya extra_bed_qty diterapkan rata ke semua
+    # kamar tanpa peduli tipe-nya (bug laten - kebetulan belum pernah kejadian tamu booking
+    # campur Standard+Cottage sekaligus minta extra bed).
+    if extra_bed_qty > 0 and any(r.get("tipe") != "Cottage" for r in rooms):
+        raise HTTPException(400, "Extra bed hanya tersedia untuk tipe kamar Cottage, tidak bisa dipesan untuk Standard")
     group_id = str(uuid.uuid4()) if len(rooms) > 1 else None
     created = []
     try:

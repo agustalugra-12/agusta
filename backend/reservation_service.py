@@ -71,7 +71,8 @@ async def check_room_available(room_id: str, mulai: datetime, selesai: datetime,
 
 
 async def create_reservation(data: Dict[str, Any], source: str = "public",
-                              harga_override: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+                              harga_override: Optional[Dict[str, Any]] = None,
+                              diskon_ai_persen: int = 0) -> Dict[str, Any]:
     """Buat reservasi/booking baru. Dipakai oleh public_create_booking (source="online");
     disiapkan agar sumber lain (mis. OTA) bisa memakai alur yang sama lewat harga_override.
 
@@ -120,7 +121,10 @@ async def create_reservation(data: Dict[str, Any], source: str = "public",
     if source != "ota":
         diskon_info = await hitung_diskon_member(data.get("no_hp", ""), data.get("no_identitas", ""))
         kedatangan_ke = diskon_info["kedatangan_ke"]
-        diskon_persen = diskon_info["diskon_persen"]
+        # Diskon diskresi AI (permintaan tamu, hitung_diskon_ai_diskresi) digabung dengan
+        # diskon member - AMBIL YANG TERBESAR, TIDAK dijumlah (kebijakan bisnis 2026-07-21,
+        # sama seperti diskon diskresi sendiri tidak dijumlah antar kriteria malam/kamar).
+        diskon_persen = max(diskon_info["diskon_persen"], min(DISKON_AI_MAX_PERSEN, max(0, int(diskon_ai_persen or 0))))
         hasil_diskon = terapkan_diskon_member(subtotal, diskon_persen)
         subtotal = hasil_diskon["subtotal"]
         diskon_rp = hasil_diskon["diskon_rp"]

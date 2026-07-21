@@ -64,6 +64,20 @@ def _kode_request() -> str:
     return f"REQ-{datetime.now().strftime('%y%m%d')}-{uuid.uuid4().hex[:4].upper()}"
 
 
+def _hitung_malam(data: Dict[str, Any]) -> int:
+    """Jumlah malam menginap dari tanggal_checkin/checkout - 1 untuk day_use (tidak
+    relevan). Diekstrak dari _hitung_preview_harga (2026-07-21) supaya bisa dipakai juga
+    oleh hitung_diskon_ai_diskresi di buat_booking_request tanpa hitung ulang terpisah."""
+    if data.get("tipe") != "menginap":
+        return 1
+    try:
+        ci = datetime.fromisoformat(data["tanggal_checkin"]).date()
+        co = datetime.fromisoformat(data["tanggal_checkout"]).date()
+        return max(1, (co - ci).days)
+    except Exception:
+        return 1
+
+
 async def _hitung_preview_harga(data: Dict[str, Any], diskon_persen: int) -> Optional[Dict[str, Any]]:
     """Preview rincian harga (subtotal, diskon, service fee 3%, total) SEBELUM kamar
     spesifik dipilih/staf approve - pakai tarif TIPE kamar (sama untuk semua kamar tipe itu
@@ -78,12 +92,7 @@ async def _hitung_preview_harga(data: Dict[str, Any], diskon_persen: int) -> Opt
         return None
     jumlah_kamar = max(1, int(data.get("jumlah_kamar") or 1))
     if data.get("tipe") == "menginap":
-        try:
-            ci = datetime.fromisoformat(data["tanggal_checkin"]).date()
-            co = datetime.fromisoformat(data["tanggal_checkout"]).date()
-            nights = max(1, (co - ci).days)
-        except Exception:
-            nights = 1
+        nights = _hitung_malam(data)
         tarif_per_kamar = int(room["tarif_menginap"]) * nights
     else:
         tarif_per_kamar = int(room["tarif"])
@@ -158,7 +167,7 @@ async def _coba_auto_approve_day_use(doc: Dict[str, Any]) -> None:
             "jam_mulai": start, "jam_selesai": end,
             "catatan": doc.get("catatan") or "", "created_by": "AI WhatsApp (otomatis)",
             "tipe": "day_use", "dengan_sarapan": False,
-        }, source="whatsapp_auto")
+        }, source="whatsapp_auto", diskon_ai_persen=doc.get("diskon_ai_persen") or 0)
 
         from routes.tripay import tripay_create_transaction
         trx = await tripay_create_transaction(TripayCreateTransactionBody(
@@ -218,7 +227,17 @@ async def buat_booking_request(data: Dict[str, Any]) -> Dict[str, Any]:
     # muka), dihitung ULANG & jadi final saat staf approve (lewat create_reservation) -
     # kalau ada jeda waktu & total_kunjungan berubah, angka final yang berlaku.
     diskon_info = await hitung_diskon_member(data["no_hp"])
-    preview_harga = await _hitung_preview_harga(data, diskon_info["diskon_persen"])
+    # Diskon diskresi (2026-07-21, kebijakan bisnis user) - HANYA dihitung kalau AI
+    # menandai tamu SENDIRI yang minta diskon (diskon_diminta_tamu), persentasenya
+    # SELALU dihitung server dari data booking sungguhan (bukan dari angka yang AI kirim -
+    # lihat hitung_diskon_ai_diskresi di core.py), digabung dgn diskon member pakai MAX
+    # (bukan dijumlah). Disimpan terpisah (diskon_ai_persen) supaya staf bisa lihat asalnya
+    # saat review, preview_diskon_persen tetap angka EFEKTIF gabungan keduanya.
+    diskon_ai_persen = 0
+    if data.get("diskon_diminta_tamu"):
+        diskon_ai_persen = hitung_diskon_ai_diskresi(_hitung_malam(data), int(data.get("jumlah_kamar") or 1))
+    diskon_persen_efektif = max(diskon_info["diskon_persen"], diskon_ai_persen)
+    preview_harga = await _hitung_preview_harga(data, diskon_persen_efektif)
 
     doc = {
         "id": str(uuid.uuid4()), "kode": _kode_request(),
@@ -229,7 +248,8 @@ async def buat_booking_request(data: Dict[str, Any]) -> Dict[str, Any]:
         "tanggal_checkin": data["tanggal_checkin"], "jam_checkin": data.get("jam_checkin"),
         "tanggal_checkout": data.get("tanggal_checkout"), "catatan": data.get("catatan") or "",
         "payment_option_diminta": payment_option if payment_option in ("dp50", "full") else None,
-        "preview_kedatangan_ke": diskon_info["kedatangan_ke"], "preview_diskon_persen": diskon_info["diskon_persen"],
+        "preview_kedatangan_ke": diskon_info["kedatangan_ke"], "preview_diskon_persen": diskon_persen_efektif,
+        "preview_diskon_member_persen": diskon_info["diskon_persen"], "diskon_ai_persen": diskon_ai_persen,
         "preview_harga": preview_harga,
         "status": "waiting_approval", "source": "whatsapp",
         "booking_ids": [], "group_id": None,

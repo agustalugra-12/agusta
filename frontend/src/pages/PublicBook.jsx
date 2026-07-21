@@ -67,6 +67,11 @@ function BookingForm() {
     jam_checkin: "13:00", catatan: "",
   });
   const [extraBedQty, setExtraBedQty] = useState(0);
+  useEffect(() => {
+    // Extra bed cuma berlaku utk Cottage (backend menolak kalau ada kamar non-Cottage
+    // di request) - reset kalau tamu ganti pilihan ke kamar yg bukan Cottage semua.
+    if (extraBedQty > 0 && !selectedRooms.every((r) => r.tipe === "Cottage")) setExtraBedQty(0);
+  }, [selectedRooms]); // eslint-disable-line react-hooks/exhaustive-deps
   const [denganSarapan, setDenganSarapan] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [paymentOption, setPaymentOption] = useState("dp50"); // dp50 | full
@@ -467,10 +472,13 @@ function BookingForm() {
                     </button>
                   </div>
                 )}
-                <div>
-                  <Label className="text-xs font-semibold uppercase tracking-wider text-teal-deep/60 mb-1.5 block">Permintaan Khusus</Label>
-                  <ExtraBedSelector value={extraBedQty} onChange={setExtraBedQty} max={EXTRA_BED_MAX} harga={EXTRA_BED_PRICE} satuan={selectedRooms.length > 1 ? "kamar" : "pemesanan"} />
-                </div>
+                {selectedRooms.every((r) => r.tipe === "Cottage") && (
+                  <div>
+                    <Label className="text-xs font-semibold uppercase tracking-wider text-teal-deep/60 mb-1.5 block">Permintaan Khusus</Label>
+                    <ExtraBedSelector value={extraBedQty} onChange={setExtraBedQty} max={EXTRA_BED_MAX} harga={EXTRA_BED_PRICE} satuan={selectedRooms.length > 1 ? "kamar" : "pemesanan"} />
+                    <p className="text-xs text-teal-deep/50 mt-1">1 kamar Cottage standar 2 dewasa + 1 anak. Tambah extra bed untuk kapasitas 3 dewasa + 1 anak.</p>
+                  </div>
+                )}
                 <div>
                   <Label className="text-xs font-semibold uppercase tracking-wider text-teal-deep/60">Catatan (opsional)</Label>
                   <Textarea data-testid="pb-catatan" value={form.catatan} onChange={(e) => setForm(f => ({ ...f, catatan: e.target.value }))} className="mt-1.5" rows={3} placeholder="Mis: request lantai bawah, late check-in, dll" />

@@ -274,6 +274,11 @@ class AiBotBookingRequestIn(BaseModel):
     tanggal_checkout: Optional[str] = None
     catatan: Optional[str] = None
     payment_option: Optional[str] = None  # dp50 | full, kalau tamu sudah sebutkan sendiri
+    # Diskon diskresi (2026-07-21) - True HANYA kalau tamu SENDIRI yang minta diskon di
+    # chat (kebijakan bisnis: AI tidak boleh menawarkan duluan). Persentasenya TIDAK
+    # dipercaya dari sini - dihitung ulang server dari data booking (hitung_diskon_ai_diskresi
+    # di core.py), field ini cuma sinyal boolean "apakah diskon berlaku sama sekali".
+    diskon_diminta_tamu: bool = False
 
 
 @api.post("/integrasi-ai-bot/booking-request")
