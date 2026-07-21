@@ -200,6 +200,12 @@ async def ai_bot_booking_status(no_hp: str, _: None = Depends(verifikasi_ai_bot_
                 booking_ringkasan = [{
                     "kode": b["kode"], "room_nomor": b.get("room_nomor"), "room_tipe": b.get("room_tipe"),
                     "sync_status": b.get("sync_status"),
+                    # sudah_diajukan_pembatalan: ditemukan 2026-07-21 - booking dengan
+                    # permintaan pembatalan yang masih menunggu staf TETAP tampil seolah
+                    # booking aktif biasa di sini (status_bayar_booking tidak tahu soal ini),
+                    # bikin AI muter balik nawarin batalkan booking yang SAMA berulang kali
+                    # padahal server (ajukan_pembatalan_ai) akan tolak permintaan kedua.
+                    "sudah_diajukan_pembatalan": b.get("cancel_request_status") in ("requested", "pending"),
                     **status_bayar_booking(b),  # status_bayar, jumlah_dibayar, sisa_tagihan
                 } for b in bks]
                 # Bug ditemukan 2026-07-21: sebelumnya cek `payment_status == "paid"` doang -
@@ -239,7 +245,9 @@ async def ai_bot_booking_status(no_hp: str, _: None = Depends(verifikasi_ai_bot_
             "status": "lunas" if sb["status_bayar"] == "lunas" else "waiting_payment",
             "booking_ringkasan": [{
                 "kode": b["kode"], "room_nomor": b.get("room_nomor"), "room_tipe": b.get("room_tipe"),
-                "sync_status": b.get("sync_status"), **sb,
+                "sync_status": b.get("sync_status"),
+                "sudah_diajukan_pembatalan": b.get("cancel_request_status") in ("requested", "pending"),
+                **sb,
             }],
             "created_at": b.get("created_at"),
         })
