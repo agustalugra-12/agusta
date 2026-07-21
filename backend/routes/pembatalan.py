@@ -119,6 +119,23 @@ async def approve_cancellation_request(booking_id: str, user: dict = Depends(get
         f"Setujui pembatalan {b['kode']} ({b['nama_tamu']}) — refund Rp{refund:,}".replace(",", "."),
         entity=b.get("room_nomor", ""),
     )
+
+    # Notifikasi WA begitu staf APPROVE (2026-07-21, keputusan user: konfirmasi "sudah
+    # dibatalkan" ke tamu HANYA boleh terjadi di titik ini, bukan pas AI baru mengajukan -
+    # sebelumnya TIDAK ADA notifikasi sama sekali di titik approve, cuma ada saat reject &
+    # refund-sent - AI jadi cenderung menyampaikan sendiri "berhasil dibatalkan" ke tamu
+    # padahal baru pengajuan, kadang bahkan mengarang tanpa tool benar2 dipanggil).
+    pesan = (
+        f"Halo {b['nama_tamu']}, pembatalan booking {b['kode']} sudah kami *setujui dan proses*. "
+        f"{policy['label']}. Refund yang akan Anda terima: Rp{refund:,}".replace(",", ".") + ". "
+        "Dana refund akan ditransfer manual oleh staf kami, mohon ditunggu."
+    )
+    try:
+        from routes.pesan_whatsapp import _kirim_via_provider
+        await _kirim_via_provider(b["no_hp"], pesan)
+    except Exception as e:
+        logging.getLogger("pembatalan").warning(f"Gagal kirim notif approve ke {b['no_hp']}: {e}")
+
     return await db.bookings.find_one({"id": booking_id}, {"_id": 0})
 
 
