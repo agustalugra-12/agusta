@@ -12,12 +12,27 @@ import logging
 import httpx
 from reportlab.lib.pagesizes import A5
 from reportlab.lib.units import mm
+from reportlab.lib.utils import ImageReader
 from reportlab.pdfgen import canvas
 
 from core import (
-    db, os, uuid, now_iso, parse_iso, timezone, timedelta,
+    db, os, uuid, now_iso, parse_iso, timezone, timedelta, ROOT_DIR,
     BREVO_API_KEY, BREVO_FROM_EMAIL, BREVO_FROM_NAME, status_bayar_booking,
 )
+
+LOGO_PATH = ROOT_DIR / "assets" / "pelangi-logo.png"
+
+# Teks sama persis dengan aturan di hitung_kebijakan_pembatalan (core.py) - kalau kebijakan
+# itu berubah, WAJIB update teks ini juga (sengaja teks statis, bukan dihitung dari fungsi
+# itu, karena fungsi itu butuh tanggal check-in spesifik untuk tahu tier mana yang berlaku -
+# di voucher kita mau tampilkan ATURAN UMUMNYA, bukan hasil hitungan utk booking ini).
+SYARAT_PEMBATALAN = [
+    "Syarat & Ketentuan Pembatalan:",
+    "- Pembatalan H-7 s/d H-3 sebelum check-in (masih >= 72 jam): refund 100%.",
+    "- Pembatalan H-2 s/d hari check-in (< 72 jam sebelum check-in): biaya 50% dari total",
+    "  yang sudah dibayar, sisanya direfund.",
+    "- Refund diproses manual oleh staf setelah permintaan pembatalan disetujui.",
+]
 
 STATUS_BAYAR_LABEL = {"belum_bayar": "BELUM BAYAR", "dp": "DP (BELUM LUNAS)", "lunas": "LUNAS"}
 
@@ -42,15 +57,26 @@ def generate_voucher_pdf(b: dict) -> bytes:
     buf = io.BytesIO()
     c = canvas.Canvas(buf, pagesize=A5)
     w, h = A5
-    y = h - 20 * mm
+    y_top = h - 15 * mm
+    logo_size = 16 * mm
+    text_x = 15 * mm
+
+    if LOGO_PATH.exists():
+        try:
+            c.drawImage(
+                ImageReader(str(LOGO_PATH)), 15 * mm, y_top - logo_size,
+                width=logo_size, height=logo_size, mask="auto", preserveAspectRatio=True,
+            )
+            text_x = 15 * mm + logo_size + 4 * mm
+        except Exception as e:
+            logger.warning(f"Gagal muat logo untuk voucher PDF ({LOGO_PATH}): {e}")
 
     c.setFont("Helvetica-Bold", 16)
-    c.drawString(15 * mm, y, "Pelangi Homestay")
-    y -= 7 * mm
+    c.drawString(text_x, y_top - 6 * mm, "Pelangi Homestay")
     c.setFont("Helvetica", 9)
-    c.drawString(15 * mm, y, "Voucher / Bukti Reservasi")
-    y -= 10 * mm
+    c.drawString(text_x, y_top - 12 * mm, "Voucher / Bukti Reservasi")
 
+    y = y_top - logo_size - 4 * mm
     c.line(15 * mm, y, w - 15 * mm, y)
     y -= 8 * mm
 
@@ -90,6 +116,17 @@ def generate_voucher_pdf(b: dict) -> bytes:
     y -= 5 * mm
     c.setFont("Helvetica-Oblique", 8)
     c.drawString(15 * mm, y, "Mohon tunjukkan voucher ini saat kedatangan. Terima kasih telah memilih Pelangi Homestay.")
+
+    y -= 10 * mm
+    c.line(15 * mm, y, w - 15 * mm, y)
+    y -= 6 * mm
+    c.setFont("Helvetica-Bold", 7)
+    c.drawString(15 * mm, y, SYARAT_PEMBATALAN[0])
+    y -= 4 * mm
+    c.setFont("Helvetica", 7)
+    for baris_syarat in SYARAT_PEMBATALAN[1:]:
+        c.drawString(15 * mm, y, baris_syarat)
+        y -= 4 * mm
 
     c.showPage()
     c.save()
