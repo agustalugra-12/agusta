@@ -202,7 +202,12 @@ async def ai_bot_booking_status(no_hp: str, _: None = Depends(verifikasi_ai_bot_
                     "sync_status": b.get("sync_status"),
                     **status_bayar_booking(b),  # status_bayar, jumlah_dibayar, sisa_tagihan
                 } for b in bks]
-                if it["status"] == "waiting_payment" and all(b.get("payment_status") == "paid" for b in bks):
+                # Bug ditemukan 2026-07-21: sebelumnya cek `payment_status == "paid"` doang -
+                # itu TRUE juga utk DP yang sudah dibayar (gateway cuma tau "ada settlement",
+                # bukan "lunas 100%"), jadi tamu yang baru DP 50% salah dilabeli "lunas" di sini
+                # (AI ikut2an bilang "sudah lunas" ke tamu, padahal cuma DP - lihat
+                # status_bayar_booking utk definisi lunas yang benar: terkumpul >= total).
+                if it["status"] == "waiting_payment" and all(br.get("status_bayar") == "lunas" for br in booking_ringkasan):
                     status_efektif = "lunas"
         out.append({
             "kode": it["kode"], "tipe": it["tipe"], "room_tipe": it.get("room_tipe"),
