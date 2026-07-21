@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { toast } from "sonner";
 import api, { fmtRp, fmtDateTime } from "@/lib/apiClient";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -88,10 +89,11 @@ export default function Laporan() {
           <TabsTrigger value="service" data-testid="tab-service">Service</TabsTrigger>
           <TabsTrigger value="cancel" data-testid="tab-cancel">Cancel & No-Show</TabsTrigger>
           <TabsTrigger value="saluran" data-testid="tab-saluran">Analitik Saluran</TabsTrigger>
+          <TabsTrigger value="ota-prepaid" data-testid="tab-ota-prepaid">OTA Prepaid</TabsTrigger>
         </TabsList>
 
         <div className="mt-4 space-y-4">
-          {tab !== "top" && tab !== "saluran" && <DateRange from={from} setFrom={setFrom} to={to} setTo={setTo} />}
+          {tab !== "top" && tab !== "saluran" && tab !== "ota-prepaid" && <DateRange from={from} setFrom={setFrom} to={to} setTo={setTo} />}
 
           <TabsContent value="ringkasan"><Ringkasan from={from} to={to} /></TabsContent>
           <TabsContent value="kamar"><LaporanKamar from={from} to={to} /></TabsContent>
@@ -103,6 +105,7 @@ export default function Laporan() {
           <TabsContent value="cancel"><LaporanCancel from={from} to={to} /></TabsContent>
           <TabsContent value="top"><TopProducts /></TabsContent>
           <TabsContent value="saluran"><LaporanSaluran /></TabsContent>
+          <TabsContent value="ota-prepaid"><LaporanOtaPrepaid /></TabsContent>
         </div>
       </Tabs>
     </div>
@@ -806,6 +809,144 @@ function LaporanCancel({ from, to }) {
           </table>
         </CardContent>
       </Card>
+    </div>
+  );
+}
+
+function LaporanOtaPrepaid() {
+  const [menunggu, setMenunggu] = useState(null);
+  const [hasil, setHasil] = useState(null);
+  const [uploading, setUploading] = useState(false);
+  const [terapkanId, setTerapkanId] = useState(null);
+
+  const load = () => api.get("/otomasi-email/ota-belum-dikonfirmasi").then((r) => setMenunggu(r.data)).catch(() => setMenunggu([]));
+  useEffect(() => { load(); }, []);
+
+  const uploadPdf = async (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    setUploading(true);
+    setHasil(null);
+    try {
+      const fd = new FormData();
+      fd.append("file", file);
+      const { data } = await api.post("/otomasi-email/parse-reddoorz-pdf", fd, { headers: { "Content-Type": "multipart/form-data" } });
+      setHasil(data);
+      if (data.items?.length === 0) toast.error(data.pesan || "Tidak ada data terbaca dari PDF");
+    } catch (err) {
+      toast.error(err?.response?.data?.detail || "Gagal memproses PDF");
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  const terapkan = async (row) => {
+    setTerapkanId(row.booking_id);
+    try {
+      await api.post(`/bookings/${row.booking_id}/konfirmasi-harga-ota`, { total_nominal: row.extracted_nominal });
+      toast.success(`Nominal ${row.kode} dikonfirmasi: ${fmtRp(row.extracted_nominal)}`);
+      setHasil((h) => ({ ...h, items: h.items.filter((it) => it.booking_id !== row.booking_id) }));
+      load();
+    } catch (err) {
+      toast.error(err?.response?.data?.detail || "Gagal menerapkan");
+    } finally {
+      setTerapkanId(null);
+    }
+  };
+
+  const cocokRows = (hasil?.items || []).filter((it) => it.matched);
+  const tidakCocokRows = (hasil?.items || []).filter((it) => !it.matched);
+
+  return (
+    <div className="space-y-4">
+      <Card className="border-slate-200">
+        <CardContent className="p-4 sm:p-5">
+          <div className="flex items-start justify-between flex-wrap gap-3">
+            <div>
+              <h3 className="font-bold">Booking OTA Menunggu Konfirmasi Nominal</h3>
+              <p className="text-xs text-slate-500 mt-0.5">
+                Booking RedDoorz "Prepaid" yang emailnya tidak mencantumkan nominal - masih pakai ESTIMASI, dikecualikan dari semua laporan pendapatan sampai nominal settlement asli dikonfirmasi.
+              </p>
+            </div>
+            <label className="shrink-0">
+              <input type="file" accept="application/pdf" className="hidden" onChange={uploadPdf} disabled={uploading} data-testid="ota-pdf-input" />
+              <span className={`inline-flex items-center gap-1.5 px-3.5 py-2 rounded-md text-sm font-medium cursor-pointer ${uploading ? "bg-slate-200 text-slate-500" : "bg-blue-700 hover:bg-blue-800 text-white"}`} data-testid="ota-pdf-upload-btn">
+                {uploading ? "Memproses PDF…" : "Upload PDF Settlement RedDoorz"}
+              </span>
+            </label>
+          </div>
+
+          {menunggu === null ? (
+            <p className="text-sm text-slate-500 mt-4">Memuat…</p>
+          ) : menunggu.length === 0 ? (
+            <p className="text-sm text-slate-500 mt-4">Tidak ada booking OTA yang menunggu konfirmasi saat ini.</p>
+          ) : (
+            <table className="w-full mt-4 text-sm">
+              <thead>
+                <tr className="text-left text-xs uppercase tracking-wider text-slate-500 border-b">
+                  <th className="p-2">Kode</th><th className="p-2">Nama Tamu</th><th className="p-2">Kamar</th>
+                  <th className="p-2">Check-in</th><th className="p-2 text-right">Kamar</th><th className="p-2 text-right">Estimasi</th>
+                </tr>
+              </thead>
+              <tbody>
+                {menunggu.map((g) => (
+                  <tr key={g.booking_id} className="border-b border-slate-100" data-testid={`ota-pending-${g.booking_id}`}>
+                    <td className="p-2 font-mono text-xs">{g.kode}</td>
+                    <td className="p-2">{g.nama_tamu}</td>
+                    <td className="p-2">{g.room_tipe}</td>
+                    <td className="p-2 text-xs">{fmtDateTime(g.jam_mulai)}</td>
+                    <td className="p-2 text-right">{g.jumlah_kamar}</td>
+                    <td className="p-2 text-right text-amber-600 font-semibold">{fmtRp(g.estimasi_total)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </CardContent>
+      </Card>
+
+      {hasil && cocokRows.length + tidakCocokRows.length > 0 && (
+        <Card className="border-slate-200">
+          <CardContent className="p-4 sm:p-5">
+            <h3 className="font-bold mb-1">Hasil Baca PDF ({hasil.total_dibaca} baris, {hasil.total_cocok} cocok)</h3>
+            <p className="text-xs text-slate-500 mb-3">Review dulu sebelum menerapkan - klik "Terapkan" per baris untuk konfirmasi nominal settlement-nya ke booking yang cocok.</p>
+            {cocokRows.length > 0 && (
+              <table className="w-full text-sm mb-4">
+                <thead>
+                  <tr className="text-left text-xs uppercase tracking-wider text-slate-500 border-b">
+                    <th className="p-2">Nama (dari PDF)</th><th className="p-2">Cocok dengan Booking</th>
+                    <th className="p-2 text-right">Estimasi Lama</th><th className="p-2 text-right">Nominal PDF</th><th className="p-2"></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {cocokRows.map((row, i) => (
+                    <tr key={i} className="border-b border-slate-100" data-testid={`ota-match-${i}`}>
+                      <td className="p-2">{row.extracted_nama}</td>
+                      <td className="p-2 text-xs">{row.kode} · {row.room_tipe} · {row.jumlah_kamar} kamar</td>
+                      <td className="p-2 text-right text-slate-400">{fmtRp(row.estimasi_total)}</td>
+                      <td className="p-2 text-right font-bold text-emerald-700">{fmtRp(row.extracted_nominal)}</td>
+                      <td className="p-2 text-right">
+                        <Button size="sm" data-testid={`ota-terapkan-${i}`} disabled={terapkanId === row.booking_id} onClick={() => terapkan(row)}>
+                          {terapkanId === row.booking_id ? "Menerapkan…" : "Terapkan"}
+                        </Button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+            {tidakCocokRows.length > 0 && (
+              <div className="text-xs text-slate-500 bg-slate-50 rounded-lg p-3">
+                <div className="font-medium text-slate-600 mb-1">Tidak ketemu booking yang cocok ({tidakCocokRows.length}):</div>
+                {tidakCocokRows.map((row, i) => (
+                  <div key={i}>{row.extracted_nama} — {fmtRp(row.extracted_nominal)} (cek manual di halaman Reservasi, mungkin nama sedikit beda)</div>
+                ))}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      )}
     </div>
   );
 }

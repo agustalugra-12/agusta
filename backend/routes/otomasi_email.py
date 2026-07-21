@@ -3,6 +3,7 @@ from urllib.parse import urlencode
 
 import asyncio
 import base64
+import io
 import json
 import logging
 import httpx
@@ -894,3 +895,132 @@ async def modifikasi_reschedule(booking_id: str, body: ReschedulePMSBody, user: 
     )
     doc = await db.bookings.find_one({"id": booking_id}, {"_id": 0})
     return doc
+
+
+# ---- Konfirmasi Settlement OTA dari PDF (2026-07-21, permintaan user) ----
+# Booking RedDoorz "Prepaid" (lihat buat_reservasi_otomatis di atas) dibuat dengan ESTIMASI
+# tarif publik sebagai placeholder, ditandai ota_harga_dikonfirmasi=False, dan dikecualikan
+# dari semua laporan pendapatan sampai staf konfirmasi nominal settlement ASLI (endpoint
+# manual sudah ada: POST /bookings/{bid}/konfirmasi-harga-ota). Di bawah ini melengkapi itu
+# dengan (1) daftar yang masih menunggu konfirmasi supaya terlihat di Laporan Keuangan
+# (sebelumnya cuma titik oranye kecil di halaman Reservasi, gampang terlewat), dan (2) AI
+# baca PDF rekap settlement RedDoorz & cocokkan otomatis by nama tamu - stafnya TETAP yang
+# klik terapkan per baris/semua di layar (bukan auto-apply diam-diam), pola sama seperti
+# tool AI lain di proyek ini yang selalu non-binding sampai staf konfirmasi eksplisit.
+
+REDDOORZ_PDF_EXTRACT_PROMPT = """Kamu mengekstrak DAFTAR SETTLEMENT/PEMBAYARAN dari dokumen
+rekap OTA (RedDoorz atau OTA sejenis) - dokumen ini biasanya berupa tabel/daftar berisi nama
+tamu dan nominal yang dibayarkan/disetorkan ke hotel untuk tiap reservasi.
+
+Untuk SETIAP baris/entri reservasi yang kamu temukan, catat:
+- nama_tamu: nama tamu PERSIS seperti tertulis di dokumen (jangan ubah ejaan/kapitalisasi)
+- nominal: angka RUPIAH bersih yang di-settle/dibayarkan ke hotel utk reservasi itu (BUKAN
+  harga jual ke tamu, BUKAN komisi OTA, BUKAN pajak - kalau dokumen memisahkan itu semua,
+  ambil angka NET/settlement akhir yang benar-benar diterima hotel)
+- no_reservasi: nomor reservasi/booking OTA kalau tercantum (boleh kosong string kalau tidak ada)
+
+Kalau dokumen ini BUKAN rekap settlement OTA (mis. dokumen lain yang tidak relevan), atau
+tidak ada satupun baris yang bisa diekstrak dengan yakin, kembalikan items kosong - JANGAN
+MENGARANG data.
+
+Balas HANYA JSON: {"items": [{"nama_tamu": "...", "nominal": <int>, "no_reservasi": "..."}]}"""
+
+
+async def _ekstrak_settlement_dari_pdf(pdf_bytes: bytes) -> list:
+    """AI baca teks PDF rekap settlement OTA (gpt-4o-mini, pola sama dengan
+    _ekstrak_pengeluaran_dari_foto di telegram_bot.py - defensif, tidak pernah raise,
+    balas list kosong kalau gagal). Ekstraksi TEKS (pypdf), bukan vision - PDF rekap OTA
+    pada umumnya dokumen digital asli (bukan hasil scan foto)."""
+    if not _openai_client:
+        return []
+    try:
+        from pypdf import PdfReader
+        reader = PdfReader(io.BytesIO(pdf_bytes))
+        teks = "\n".join((p.extract_text() or "") for p in reader.pages)
+        if len(teks.strip()) < 20:
+            return []
+        resp = await asyncio.to_thread(
+            _openai_client.chat.completions.create,
+            model="gpt-4o-mini", temperature=0,
+            response_format={"type": "json_object"},
+            messages=[
+                {"role": "system", "content": REDDOORZ_PDF_EXTRACT_PROMPT},
+                {"role": "user", "content": teks[:30000]},
+            ],
+        )
+        data = json.loads(resp.choices[0].message.content or "{}")
+        out = []
+        for it in (data.get("items") or []):
+            try:
+                nominal = int(it.get("nominal"))
+                nama = str(it.get("nama_tamu") or "").strip()
+                if nominal > 0 and nama:
+                    out.append({"nama_tamu": nama, "nominal": nominal, "no_reservasi": str(it.get("no_reservasi") or "").strip()})
+            except (TypeError, ValueError):
+                continue
+        return out
+    except Exception as e:
+        logging.getLogger("otomasi_email").warning(f"Gagal ekstrak PDF settlement OTA: {e}")
+        return []
+
+
+async def _daftar_ota_belum_dikonfirmasi() -> list:
+    """Kelompokkan booking OTA yang masih menunggu konfirmasi nominal settlement per
+    ota_reservation_no (booking tanpa nomor itu dianggap grup sendiri) - representasi yang
+    sama dipakai halaman Laporan Keuangan & hasil pencocokan PDF, satu sumber kebenaran."""
+    pending = await db.bookings.find({
+        "source": "ota", "ota_harga_dikonfirmasi": False,
+    }, {"_id": 0}).sort("created_at", -1).to_list(500)
+    grup: Dict[str, dict] = {}
+    for b in pending:
+        key = b.get("ota_reservation_no") or b["id"]
+        if key not in grup:
+            grup[key] = {
+                "ota_reservation_no": b.get("ota_reservation_no"), "booking_id": b["id"], "kode": b["kode"],
+                "nama_tamu": b.get("nama_tamu"), "room_tipe": b.get("room_tipe"), "jam_mulai": b.get("jam_mulai"),
+                "jumlah_kamar": 0, "estimasi_total": 0,
+            }
+        grup[key]["jumlah_kamar"] += 1
+        grup[key]["estimasi_total"] += int(b.get("total") or 0)
+    return sorted(grup.values(), key=lambda g: g.get("jam_mulai") or "", reverse=True)
+
+
+@api.get("/otomasi-email/ota-belum-dikonfirmasi")
+async def list_ota_belum_dikonfirmasi(user: dict = Depends(get_current_user)):
+    return await _daftar_ota_belum_dikonfirmasi()
+
+
+@api.post("/otomasi-email/parse-reddoorz-pdf")
+async def parse_reddoorz_pdf(file: UploadFile = File(...), user: dict = Depends(get_current_user)):
+    """Upload PDF rekap settlement RedDoorz - AI ekstrak (nama_tamu, nominal) per baris,
+    cocokkan dengan booking OTA yang masih menunggu konfirmasi (by nama, longgar/case-
+    insensitive sama seperti _cocokkan_booking_pending_reddoorz di atas). HANYA
+    mengembalikan hasil pencocokan untuk direview - TIDAK menulis apapun ke database,
+    staf yang klik terapkan per baris (lewat endpoint konfirmasi-harga-ota yang sudah ada)."""
+    if file.content_type not in ("application/pdf", "application/x-pdf") and not file.filename.lower().endswith(".pdf"):
+        raise HTTPException(400, "File harus PDF")
+    pdf_bytes = await file.read()
+    items = await _ekstrak_settlement_dari_pdf(pdf_bytes)
+    if not items:
+        return {"items": [], "pesan": "Tidak ada data settlement yang bisa dibaca dari PDF ini"}
+
+    menunggu = await _daftar_ota_belum_dikonfirmasi()
+    out = []
+    for it in items:
+        nama_norm = re.sub(r"[^a-z0-9]", "", it["nama_tamu"].lower())
+        cocok = None
+        for g in menunggu:
+            g_nama_norm = re.sub(r"[^a-z0-9]", "", (g.get("nama_tamu") or "").lower())
+            if nama_norm and g_nama_norm and (nama_norm in g_nama_norm or g_nama_norm in nama_norm):
+                cocok = g
+                break
+        out.append({
+            "extracted_nama": it["nama_tamu"], "extracted_nominal": it["nominal"], "extracted_no_reservasi": it["no_reservasi"],
+            "matched": cocok is not None,
+            "booking_id": cocok["booking_id"] if cocok else None,
+            "kode": cocok["kode"] if cocok else None,
+            "room_tipe": cocok["room_tipe"] if cocok else None,
+            "jumlah_kamar": cocok["jumlah_kamar"] if cocok else None,
+            "estimasi_total": cocok["estimasi_total"] if cocok else None,
+        })
+    return {"items": out, "total_dibaca": len(items), "total_cocok": sum(1 for o in out if o["matched"])}
