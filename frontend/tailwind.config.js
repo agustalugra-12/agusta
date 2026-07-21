@@ -31,6 +31,16 @@ module.exports = {
           deep: "#083D38",
           soft: "#1F6A6E",
         },
+        // Selaraskan warna brand ke seluruh dashboard staf (2026-07-21, permintaan user) -
+        // TIMPA cuma shade 700/800 dari default blue Tailwind (dipakai konsisten di seluruh
+        // app sbg warna tombol utama/nav aktif, 193 dari total pemakaian biru) supaya jadi
+        // teal brand secara otomatis di semua halaman TANPA edit manual puluhan file & TANPA
+        // mengubah shade blue lain (50/100/200/dst, dipakai badge/info/status - sengaja
+        // dibiarkan biru, bukan bagian dari brand utama, lihat keputusan cakupan user).
+        blue: {
+          700: "#0F4C5C",
+          800: "#083D38",
+        },
         mustard: {
           DEFAULT: "#E9A24B",
           soft: "#F1C57C",

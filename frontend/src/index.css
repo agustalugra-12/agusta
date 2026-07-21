@@ -4,11 +4,14 @@
 
 @import url('https://fonts.googleapis.com/css2?family=Manrope:wght@500;600;700;800&family=Work+Sans:wght@400;500;600;700&display=swap');
 
+/* Font & warna brand diselaraskan ke website pelangihomestay.com (2026-07-21, permintaan
+   user) - DM Sans/Fraunces sudah dimuat di public/index.html (sebelumnya cuma dipakai
+   halaman /book publik), sekarang dipakai juga di seluruh dashboard staf. */
 :root {
   --bg: #F8FAFC;
   --surface: #FFFFFF;
-  --primary: #1E40AF;
-  --primary-hover: #1E3A8A;
+  --primary: #0F4C5C;
+  --primary-hover: #083D38;
   --text-main: #0F172A;
   --text-muted: #64748B;
   --border: #E2E8F0;
@@ -24,12 +27,12 @@ body {
   margin: 0;
   background: var(--bg);
   color: var(--text-main);
-  font-family: 'Work Sans', system-ui, -apple-system, sans-serif;
+  font-family: 'DM Sans', system-ui, -apple-system, sans-serif;
   -webkit-font-smoothing: antialiased;
 }
 
 h1, h2, h3, h4, h5 {
-  font-family: 'Manrope', sans-serif;
+  font-family: 'Fraunces', serif;
   letter-spacing: -0.02em;
 }
 
@@ -41,7 +44,7 @@ h1, h2, h3, h4, h5 {
     --card-foreground: 222.2 47.4% 11.2%;
     --popover: 0 0% 100%;
     --popover-foreground: 222.2 47.4% 11.2%;
-    --primary: 224 76% 38%;
+    --primary: 193 72% 21%;
     --primary-foreground: 210 40% 98%;
     --secondary: 210 40% 96.1%;
     --secondary-foreground: 222.2 47.4% 11.2%;

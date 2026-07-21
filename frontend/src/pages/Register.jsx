@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent } from "@/components/ui/card";
-import { Hotel, Eye, EyeOff } from "lucide-react";
+import { Eye, EyeOff } from "lucide-react";
 import { REGISTER } from "@/constants/testIds";
 import api from "@/lib/apiClient";
 
@@ -45,22 +45,20 @@ export default function Register() {
       <div
         className="hidden md:flex md:w-1/2 relative items-center justify-center p-10 text-white"
         style={{
-          backgroundImage:
-            "linear-gradient(135deg, rgba(30,64,175,0.92), rgba(15,23,42,0.85)), url('https://images.pexels.com/photos/35747338/pexels-photo-35747338.jpeg')",
-          backgroundSize: "cover", backgroundPosition: "center",
+          backgroundImage: "linear-gradient(135deg, rgba(15,76,92,0.95), rgba(8,61,56,0.92))",
         }}
       >
         <div className="max-w-md">
           <div className="flex items-center gap-3 mb-8">
-            <div className="w-12 h-12 rounded-2xl bg-white/15 backdrop-blur grid place-items-center">
-              <Hotel className="w-7 h-7" />
+            <div className="w-12 h-12 rounded-2xl bg-white/15 backdrop-blur grid place-items-center overflow-hidden">
+              <img src="/pelangi-logo.png" alt="Pelangi Homestay" className="w-9 h-9 object-contain" />
             </div>
             <div>
               <p className="text-xs tracking-[0.3em] uppercase opacity-80">Pelangi</p>
-              <h2 className="text-2xl font-bold">Homestay System</h2>
+              <h2 className="text-2xl font-bold font-display">Homestay System</h2>
             </div>
           </div>
-          <h1 className="text-4xl lg:text-5xl font-extrabold leading-tight">Operasional Penginapan Day Use yang Cepat & Rapi.</h1>
+          <h1 className="text-4xl lg:text-5xl font-extrabold leading-tight font-display">Operasional Penginapan Day Use yang Cepat & Rapi.</h1>
           <p className="mt-6 text-white/80 text-lg">Check-in, kasir, kamar, laporan — semuanya dalam satu aplikasi yang siap dipakai resepsionis Anda.</p>
         </div>
       </div>
@@ -68,15 +66,15 @@ export default function Register() {
         <Card className="w-full max-w-md border-slate-200 shadow-none">
           <CardContent className="p-8">
             <div className="md:hidden flex items-center gap-3 mb-6">
-              <div className="w-11 h-11 rounded-xl bg-blue-700 grid place-items-center text-white">
-                <Hotel className="w-6 h-6" />
+              <div className="w-11 h-11 rounded-xl bg-teal grid place-items-center overflow-hidden">
+                <img src="/pelangi-logo.png" alt="Pelangi Homestay" className="w-8 h-8 object-contain" />
               </div>
               <div>
                 <p className="text-xs tracking-[0.3em] uppercase text-slate-500">Pelangi</p>
-                <h2 className="text-xl font-bold">Homestay System</h2>
+                <h2 className="text-xl font-bold font-display">Homestay System</h2>
               </div>
             </div>
-            <h1 className="text-3xl font-extrabold mb-2">Daftar Akun</h1>
+            <h1 className="text-3xl font-extrabold mb-2 font-display">Daftar Akun</h1>
             <p className="text-slate-500 mb-6">Buat akun baru untuk mengakses Pelangi Homestay System.</p>
             <form onSubmit={onSubmit} className="space-y-4">
               <div>

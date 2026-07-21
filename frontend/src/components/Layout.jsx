@@ -4,7 +4,7 @@ import { useAuth } from "@/context/AuthContext";
 import { Button } from "@/components/ui/button";
 import {
   LayoutDashboard, BedDouble, ShoppingCart, Boxes,
-  Wallet, Sparkles, BarChart3, UserCog, ShieldCheck, LogOut, Hotel, Menu, HandCoins, DoorOpen, ListChecks, Mail, RefreshCw, CreditCard, MessageSquare, Shuffle, BedSingle, Send, Wand2, Tag, AlertTriangle, Wrench, Inbox, CalendarClock, Gavel, Bell, Ban, Users, BadgeDollarSign,
+  Wallet, Sparkles, BarChart3, UserCog, ShieldCheck, LogOut, Menu, HandCoins, DoorOpen, ListChecks, Mail, RefreshCw, CreditCard, MessageSquare, Shuffle, BedSingle, Send, Wand2, Tag, AlertTriangle, Wrench, Inbox, CalendarClock, Gavel, Bell, Ban, Users, BadgeDollarSign,
 } from "lucide-react";
 import { useState, useEffect } from "react";
 import { playAlertSound, unlockAlertSound } from "@/lib/alertSound";
@@ -84,12 +84,12 @@ export default function Layout() {
       {/* Sidebar (desktop) */}
       <aside className="no-print hidden lg:flex fixed inset-y-0 left-0 w-64 bg-white border-r border-slate-200 flex-col z-30">
         <div className="px-6 py-6 flex items-center gap-3 border-b border-slate-100">
-          <div className="w-10 h-10 rounded-xl bg-blue-700 grid place-items-center text-white">
-            <Hotel className="w-5 h-5" />
+          <div className="w-10 h-10 rounded-xl bg-teal grid place-items-center overflow-hidden">
+            <img src="/pelangi-logo.png" alt="Pelangi Homestay" className="w-7 h-7 object-contain" />
           </div>
           <div>
             <p className="text-[10px] tracking-[0.3em] uppercase text-slate-500">Pelangi</p>
-            <h2 className="text-base font-bold leading-tight">Homestay</h2>
+            <h2 className="text-base font-bold leading-tight font-display">Homestay</h2>
           </div>
         </div>
         <nav className="flex-1 px-3 py-4 space-y-1 overflow-y-auto">
@@ -130,12 +130,12 @@ export default function Layout() {
       <header className="no-print lg:hidden sticky top-0 z-30 bg-white/90 backdrop-blur border-b border-slate-200">
         <div className="flex items-center justify-between px-4 py-3">
           <Link to="/" className="flex items-center gap-2">
-            <div className="w-9 h-9 rounded-lg bg-blue-700 grid place-items-center text-white">
-              <Hotel className="w-5 h-5" />
+            <div className="w-9 h-9 rounded-lg bg-teal grid place-items-center overflow-hidden">
+              <img src="/pelangi-logo.png" alt="Pelangi Homestay" className="w-6 h-6 object-contain" />
             </div>
             <div>
               <p className="text-[9px] tracking-[0.3em] uppercase text-slate-500 leading-tight">Pelangi</p>
-              <h2 className="text-sm font-bold leading-tight">Homestay</h2>
+              <h2 className="text-sm font-bold leading-tight font-display">Homestay</h2>
             </div>
           </Link>
           <button data-testid="mobile-menu" onClick={() => setOpen(true)} className="p-2 rounded-lg hover:bg-slate-100">
