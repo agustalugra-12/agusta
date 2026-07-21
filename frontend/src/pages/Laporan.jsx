@@ -856,7 +856,8 @@ function LaporanOtaPrepaid() {
   };
 
   const cocokRows = (hasil?.items || []).filter((it) => it.matched);
-  const tidakCocokRows = (hasil?.items || []).filter((it) => !it.matched);
+  const ambiguousRows = (hasil?.items || []).filter((it) => !it.matched && it.ambiguous_count > 0);
+  const tidakCocokRows = (hasil?.items || []).filter((it) => !it.matched && !it.ambiguous_count);
 
   return (
     <div className="space-y-4">
@@ -921,11 +922,19 @@ function LaporanOtaPrepaid() {
                 </thead>
                 <tbody>
                   {cocokRows.map((row, i) => (
-                    <tr key={i} className="border-b border-slate-100" data-testid={`ota-match-${i}`}>
+                    <tr key={i} className={`border-b border-slate-100 ${row.selisih_signifikan ? "bg-amber-50" : ""}`} data-testid={`ota-match-${i}`}>
                       <td className="p-2">{row.extracted_nama}</td>
-                      <td className="p-2 text-xs">{row.kode} · {row.room_tipe} · {row.jumlah_kamar} kamar</td>
+                      <td className="p-2 text-xs">
+                        {row.kode} · {row.room_tipe} · {row.jumlah_kamar} kamar
+                        <span className={`ml-1.5 inline-block px-1.5 py-0.5 rounded text-[10px] font-medium ${row.match_via === "no_reservasi" ? "bg-emerald-100 text-emerald-700" : "bg-slate-100 text-slate-600"}`}>
+                          {row.match_via === "no_reservasi" ? "cocok no. reservasi" : "cocok nama"}
+                        </span>
+                      </td>
                       <td className="p-2 text-right text-slate-400">{fmtRp(row.estimasi_total)}</td>
-                      <td className="p-2 text-right font-bold text-emerald-700">{fmtRp(row.extracted_nominal)}</td>
+                      <td className="p-2 text-right font-bold text-emerald-700">
+                        {fmtRp(row.extracted_nominal)}
+                        {row.selisih_signifikan && <div className="text-[10px] font-normal text-amber-600 normal-case">⚠ beda jauh dari estimasi, cek dulu</div>}
+                      </td>
                       <td className="p-2 text-right">
                         <Button size="sm" data-testid={`ota-terapkan-${i}`} disabled={terapkanId === row.booking_id} onClick={() => terapkan(row)}>
                           {terapkanId === row.booking_id ? "Menerapkan…" : "Terapkan"}
@@ -935,6 +944,14 @@ function LaporanOtaPrepaid() {
                   ))}
                 </tbody>
               </table>
+            )}
+            {ambiguousRows.length > 0 && (
+              <div className="text-xs bg-amber-50 border border-amber-200 rounded-lg p-3 mb-3">
+                <div className="font-medium text-amber-800 mb-1">⚠ Nama cocok ke lebih dari 1 booking - cek manual, tidak diterapkan otomatis ({ambiguousRows.length}):</div>
+                {ambiguousRows.map((row, i) => (
+                  <div key={i} className="text-amber-700">{row.extracted_nama} — {fmtRp(row.extracted_nominal)} (cocok ke {row.ambiguous_count} booking berbeda, buka halaman Reservasi utk pilih yang benar)</div>
+                ))}
+              </div>
             )}
             {tidakCocokRows.length > 0 && (
               <div className="text-xs text-slate-500 bg-slate-50 rounded-lg p-3">

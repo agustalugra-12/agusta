@@ -992,11 +992,20 @@ async def list_ota_belum_dikonfirmasi(user: dict = Depends(get_current_user)):
 
 @api.post("/otomasi-email/parse-reddoorz-pdf")
 async def parse_reddoorz_pdf(file: UploadFile = File(...), user: dict = Depends(get_current_user)):
-    """Upload PDF rekap settlement RedDoorz - AI ekstrak (nama_tamu, nominal) per baris,
-    cocokkan dengan booking OTA yang masih menunggu konfirmasi (by nama, longgar/case-
-    insensitive sama seperti _cocokkan_booking_pending_reddoorz di atas). HANYA
+    """Upload PDF rekap settlement RedDoorz - AI ekstrak (nama_tamu, nominal, no_reservasi)
+    per baris, cocokkan dengan booking OTA yang masih menunggu konfirmasi. HANYA
     mengembalikan hasil pencocokan untuk direview - TIDAK menulis apapun ke database,
-    staf yang klik terapkan per baris (lewat endpoint konfirmasi-harga-ota yang sudah ada)."""
+    staf yang klik terapkan per baris (lewat endpoint konfirmasi-harga-ota yang sudah ada).
+
+    Prioritas pencocokan (2026-07-22, diperbaiki setelah audit ulang - versi awal cuma
+    cocokkan by nama & abai no_reservasi yang sebenarnya sudah diekstrak dari PDF, padahal
+    itu sinyal jauh lebih pasti daripada nama yang bisa mirip/typo):
+    1. EXACT match `no_reservasi` (dari PDF) == `ota_reservation_no` (booking) - kalau ada
+       dan cocok PERSIS, ini paling dipercaya, tidak perlu cek nama sama sekali.
+    2. Fallback ke cocok nama (longgar/case-insensitive, pola sama seperti
+       _cocokkan_booking_pending_reddoorz) HANYA kalau no_reservasi tidak ada/tidak cocok.
+       Kalau nama cocok ke LEBIH DARI SATU booking berbeda (nama umum/kembar), ditandai
+       "ambiguous" - JANGAN pilih salah satu asal, staf wajib cek manual."""
     if file.content_type not in ("application/pdf", "application/x-pdf") and not file.filename.lower().endswith(".pdf"):
         raise HTTPException(400, "File harus PDF")
     pdf_bytes = await file.read()
@@ -1007,16 +1016,41 @@ async def parse_reddoorz_pdf(file: UploadFile = File(...), user: dict = Depends(
     menunggu = await _daftar_ota_belum_dikonfirmasi()
     out = []
     for it in items:
-        nama_norm = re.sub(r"[^a-z0-9]", "", it["nama_tamu"].lower())
         cocok = None
-        for g in menunggu:
-            g_nama_norm = re.sub(r"[^a-z0-9]", "", (g.get("nama_tamu") or "").lower())
-            if nama_norm and g_nama_norm and (nama_norm in g_nama_norm or g_nama_norm in nama_norm):
-                cocok = g
-                break
+        ambiguous = []
+        match_via = None
+        if it["no_reservasi"]:
+            cocok = next((g for g in menunggu if g.get("ota_reservation_no") == it["no_reservasi"]), None)
+            if cocok:
+                match_via = "no_reservasi"
+        if not cocok:
+            nama_norm = re.sub(r"[^a-z0-9]", "", it["nama_tamu"].lower())
+            kandidat = [
+                g for g in menunggu
+                if nama_norm and re.sub(r"[^a-z0-9]", "", (g.get("nama_tamu") or "").lower())
+                and (nama_norm in re.sub(r"[^a-z0-9]", "", (g.get("nama_tamu") or "").lower())
+                     or re.sub(r"[^a-z0-9]", "", (g.get("nama_tamu") or "").lower()) in nama_norm)
+            ]
+            if len(kandidat) == 1:
+                cocok = kandidat[0]
+                match_via = "nama"
+            elif len(kandidat) > 1:
+                ambiguous = kandidat
+
+        # Peringatan selisih nominal (2026-07-22) - kalau nominal PDF jauh beda dari estimasi
+        # lama (lebih dari 2x lipat kedua arah), tandai supaya staf lihat lebih teliti sebelum
+        # terapkan - bisa jadi salah cocok, atau memang nominal sungguhan jauh dari estimasi.
+        selisih_signifikan = False
+        if cocok and cocok.get("estimasi_total"):
+            rasio = it["nominal"] / max(1, cocok["estimasi_total"])
+            selisih_signifikan = rasio > 2 or rasio < 0.5
+
         out.append({
             "extracted_nama": it["nama_tamu"], "extracted_nominal": it["nominal"], "extracted_no_reservasi": it["no_reservasi"],
             "matched": cocok is not None,
+            "match_via": match_via,
+            "selisih_signifikan": selisih_signifikan,
+            "ambiguous_count": len(ambiguous) if ambiguous else 0,
             "booking_id": cocok["booking_id"] if cocok else None,
             "kode": cocok["kode"] if cocok else None,
             "room_tipe": cocok["room_tipe"] if cocok else None,
