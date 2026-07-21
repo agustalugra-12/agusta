@@ -171,6 +171,16 @@ async def ai_bot_rules(category: Optional[str] = None, _: None = Depends(verifik
     }
 
 
+@api.get("/integrasi-ai-bot/status-member")
+async def ai_bot_status_member(no_hp: str, _: None = Depends(verifikasi_ai_bot_key)):
+    """Status Program Loyalitas Kedatangan tamu (2026-07-21, permintaan user: AI harus bisa
+    proaktif sebut diskon member di AWAL percakapan saat tamu tunjukkan niat booking, bukan
+    cuma pas booking sudah dibuat) - reuse penuh hitung_diskon_member, satu-satunya sumber
+    kebenaran, sama dipakai create_reservation/buat_booking_request."""
+    info = await hitung_diskon_member(no_hp)
+    return {"kedatangan_ke": info["kedatangan_ke"], "diskon_persen": info["diskon_persen"]}
+
+
 @api.get("/integrasi-ai-bot/booking-status")
 async def ai_bot_booking_status(no_hp: str, _: None = Depends(verifikasi_ai_bot_key)):
     """Status booking request tamu (dicari dari no_hp, 5 permintaan terbaru) — reuse
