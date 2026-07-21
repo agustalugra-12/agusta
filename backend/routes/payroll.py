@@ -257,11 +257,27 @@ async def update_payroll(pid: str, body: PayrollUpdate, user: dict = Depends(req
     return await db.payroll.find_one({"id": pid}, {"_id": 0})
 
 
+def _akhir_bulan_periode(periode: str) -> str:
+    """periode 'YYYY-MM' -> tanggal akhir bulan itu ('YYYY-MM-DD'), dipakai sebagai
+    tanggal expense supaya gaji periode Juli yang baru dibayar/final Agustus tetap
+    tercatat sebagai pengeluaran Juli (bukan tanggal pembayarannya)."""
+    y, m = map(int, periode.split("-"))
+    akhir = datetime(y, m + 1, 1) - timedelta(days=1) if m < 12 else datetime(y, 12, 31)
+    return akhir.strftime("%Y-%m-%d")
+
+
 @api.post("/payroll/{pid}/tandai-dibayar")
 async def bayar_payroll(pid: str, user: dict = Depends(require_owner)):
     """Finalisasi: potongan_kasbon di dokumen ini BENAR-BENAR dipotong dari saldo kasbon
     aktif staf (FIFO) di titik ini - draft sebelumnya tidak pernah menyentuh saldo kasbon,
-    supaya aman diedit/dihapus tanpa efek samping sebelum benar-benar dibayar."""
+    supaya aman diedit/dihapus tanpa efek samping sebelum benar-benar dibayar.
+
+    Juga membuat 1 dokumen `db.expenses` (kategori "Gaji") di titik yang sama, supaya
+    Laporan Keuangan otomatis ikut mencatat pengeluaran gaji tanpa entry manual dobel.
+    `tanggal` expense sengaja dipatok ke akhir bulan `periode` (bukan tanggal bayar
+    sungguhan) - gaji periode Juli yang baru difinalisasi 8 Agustus tetap masuk laporan
+    Juli, konsisten dengan cara laporan OTA prepaid membaca `paid_at` bukan tanggal
+    konfirmasi."""
     p = await db.payroll.find_one({"id": pid})
     if not p:
         raise HTTPException(404, "Payroll tidak ditemukan")
@@ -269,10 +285,25 @@ async def bayar_payroll(pid: str, user: dict = Depends(require_owner)):
         raise HTTPException(400, "Payroll ini sudah ditandai dibayar sebelumnya")
     terpotong = await _potong_kasbon_fifo(p["staff_id"], int(p.get("potongan_kasbon") or 0))
     now = now_iso()
+    expense_id = str(uuid.uuid4())
     await db.payroll.update_one({"id": pid}, {"$set": {
         "status": "dibayar", "potongan_kasbon_terpotong_aktual": terpotong,
         "dibayar_at": now, "dibayar_by": user["nama"], "updated_at": now,
+        "expense_id": expense_id,
     }})
+    await db.expenses.insert_one({
+        "id": expense_id,
+        "tanggal": _akhir_bulan_periode(p["periode"]),
+        "kategori": "Gaji",
+        "deskripsi": f"Gaji {p['staff_nama']} periode {p['periode']}",
+        "nominal": int(p["total_diterima"]),
+        "foto_url": "",
+        "user": user["nama"],
+        "user_id": user["id"],
+        "created_at": now,
+        "source": "payroll",
+        "payroll_id": pid,
+    })
     await log_activity(
         user, "bayar_payroll",
         f"Tandai dibayar payroll {p['staff_nama']} periode {p['periode']}: Rp{p['total_diterima']:,}".replace(",", "."),

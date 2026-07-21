@@ -72,7 +72,7 @@ export default function Pengeluaran() {
               {items.map(x => (
                 <div key={x.id} className="py-3 flex items-center gap-3">
                   <div className="flex-1 min-w-0">
-                    <div className="font-semibold">{x.kategori}{x.source === "telegram" && <span className="ml-1.5 text-[10px] font-normal uppercase tracking-wide text-sky-600 bg-sky-50 px-1.5 py-0.5 rounded">Telegram</span>}</div>
+                    <div className="font-semibold">{x.kategori}{x.source === "telegram" && <span className="ml-1.5 text-[10px] font-normal uppercase tracking-wide text-sky-600 bg-sky-50 px-1.5 py-0.5 rounded">Telegram</span>}{x.source === "payroll" && <span className="ml-1.5 text-[10px] font-normal uppercase tracking-wide text-teal-600 bg-teal-50 px-1.5 py-0.5 rounded">Payroll</span>}</div>
                     <div className="text-xs text-slate-500">{fmtDate(x.tanggal)} • {x.user} • {x.deskripsi}</div>
                     {x.foto_url && <a href={`${BACKEND_URL}${x.foto_url}`} target="_blank" rel="noreferrer" className="text-xs text-blue-600 hover:underline">Lihat foto struk</a>}
                   </div>
