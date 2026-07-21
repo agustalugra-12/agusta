@@ -257,13 +257,17 @@ async def update_payroll(pid: str, body: PayrollUpdate, user: dict = Depends(req
     return await db.payroll.find_one({"id": pid}, {"_id": 0})
 
 
-def _akhir_bulan_periode(periode: str) -> str:
-    """periode 'YYYY-MM' -> tanggal akhir bulan itu ('YYYY-MM-DD'), dipakai sebagai
-    tanggal expense supaya gaji periode Juli yang baru dibayar/final Agustus tetap
-    tercatat sebagai pengeluaran Juli (bukan tanggal pembayarannya)."""
+def _tanggal_expense_payroll(periode: str) -> str:
+    """periode 'YYYY-MM' -> tanggal expense ('YYYY-MM-DD') = akhir bulan periode itu,
+    DIBATASI maksimal hari ini - supaya gaji periode Juli yang difinalisasi 8 Agustus
+    tetap tercatat sebagai pengeluaran akhir Juli (bukan tanggal bayarnya), TAPI gaji
+    yang difinalisasi lebih awal (mis. tanggal 21 Juli, sebelum bulan itu selesai) tidak
+    diberi tanggal masa depan (31 Juli) yang bisa ke-filter keluar dari semua rentang
+    laporan default "s/d hari ini"."""
     y, m = map(int, periode.split("-"))
     akhir = datetime(y, m + 1, 1) - timedelta(days=1) if m < 12 else datetime(y, 12, 31)
-    return akhir.strftime("%Y-%m-%d")
+    hari_ini = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    return min(akhir.strftime("%Y-%m-%d"), hari_ini)
 
 
 @api.post("/payroll/{pid}/tandai-dibayar")
@@ -274,10 +278,10 @@ async def bayar_payroll(pid: str, user: dict = Depends(require_owner)):
 
     Juga membuat 1 dokumen `db.expenses` (kategori "Gaji") di titik yang sama, supaya
     Laporan Keuangan otomatis ikut mencatat pengeluaran gaji tanpa entry manual dobel.
-    `tanggal` expense sengaja dipatok ke akhir bulan `periode` (bukan tanggal bayar
-    sungguhan) - gaji periode Juli yang baru difinalisasi 8 Agustus tetap masuk laporan
-    Juli, konsisten dengan cara laporan OTA prepaid membaca `paid_at` bukan tanggal
-    konfirmasi."""
+    `tanggal` expense = akhir bulan `periode` dibatasi maksimal hari ini (lihat
+    `_tanggal_expense_payroll`) - gaji periode Juli yang baru difinalisasi 8 Agustus
+    tetap masuk laporan Juli, konsisten dengan cara laporan OTA prepaid membaca
+    `paid_at` bukan tanggal konfirmasi, tanpa pernah menaruh tanggal masa depan."""
     p = await db.payroll.find_one({"id": pid})
     if not p:
         raise HTTPException(404, "Payroll tidak ditemukan")
@@ -293,7 +297,7 @@ async def bayar_payroll(pid: str, user: dict = Depends(require_owner)):
     }})
     await db.expenses.insert_one({
         "id": expense_id,
-        "tanggal": _akhir_bulan_periode(p["periode"]),
+        "tanggal": _tanggal_expense_payroll(p["periode"]),
         "kategori": "Gaji",
         "deskripsi": f"Gaji {p['staff_nama']} periode {p['periode']}",
         "nominal": int(p["total_diterima"]),
