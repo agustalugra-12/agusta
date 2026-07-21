@@ -79,7 +79,35 @@ BREAKFAST_PRICE = 25000  # per malam, opsional, hanya berlaku untuk tipe mengina
 # +BREAKFAST_PRICE kalau dengan_sarapan (jadi 175rb/225rb). Dua tarif dasar terpisah sejak 2026-07-12
 # (sebelumnya sempat memakai satu field `tarif` untuk keduanya — salah, dikoreksi atas instruksi user).
 
-# ---- Utilities ----
+# ---- Rate limiting (2026-07-21, audit keamanan — login staf/owner & endpoint publik
+# booking sebelumnya tidak ada penghalang percobaan berulang sama sekali) ----
+# In-memory sliding window per-proses - cukup untuk skala 1 homestay (1 proses backend,
+# bukan multi-worker), pola sama persis dengan yang sudah dipakai di ai-chat-bot.
+import time as _time
+_rate_limit_buckets: Dict[str, List[float]] = {}
+
+def _client_ip(request: Request) -> str:
+    xff = request.headers.get("x-forwarded-for")
+    if xff:
+        return xff.split(",")[0].strip()
+    return request.client.host if request.client else "unknown"
+
+def rate_limiter(max_requests: int, window_seconds: int):
+    async def _check(request: Request) -> None:
+        key = f"{request.url.path}:{_client_ip(request)}"
+        now = _time.time()
+        cutoff = now - window_seconds
+        bucket = [t for t in _rate_limit_buckets.get(key, []) if t >= cutoff]
+        if len(bucket) >= max_requests:
+            _rate_limit_buckets[key] = bucket
+            raise HTTPException(429, "Terlalu banyak permintaan, coba lagi sebentar lagi")
+        bucket.append(now)
+        _rate_limit_buckets[key] = bucket
+        if len(_rate_limit_buckets) > 20000:
+            _rate_limit_buckets.clear()
+    return _check
+
+
 def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -325,6 +353,32 @@ def parse_iso(s: str, field: str) -> datetime:
     except Exception:
         raise HTTPException(400, f"Format {field} tidak valid (harus ISO 8601)")
 
+def phone_variants(no_hp: str) -> set:
+    """Varian format nomor HP Indonesia (62xxx vs 0xxx) yang dianggap SAMA orang - dipakai
+    verifikasi kepemilikan booking (bukan cuma tahu ID/UUID booking-nya) di endpoint
+    self-service tamu (public.py: batalkan, retry-bayar) & permintaan pembatalan AI
+    WhatsApp (pembatalan.py). Pindah ke sini 2026-07-21 (audit keamanan) supaya bisa
+    dipakai bersama - sebelumnya cuma ada di pembatalan.py, endpoint self-service tamu di
+    public.py sama sekali tidak verifikasi siapa yang minta (IDOR: siapapun yang tahu/
+    dapat UUID booking bisa langsung batalkan booking orang lain)."""
+    digits = re.sub(r"\D", "", no_hp or "")
+    variasi = {digits}
+    if digits.startswith("62"):
+        variasi.add("0" + digits[2:])
+    elif digits.startswith("0"):
+        variasi.add("62" + digits[1:])
+    return variasi
+
+
+def verifikasi_pemilik_booking(booking_no_hp: str, no_hp_konfirmasi: str) -> None:
+    """Raise 403 kalau no_hp_konfirmasi tidak cocok dengan pemilik booking. Dipanggil di
+    setiap endpoint self-service tamu yang mengubah data (batalkan, retry-bayar) sebelum
+    eksekusi apapun."""
+    digits = re.sub(r"\D", "", no_hp_konfirmasi or "")
+    if not digits or digits not in phone_variants(booking_no_hp):
+        raise HTTPException(403, "Nomor WhatsApp tidak cocok dengan pemilik booking ini")
+
+
 def hitung_kebijakan_pembatalan(jam_mulai_iso: str) -> dict:
     """Kebijakan pembatalan TUNGGAL untuk SEMUA channel (2026-07-19, keputusan user
     "samakan semua channel"): sebelumnya self-service website (public.py, beda per
@@ -552,6 +606,10 @@ class TripayCreateTransactionBody(BaseModel):
 
 class CancelWithFeeBody(BaseModel):
     alasan: Optional[str] = ""
+    no_hp_konfirmasi: str = ""
+
+class RetryBayarBody(BaseModel):
+    no_hp_konfirmasi: str = ""
 
 class NoShowBody(BaseModel):
     alasan: Optional[str] = ""

@@ -19,16 +19,6 @@ from core import *
 CANCEL_STATUS_AKTIF = ["requested", "pending"]
 
 
-def _phone_variants(no_hp: str) -> set:
-    digits = re.sub(r"\D", "", no_hp or "")
-    variasi = {digits}
-    if digits.startswith("62"):
-        variasi.add("0" + digits[2:])
-    elif digits.startswith("0"):
-        variasi.add("62" + digits[1:])
-    return variasi
-
-
 async def ajukan_pembatalan_ai(kode: str, no_hp: str, alasan: str = "") -> Dict[str, Any]:
     """Dipanggil dari routes/integrasi_ai_bot.py (tool cancel_booking di ai-chat-bot) —
     non-binding, TIDAK PERNAH langsung mengubah status booking, cuma menandai
@@ -41,7 +31,7 @@ async def ajukan_pembatalan_ai(kode: str, no_hp: str, alasan: str = "") -> Dict[
     if b.get("cancel_request_status") in CANCEL_STATUS_AKTIF:
         return {"ok": False, "error": "Sudah ada permintaan pembatalan yang menunggu diproses staf untuk booking ini"}
     digits = re.sub(r"\D", "", no_hp or "")
-    if not digits or digits not in _phone_variants(b.get("no_hp")):
+    if not digits or digits not in phone_variants(b.get("no_hp")):
         return {"ok": False, "error": "Nomor WhatsApp tidak cocok dengan pemilik booking"}
 
     policy = hitung_kebijakan_pembatalan(b["jam_mulai"])

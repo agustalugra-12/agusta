@@ -2,7 +2,7 @@ from core import *
 
 # ---- Auth Endpoints ----
 @api.post("/auth/register")
-async def register(body: RegisterIn):
+async def register(body: RegisterIn, _rl: None = Depends(rate_limiter(5, 60))):
     """Pendaftaran akun mandiri (halaman Daftar Akun, Fase 3). Akun baru dibuat dengan
     role 'resepsionis' dan status 'pending' — Owner harus mengaktifkannya lewat halaman
     Pengguna sebelum bisa login, konsisten dengan model akses berbasis undangan yang sudah
@@ -29,7 +29,7 @@ async def register(body: RegisterIn):
     return {"ok": True, "message": "Pendaftaran berhasil. Menunggu aktivasi Owner sebelum bisa masuk."}
 
 @api.post("/auth/login")
-async def login(body: LoginIn, response: Response):
+async def login(body: LoginIn, response: Response, _rl: None = Depends(rate_limiter(10, 60))):
     u = await db.users.find_one({"username": body.username.lower()})
     if not u or not verify_password(body.password, u.get("password_hash", "")):
         raise HTTPException(401, "Username atau password salah")

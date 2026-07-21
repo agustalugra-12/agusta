@@ -685,12 +685,17 @@ function BatalkanPesananDialog({ bk, open, onOpenChange, onCancelled }) {
   const [sent, setSent] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [hasil, setHasil] = useState(null);
+  const [noHpKonfirmasi, setNoHpKonfirmasi] = useState("");
   const policy = calcCancelPolicy(bk);
 
   const ajukan = async () => {
+    if (!noHpKonfirmasi.trim()) {
+      toast.error("Masukkan nomor WhatsApp yang dipakai saat booking untuk konfirmasi");
+      return;
+    }
     setSubmitting(true);
     try {
-      const { data } = await PUBLIC_API.post(`/public/bookings/${bk.id}/batalkan`, {});
+      const { data } = await PUBLIC_API.post(`/public/bookings/${bk.id}/batalkan`, { no_hp_konfirmasi: noHpKonfirmasi.trim() });
       setHasil(data);
       setSent(true);
       const { data: updated } = await PUBLIC_API.get(`/public/bookings/${bk.id}`);
@@ -730,6 +735,14 @@ function BatalkanPesananDialog({ bk, open, onOpenChange, onCancelled }) {
               </div>
             </div>
             {policy.gratis && <CountdownBebasBiaya bk={bk} />}
+            <div className="space-y-1.5">
+              <Label htmlFor="batalkan-no-hp">Nomor WhatsApp saat booking (untuk konfirmasi)</Label>
+              <Input
+                id="batalkan-no-hp" data-testid="batalkan-no-hp-input"
+                placeholder="08xxxxxxxxxx" value={noHpKonfirmasi}
+                onChange={(e) => setNoHpKonfirmasi(e.target.value)}
+              />
+            </div>
           </div>
         ) : (
           <div className="space-y-2 text-sm text-left" data-testid="batalkan-terkirim">
@@ -767,18 +780,23 @@ function RetryBayarDialog({ bk, open, onOpenChange, channels }) {
   const [method, setMethod] = useState(channels[0]?.code || "");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
+  const [noHpKonfirmasi, setNoHpKonfirmasi] = useState("");
   const nominal = opsi === "dp50" ? bk.dp_min : bk.total;
 
   useEffect(() => {
-    if (open) { setMethod(channels[0]?.code || ""); setError(""); }
+    if (open) { setMethod(channels[0]?.code || ""); setError(""); setNoHpKonfirmasi(""); }
   }, [open, channels]);
 
   const bayarLagi = async () => {
     if (!method) return;
+    if (!noHpKonfirmasi.trim()) {
+      setError("Masukkan nomor WhatsApp yang dipakai saat booking untuk konfirmasi");
+      return;
+    }
     setSubmitting(true);
     setError("");
     try {
-      await PUBLIC_API.post(`/public/bookings/${bk.id}/retry-bayar`);
+      await PUBLIC_API.post(`/public/bookings/${bk.id}/retry-bayar`, { no_hp_konfirmasi: noHpKonfirmasi.trim() });
       const { data: tx } = await PUBLIC_API.post("/payments/tripay/create-transaction", {
         booking_id: bk.id, payment_option: opsi, method,
       });
@@ -833,6 +851,14 @@ function RetryBayarDialog({ bk, open, onOpenChange, channels }) {
           </div>
           <div className="bg-slate-50 border border-slate-200 rounded p-2 flex justify-between">
             <span className="font-bold">Total Ditagih</span><b className="text-teal-deep">{fmtRp(nominal)}</b>
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="retry-no-hp">Nomor WhatsApp saat booking (untuk konfirmasi)</Label>
+            <Input
+              id="retry-no-hp" data-testid="retry-no-hp-input"
+              placeholder="08xxxxxxxxxx" value={noHpKonfirmasi}
+              onChange={(e) => setNoHpKonfirmasi(e.target.value)}
+            />
           </div>
           {error && <p className="text-red-600 text-xs" data-testid="retry-error">{error}</p>}
         </div>

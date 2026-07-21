@@ -266,7 +266,7 @@ async def public_create_booking(body: PublicBookingCreate):
     return {"group_id": group_id, "bookings": created}
 
 @api.post("/public/bookings/{bid}/batalkan")
-async def public_batalkan_booking(bid: str, body: CancelWithFeeBody = CancelWithFeeBody()):
+async def public_batalkan_booking(bid: str, body: CancelWithFeeBody = CancelWithFeeBody(), _rl: None = Depends(rate_limiter(10, 60))):
     """Pembatalan mandiri SUNGGUHAN oleh tamu (bukan cuma 'ajukan permintaan') — otomatis
     penuh tanpa approval staf, sesuai keputusan bisnis yang dikonfirmasi user 2026-07-11.
     Refund uang (kalau ada) tetap harus ditransfer manual oleh staf — sistem cuma
@@ -281,6 +281,7 @@ async def public_batalkan_booking(bid: str, body: CancelWithFeeBody = CancelWith
     b = await db.bookings.find_one({"id": bid})
     if not b:
         raise HTTPException(404, "Booking tidak ditemukan")
+    verifikasi_pemilik_booking(b.get("no_hp"), body.no_hp_konfirmasi)
     if b.get("status") not in ("aktif", "booking_pending", "booking_paid"):
         raise HTTPException(400, f"Booking tidak dapat dibatalkan (status: {b.get('status')})")
 
@@ -327,7 +328,7 @@ async def public_batalkan_booking(bid: str, body: CancelWithFeeBody = CancelWith
 
 
 @api.post("/public/bookings/{bid}/retry-bayar")
-async def public_retry_bayar(bid: str):
+async def public_retry_bayar(bid: str, body: RetryBayarBody = RetryBayarBody(), _rl: None = Depends(rate_limiter(10, 60))):
     """Buka lagi booking yang dibatalkan OTOMATIS karena pembayaran expired/gagal, supaya
     tamu bisa coba bayar lagi tanpa isi ulang seluruh form booking dari awal (permintaan
     user 2026-07-14, sebelumnya sengaja ditunda — dinilai aman karena dampaknya cuma UX).
@@ -344,6 +345,7 @@ async def public_retry_bayar(bid: str):
     b = await db.bookings.find_one({"id": bid})
     if not b:
         raise HTTPException(404, "Booking tidak ditemukan")
+    verifikasi_pemilik_booking(b.get("no_hp"), body.no_hp_konfirmasi)
     if b.get("status") != "cancelled" or b.get("payment_status") not in ("expired", "failed") or b.get("cancelled_by"):
         raise HTTPException(400, "Booking ini tidak bisa dibuka lagi untuk coba bayar (bukan dibatalkan otomatis karena gagal bayar)")
 
