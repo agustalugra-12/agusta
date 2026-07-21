@@ -365,6 +365,14 @@ function TamuTab() {
               <div className="min-w-[180px]">
                 <div className="font-bold text-base">{g.nama}</div>
                 <div className="text-xs text-slate-500">{g.no_hp || "-"} • {g.no_identitas || "-"}</div>
+                {(() => {
+                  const varianLain = Object.keys(g.nama_varian || {}).filter((n) => n !== g.nama);
+                  return varianLain.length > 0 ? (
+                    <div className="text-[11px] text-slate-400 mt-0.5" title="Nama lain yang pernah dipakai tamu ini saat booking (nomor HP sama)">
+                      juga tercatat sebagai: {varianLain.join(", ")}
+                    </div>
+                  ) : null;
+                })()}
               </div>
               <div className="flex items-center gap-2 text-xs shrink-0">
                 <div className="bg-slate-50 rounded-lg px-2.5 py-1.5"><span className="text-slate-500">Kunjungan </span><span className="font-bold">{g.total_kunjungan || 0}×</span></div>

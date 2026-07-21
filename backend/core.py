@@ -241,11 +241,27 @@ async def upsert_guest(nama: str, no_hp: str = "", no_identitas: str = "", kenda
     cuma jalur check-in sungguhan yang menaikkan `total_kunjungan` (default True, dipanggil
     dengan False dari create/update booking supaya angka kunjungan tetap berarti "berapa kali
     benar-benar menginap/check-in", bukan ikut naik tiap booking dibuat/diedit/dibatalkan).
-    """
+
+    `nama_varian` (2026-07-21, permintaan user): tamu kadang mengetik nama beda-beda tiap
+    booking (typo, panggilan, dst) walau nomor HP sama - pencocokan member (cari_guest/
+    hitung_diskon_member) SUDAH BENAR jalan dari no_hp/no_identitas, TIDAK terpengaruh nama
+    sama sekali. Sebelumnya field `nama` cuma ditimpa nama terbaru tiap kali (riwayat nama
+    lama hilang, staf bisa bingung lihat nama "flip-flop"). Sekarang setiap nama yang pernah
+    dipakai dihitung frekuensinya di `nama_varian` ({nama: jumlah_pemakaian}), field `nama`
+    tampil = varian yang PALING SERING dipakai (bukan cuma yang terakhir) - staf tetap bisa
+    lihat semua variasi nama yang pernah dipakai tamu ini di `nama_varian`."""
+    nama = (nama or "").strip()
     guest = await cari_guest(no_hp, no_identitas)
     if guest:
+        varian = dict(guest.get("nama_varian") or {})
+        if not varian and guest.get("nama"):
+            varian[guest["nama"]] = 1  # migrasi data lama yang belum punya nama_varian
+        if nama:
+            varian[nama] = varian.get(nama, 0) + 1
+        nama_utama = max(varian, key=varian.get) if varian else nama
         update: Dict[str, Any] = {"$set": {
-            "nama": nama,
+            "nama": nama_utama,
+            "nama_varian": varian,
             "no_hp": no_hp or guest.get("no_hp", ""),
             "kendaraan": kendaraan or guest.get("kendaraan", ""),
             "last_visit": now_iso(),
@@ -258,6 +274,7 @@ async def upsert_guest(nama: str, no_hp: str = "", no_identitas: str = "", kenda
     await db.guests.insert_one({
         "id": guest_id,
         "nama": nama,
+        "nama_varian": {nama: 1} if nama else {},
         "no_hp": no_hp,
         "no_identitas": no_identitas,
         "kendaraan": kendaraan,
