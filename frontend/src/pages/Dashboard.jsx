@@ -46,7 +46,6 @@ export default function Dashboard() {
   const [rooms, setRooms] = useState([]);
   const [active, setActive] = useState([]);
   const [bookings, setBookings] = useState([]);
-  const [widgets, setWidgets] = useState(null);
   const [bookingRequests, setBookingRequests] = useState([]); // waiting_approval — supaya owner/resepsionis lihat langsung dari Dashboard, tidak perlu buka halaman terpisah
   const [kedatanganHarian, setKedatanganHarian] = useState([]); // grafik kedatangan tamu 30 hari (2026-07-21, permintaan user)
   const [approveReqTarget, setApproveReqTarget] = useState(null);
@@ -143,12 +142,11 @@ export default function Dashboard() {
 
   const load = async () => {
     try {
-      const [s, r, c, b, w, br, kd] = await Promise.all([
+      const [s, r, c, b, br, kd] = await Promise.all([
         api.get("/reports/summary"),
         api.get("/rooms"),
         api.get("/checkins", { params: { status: "aktif" } }),
         api.get("/bookings"),
-        api.get("/reports/booking-widgets"),
         api.get("/booking-requests", { params: { status: "waiting_approval" } }),
         api.get("/reports/kedatangan-harian"),
       ]);
@@ -159,7 +157,7 @@ export default function Dashboard() {
       // sebagai tamu terkonfirmasi di grid Dashboard sampai email RedDoorz cocok.
       const occupying = b.data.filter(x => ["aktif", "booking_pending", "booking_paid"].includes(x.status)
         && !["waiting_reddoorz_input", "waiting_reddoorz_sync"].includes(x.sync_status));
-      setSummary(s.data); setRooms(r.data); setActive(c.data); setBookings(occupying); setWidgets(w.data);
+      setSummary(s.data); setRooms(r.data); setActive(c.data); setBookings(occupying);
       setBookingRequests(br.data);
       setKedatanganHarian(kd.data);
     } catch (e) { console.error(e); }
@@ -511,17 +509,6 @@ export default function Dashboard() {
           </div>
         </CardContent>
       </Card>
-
-      {/* Online Booking Widgets (Fase D) */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-3">
-        <MiniWidget label="Booking Hari Ini" value={widgets?.booking_hari_ini ?? "—"} color="#2563EB" testid="w-today" />
-        <MiniWidget label="Pending" value={widgets?.booking_pending ?? "—"} color="#F59E0B" testid="w-pending" />
-        <MiniWidget label="Paid" value={widgets?.booking_paid ?? "—"} color="#10B981" testid="w-paid" />
-        <MiniWidget label="Pendapatan Online" value={fmtRp(widgets?.pendapatan_online_bulan || 0)} color="#7C3AED" testid="w-rev-online" wide />
-        <MiniWidget label="Total Transaksi Bayar" value={`${widgets?.payment_total_count || 0} trx`} hint={fmtRp(widgets?.payment_total_sum || 0)} color="#0EA5E9" testid="w-mt-total" wide />
-        <MiniWidget label="Online (Bulan)" value={widgets?.booking_online_bulan ?? "—"} color="#06B6D4" testid="w-online-month" />
-        <MiniWidget label="Walk-In (Bulan)" value={widgets?.booking_walkin_bulan ?? "—"} color="#64748B" testid="w-walkin-month" />
-      </div>
 
       {/* Room grid */}
       <Card className="border-slate-200">
@@ -1052,15 +1039,5 @@ function RevCard({ icon: Icon, label, value, hint }) {
         </div>
       </CardContent>
     </Card>
-  );
-}
-
-function MiniWidget({ label, value, hint, color, testid, wide }) {
-  return (
-    <div data-testid={testid} className={`rounded-xl border border-slate-200 bg-white p-3 ${wide ? "col-span-2" : ""}`}>
-      <div className="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">{label}</div>
-      <div className="text-lg font-extrabold mt-0.5 truncate" style={{ color }}>{value}</div>
-      {hint && <div className="text-[10px] text-slate-500 truncate">{hint}</div>}
-    </div>
   );
 }
