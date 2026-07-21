@@ -291,6 +291,34 @@ class AiBotBookingRequestIn(BaseModel):
     diskon_diminta_tamu: bool = False
 
 
+class AiBotPreviewHargaIn(BaseModel):
+    no_hp: str
+    tipe: str  # day_use | menginap
+    room_tipe: str
+    tanggal_checkin: str
+    tanggal_checkout: Optional[str] = None
+    jumlah_kamar: Optional[int] = None
+    diskon_diminta_tamu: bool = False
+
+
+@api.post("/integrasi-ai-bot/preview-harga")
+async def ai_bot_preview_harga(body: AiBotPreviewHargaIn, _: None = Depends(verifikasi_ai_bot_key)):
+    """Preview rincian harga (termasuk diskon member & diskresi) SEBELUM booking_request
+    sungguhan dibuat - read-only, TIDAK menulis apapun ke DB (2026-07-21, permintaan user:
+    AI harus ringkas & konfirmasi data+harga ke tamu SEBELUM benar-benar diajukan, bukan
+    setelah). Reuse penuh _hitung_diskon_gabungan, sumber kebenaran yang sama dipakai
+    buat_booking_request - angka di sini WAJIB konsisten dengan yang benar-benar terjadi
+    kalau lanjut ke create_booking dengan data identik."""
+    from routes.booking_requests import _hitung_diskon_gabungan
+    diskon_info, diskon_ai_persen, diskon_persen_efektif, preview_harga = await _hitung_diskon_gabungan(body.model_dump())
+    return {
+        "kedatangan_ke": diskon_info["kedatangan_ke"],
+        "diskon_member_persen": diskon_info["diskon_persen"],
+        "diskon_ai_persen": diskon_ai_persen,
+        "preview_harga": preview_harga,
+    }
+
+
 @api.post("/integrasi-ai-bot/booking-request")
 async def ai_bot_buat_booking_request(body: AiBotBookingRequestIn, _: None = Depends(verifikasi_ai_bot_key)):
     """Non-binding, persis alur booking AI WhatsApp internal (`_proses_giliran_booking` di

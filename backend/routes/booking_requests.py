@@ -200,6 +200,23 @@ async def _coba_auto_approve_day_use(doc: Dict[str, Any]) -> None:
         logging.getLogger("booking_requests").warning(f"Auto-approve day_use {doc.get('kode')} gagal: {e}")
 
 
+async def _hitung_diskon_gabungan(data: Dict[str, Any]):
+    """Diskon member (Program Loyalitas Kedatangan) digabung dengan diskon diskresi AI
+    (2026-07-21, kebijakan bisnis user - HANYA dihitung kalau AI menandai tamu SENDIRI
+    minta diskon via diskon_diminta_tamu, persentasenya SELALU dihitung server dari data
+    booking sungguhan via hitung_diskon_ai_diskresi, bukan dari angka yang AI kirim) pakai
+    MAX (bukan dijumlah). Diekstrak dari buat_booking_request (sebelumnya cuma dipanggil di
+    situ) supaya bisa dipakai juga oleh endpoint preview read-only (preview_harga_booking) -
+    SATU-SATUNYA sumber kebenaran hitungan harga sebelum booking_request sungguhan dibuat."""
+    diskon_info = await hitung_diskon_member(data["no_hp"])
+    diskon_ai_persen = 0
+    if data.get("diskon_diminta_tamu"):
+        diskon_ai_persen = hitung_diskon_ai_diskresi(_hitung_malam(data), int(data.get("jumlah_kamar") or 1))
+    diskon_persen_efektif = max(diskon_info["diskon_persen"], diskon_ai_persen)
+    preview_harga = await _hitung_preview_harga(data, diskon_persen_efektif)
+    return diskon_info, diskon_ai_persen, diskon_persen_efektif, preview_harga
+
+
 async def buat_booking_request(data: Dict[str, Any]) -> Dict[str, Any]:
     """Dipanggil dari alur pengumpulan data AI WhatsApp (pesan_whatsapp.py) setelah field
     wajib lengkap & tamu konfirmasi — sengaja BUKAN endpoint HTTP publik (tidak menambah
@@ -222,22 +239,7 @@ async def buat_booking_request(data: Dict[str, Any]) -> Dict[str, Any]:
     if tanggal_checkin_date < datetime.now().date():
         raise HTTPException(400, "Tanggal check-in tidak boleh di masa lalu - tanya ulang tanggal yang benar ke tamu")
 
-    # Preview diskon member (Program Loyalitas Kedatangan, dikonfirmasi user 2026-07-19) -
-    # cuma INFORMASIONAL di tahap permintaan (supaya AI/staf tahu & tamu diberi tahu di
-    # muka), dihitung ULANG & jadi final saat staf approve (lewat create_reservation) -
-    # kalau ada jeda waktu & total_kunjungan berubah, angka final yang berlaku.
-    diskon_info = await hitung_diskon_member(data["no_hp"])
-    # Diskon diskresi (2026-07-21, kebijakan bisnis user) - HANYA dihitung kalau AI
-    # menandai tamu SENDIRI yang minta diskon (diskon_diminta_tamu), persentasenya
-    # SELALU dihitung server dari data booking sungguhan (bukan dari angka yang AI kirim -
-    # lihat hitung_diskon_ai_diskresi di core.py), digabung dgn diskon member pakai MAX
-    # (bukan dijumlah). Disimpan terpisah (diskon_ai_persen) supaya staf bisa lihat asalnya
-    # saat review, preview_diskon_persen tetap angka EFEKTIF gabungan keduanya.
-    diskon_ai_persen = 0
-    if data.get("diskon_diminta_tamu"):
-        diskon_ai_persen = hitung_diskon_ai_diskresi(_hitung_malam(data), int(data.get("jumlah_kamar") or 1))
-    diskon_persen_efektif = max(diskon_info["diskon_persen"], diskon_ai_persen)
-    preview_harga = await _hitung_preview_harga(data, diskon_persen_efektif)
+    diskon_info, diskon_ai_persen, diskon_persen_efektif, preview_harga = await _hitung_diskon_gabungan(data)
 
     doc = {
         "id": str(uuid.uuid4()), "kode": _kode_request(),
