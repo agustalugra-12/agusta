@@ -22,17 +22,44 @@ CANCEL_STATUS_AKTIF = ["requested", "pending"]
 async def ajukan_pembatalan_ai(kode: str, no_hp: str, alasan: str = "") -> Dict[str, Any]:
     """Dipanggil dari routes/integrasi_ai_bot.py (tool cancel_booking di ai-chat-bot) —
     non-binding, TIDAK PERNAH langsung mengubah status booking, cuma menandai
-    cancel_request_status supaya staf lihat & approve/reject manual di Dashboard."""
-    b = await db.bookings.find_one({"kode": kode})
-    if not b:
-        return {"ok": False, "error": f"Booking dengan kode {kode} tidak ditemukan"}
+    cancel_request_status supaya staf lihat & approve/reject manual di Dashboard.
+
+    `kode` OPSIONAL (2026-07-21, perbaikan arsitektur - bukan cuma prompt) - insiden nyata
+    BERULANG: AI (model lemah, gpt-4o-mini) sering gagal mengoordinasikan 2 tool call
+    terpisah (lookup_booking dulu utk dapat kode, BARU cancel_booking pakai kode itu di
+    giliran berikutnya) - kadang cuma manggil lookup_booking lalu NARASIKAN seolah sudah
+    dibatalkan tanpa benar-benar memanggil cancel_booking. Sekarang kalau `kode` kosong,
+    fungsi ini SENDIRI yang mencari booking aktif tamu dari no_hp - AI cukup 1x panggil
+    tool ini langsung begitu tamu konfirmasi, tidak perlu lookup_booking dulu utk kasus
+    umum (tamu cuma punya 1 booking aktif)."""
+    digits = re.sub(r"\D", "", no_hp or "")
+    if not digits:
+        return {"ok": False, "error": "Nomor WhatsApp tidak valid"}
+
+    if kode:
+        b = await db.bookings.find_one({"kode": kode})
+        if not b:
+            return {"ok": False, "error": f"Booking dengan kode {kode} tidak ditemukan"}
+        if digits not in phone_variants(b.get("no_hp")):
+            return {"ok": False, "error": "Nomor WhatsApp tidak cocok dengan pemilik booking"}
+    else:
+        variasi = list(phone_variants(no_hp))
+        kandidat = await db.bookings.find({
+            "no_hp": {"$in": variasi},
+            "status": {"$in": ["aktif", "booking_pending", "booking_paid"]},
+            "cancel_request_status": {"$nin": CANCEL_STATUS_AKTIF},
+        }).sort("created_at", -1).to_list(10)
+        if not kandidat:
+            return {"ok": False, "error": "Tidak ada booking aktif ditemukan untuk nomor ini yang bisa diajukan pembatalan"}
+        if len(kandidat) > 1:
+            daftar = [{"kode": k["kode"], "room_tipe": k.get("room_tipe"), "tanggal": (k.get("jam_mulai") or "")[:10]} for k in kandidat]
+            return {"ok": False, "error": "Ada lebih dari 1 booking aktif - tamu harus sebutkan yang mana", "kandidat": daftar}
+        b = kandidat[0]
+
     if b.get("status") not in ("aktif", "booking_pending", "booking_paid"):
         return {"ok": False, "error": f"Booking tidak bisa diajukan pembatalan (status: {b.get('status')})"}
     if b.get("cancel_request_status") in CANCEL_STATUS_AKTIF:
         return {"ok": False, "error": "Sudah ada permintaan pembatalan yang menunggu diproses staf untuk booking ini"}
-    digits = re.sub(r"\D", "", no_hp or "")
-    if not digits or digits not in phone_variants(b.get("no_hp")):
-        return {"ok": False, "error": "Nomor WhatsApp tidak cocok dengan pemilik booking"}
 
     policy = hitung_kebijakan_pembatalan(b["jam_mulai"])
     paid = int(b.get("amount_due") or 0) if b.get("payment_status") == "paid" else 0

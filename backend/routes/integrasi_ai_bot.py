@@ -303,7 +303,7 @@ async def ai_bot_buat_booking_request(body: AiBotBookingRequestIn, _: None = Dep
 
 
 class AiBotCancelRequestIn(BaseModel):
-    kode: str  # kode booking (BKO-...), BUKAN kode booking_request (REQ-...)
+    kode: Optional[str] = None  # kode booking (BKO-...), BUKAN kode booking_request (REQ-...). Opsional - kosong = cari otomatis dari no_hp (lihat ajukan_pembatalan_ai)
     no_hp: str
     alasan: Optional[str] = ""
 
@@ -314,10 +314,11 @@ async def ai_bot_ajukan_pembatalan(body: AiBotCancelRequestIn, _: None = Depends
     pembatalan sungguhan langsung (lihat routes/pembatalan.py). AI cuma menyampaikan info
     (kode booking, nomor tamu, alasan) ke PMS; PMS mencatat & staf yang approve/reject
     manual di Dashboard/halaman Pembatalan."""
-    hasil = await ajukan_pembatalan_ai(body.kode, body.no_hp, body.alasan or "")
-    if not hasil.get("ok"):
-        raise HTTPException(400, hasil.get("error") or "Gagal mengajukan pembatalan")
-    return hasil
+    # Sengaja SELALU 200 (bukan raise HTTPException on ok=false) - kalau gagal karena
+    # tamu punya >1 booking aktif, field "kandidat" perlu tetap sampai ke ai-chat-bot
+    # supaya AI bisa tanya tamu mana yang dimaksud (2026-07-21, HTTPException(400, str)
+    # sebelumnya MEMBUANG field kandidat, cuma pesan errornya yang sampai).
+    return await ajukan_pembatalan_ai(body.kode, body.no_hp, body.alasan or "")
 
 
 class AiBotAlertIn(BaseModel):
