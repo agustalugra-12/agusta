@@ -195,7 +195,14 @@ async def ai_bot_booking_status(no_hp: str, _: None = Depends(verifikasi_ai_bot_
         status_efektif = it["status"]
         booking_ringkasan = None
         if it.get("booking_ids"):
-            bks = await db.bookings.find({"id": {"$in": it["booking_ids"]}}, {"_id": 0}).to_list(20)
+            # status != "cancelled": booking yang SUDAH tuntas dibatalkan (approved + refund
+            # selesai) sebelumnya tetap muncul di sini apa adanya (jalur ini, beda dari
+            # direct_bookings di bawah, tidak pernah filter status booking sama sekali) - AI
+            # jadi nawarin/muter balik ke booking yang sudah tuntas dibatalkan seolah masih
+            # aktif (ditemukan 2026-07-21 dari laporan user).
+            bks = await db.bookings.find(
+                {"id": {"$in": it["booking_ids"]}, "status": {"$ne": "cancelled"}}, {"_id": 0}
+            ).to_list(20)
             if bks:
                 booking_ringkasan = [{
                     "kode": b["kode"], "room_nomor": b.get("room_nomor"), "room_tipe": b.get("room_tipe"),
