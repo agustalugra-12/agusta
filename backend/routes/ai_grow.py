@@ -100,8 +100,19 @@ async def _baca_semua_data() -> Dict[str, Any]:
     except Exception as e:
         logger.info(f"cash data dilewati: {e}")
 
+    # Aktivitas tamu / loyalitas (2026-07-22, gap ditemukan saat audit "Product Hardening" -
+    # AI Grow sebelumnya tidak baca ini sama sekali padahal PRD eksplisit minta "aktivitas
+    # pelanggan"). total_kunjungan>=2 = tamu yang pernah kembali (Program Loyalitas
+    # Kedatangan, lihat diskon_member_untuk_total_kunjungan di core.py).
+    total_tamu = await db.guests.count_documents({})
+    tamu_berulang = await db.guests.count_documents({"total_kunjungan": {"$gte": 2}})
+    tamu_baru_bulan_ini = await db.guests.count_documents({"created_at": {"$gte": month_start.isoformat()}})
+
     return {
         "summary": summary, "now": now, "hari_berjalan": hari_berjalan, "hari_dalam_bulan": hari_dalam_bulan,
+        "guest": {"total_tamu": total_tamu, "tamu_berulang": tamu_berulang,
+                  "persen_berulang": round(tamu_berulang / total_tamu * 100, 1) if total_tamu else 0,
+                  "tamu_baru_bulan_ini": tamu_baru_bulan_ini},
         "exp_per_kategori_bulan_ini": _per_kategori(exp_bulan_ini),
         "exp_per_kategori_bulan_lalu": _per_kategori(exp_bulan_lalu),
         "bookings_14hari": bookings_14hari,
@@ -297,8 +308,11 @@ def _hitung_health_score(data: Dict[str, Any], risiko: List[Dict[str, Any]]) -> 
     skor_hk = 100 if data["hk_pending"] <= 2 else max(0, 100 - (data["hk_pending"] - 2) * 15)
     skor_operasional = round((skor_okupansi + skor_hk) / 2)
 
-    # Pelanggan (20%): tiket terbuka & tren komplain
-    skor_pelanggan = 100 if data["issues_terbuka"] == 0 else max(0, 100 - data["issues_terbuka"] * 10)
+    # Pelanggan (20%): tiket terbuka & tren komplain (70%) + tingkat tamu berulang - proksi
+    # kepuasan pelanggan sungguhan, bukan cuma "tidak ada komplain" (30%)
+    skor_tiket = 100 if data["issues_terbuka"] == 0 else max(0, 100 - data["issues_terbuka"] * 10)
+    skor_loyalitas = min(100, round(data["guest"]["persen_berulang"] / 30 * 100)) if data["guest"]["total_tamu"] >= 5 else 70  # 30%+ berulang = skor penuh; data tamu terlalu sedikit = netral
+    skor_pelanggan = round(skor_tiket * 0.7 + skor_loyalitas * 0.3)
 
     # Kas (15%): dari risk engine kas, 100 kalau tidak ada rekening/risiko sama sekali
     risiko_kas = [r for r in risiko if r["area"] == "kas"]
@@ -315,7 +329,7 @@ def _hitung_health_score(data: Dict[str, Any], risiko: List[Dict[str, Any]]) -> 
     breakdown = {
         "finansial": {"skor": skor_finansial, "bobot": 30, "keterangan": f"Margin laba bulan ini {round(margin,1)}%"},
         "operasional": {"skor": skor_operasional, "bobot": 25, "keterangan": f"Okupansi {s['okupansi_persen']}%, {data['hk_pending']} kamar antre dibersihkan"},
-        "pelanggan": {"skor": skor_pelanggan, "bobot": 20, "keterangan": f"{data['issues_terbuka']} tiket komplain/maintenance terbuka"},
+        "pelanggan": {"skor": skor_pelanggan, "bobot": 20, "keterangan": f"{data['issues_terbuka']} tiket terbuka, {data['guest']['persen_berulang']}% tamu berulang"},
         "kas": {"skor": skor_kas, "bobot": 15, "keterangan": "Tidak ada modul Cash & Rekening dipakai" if not data["cash"] else f"{len(risiko_kas)} rekening berisiko" if risiko_kas else "Semua rekening aman"},
         "pertumbuhan": {"skor": skor_pertumbuhan, "bobot": 10, "keterangan": "Berdasar margin laba berjalan"},
     }
@@ -376,6 +390,7 @@ async def _generate_daily_brief() -> Dict[str, Any]:
         "pengeluaran_bulan_ini": data["summary"]["pengeluaran_bulan_ini"],
         "laba_bersih_bulan_ini": data["summary"]["laba_bersih_bulan_ini"],
         "business_health_score": health["skor"],
+        "aktivitas_tamu": data["guest"],
         "proyeksi_akhir_bulan": predict,
         "korelasi_understand": understand,
         "peluang": opportunity,
