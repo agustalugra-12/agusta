@@ -936,3 +936,71 @@ class RateBulkUpdateBody(BaseModel):
     dari: str  # YYYY-MM-DD
     sampai: str  # YYYY-MM-DD
     harga: int
+
+
+# ---- Cash & Account Intelligence (2026-07-22, PRD "AI Grow") ----
+# V1: ledger MANUAL berdiri sendiri (bukan auto-sync dari booking/expenses yang sudah ada -
+# keputusan sadar bareng user supaya cepat kepakai & tidak menyentuh alur uang production
+# yang sudah ada). Owner catat sendiri saldo awal, pemasukan/pengeluaran, & transfer per
+# rekening. V2 tambah rekonsiliasi CSV mutasi bank (mencocokkan, bukan menggantikan ledger
+# manual), smart allocation (transfer otomatis), forecast, & deteksi risiko saldo.
+REKENING_JENIS = ["operasional", "tabungan", "pinjaman"]
+
+class RekeningCreate(BaseModel):
+    nama: str
+    bank: str = ""
+    no_rekening: str = ""
+    pemilik: str = ""
+    jenis: str  # operasional | tabungan | pinjaman
+    saldo_awal: int = 0
+    target: Optional[int] = None  # goal tabungan, cuma relevan kalau jenis=tabungan
+    warna: str = "#0F4C5C"
+    icon: str = "Wallet"
+
+class RekeningUpdate(BaseModel):
+    nama: Optional[str] = None
+    bank: Optional[str] = None
+    no_rekening: Optional[str] = None
+    pemilik: Optional[str] = None
+    target: Optional[int] = None
+    warna: Optional[str] = None
+    icon: Optional[str] = None
+    status: Optional[str] = None  # aktif | nonaktif
+
+class RekeningTransaksiCreate(BaseModel):
+    """Pemasukan/pengeluaran manual pada 1 rekening (BUKAN transfer - lihat TransferIn)."""
+    rekening_id: str
+    jenis: str  # pemasukan | pengeluaran
+    nominal: int
+    kategori: str = ""
+    deskripsi: str = ""
+    tanggal: Optional[str] = None  # ISO date, default hari ini
+
+class TransferIn(BaseModel):
+    rekening_asal_id: str
+    rekening_tujuan_id: str
+    nominal: int
+    deskripsi: str = ""
+    tanggal: Optional[str] = None
+
+class SmartAllocationRuleCreate(BaseModel):
+    """2 mode trigger (WAJIB isi salah satu, bukan dua-duanya):
+    - saldo_diatas: begitu saldo rekening_asal_id > ambang_saldo, transfer nominal_transfer
+      ke rekening_tujuan_id (dicek tiap kali rekening_asal saldonya berubah).
+    - tanggal_bulanan: tiap tanggal_hari (1-28) tiap bulan, transfer nominal_transfer
+      (dicek oleh background loop harian, lihat routes/rekening.py)."""
+    nama: str
+    rekening_asal_id: str
+    rekening_tujuan_id: str
+    trigger_tipe: str  # saldo_diatas | tanggal_bulanan
+    ambang_saldo: Optional[int] = None  # wajib kalau trigger_tipe=saldo_diatas
+    tanggal_hari: Optional[int] = None  # 1-28, wajib kalau trigger_tipe=tanggal_bulanan
+    nominal_transfer: int
+    aktif: bool = True
+
+class SmartAllocationRuleUpdate(BaseModel):
+    nama: Optional[str] = None
+    ambang_saldo: Optional[int] = None
+    tanggal_hari: Optional[int] = None
+    nominal_transfer: Optional[int] = None
+    aktif: Optional[bool] = None

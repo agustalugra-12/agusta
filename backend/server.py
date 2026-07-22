@@ -22,6 +22,7 @@ import routes  # noqa: F401  — importing registers all endpoints on `api`
 from routes.sinkronisasi_ketersediaan import background_sync_loop
 from routes.otomasi_email import background_gmail_fetch_loop
 from routes.telegram_bot import background_telegram_daily_report_loop
+from routes.rekening import background_smart_rule_loop
 
 app = FastAPI(title="Pelangi Homestay API")
 app.mount("/uploads", StaticFiles(directory=str(ROOT_DIR / "uploads")), name="uploads")
@@ -164,6 +165,9 @@ async def startup():
 
     # Laporan akhir hari otomatis ke Telegram (owner & staff yang sudah terhubung), jam 22:00 WIB.
     asyncio.create_task(background_telegram_daily_report_loop())
+
+    # Cash & Account Intelligence - Smart Allocation Rule trigger tanggal_bulanan (cek 1x/6 jam).
+    asyncio.create_task(background_smart_rule_loop())
 
 
 @app.on_event("shutdown")

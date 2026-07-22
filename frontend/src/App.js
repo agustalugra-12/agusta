@@ -36,6 +36,7 @@ import JadwalKerja from "@/pages/JadwalKerja";
 import BusinessRules from "@/pages/BusinessRules";
 import Pembatalan from "@/pages/Pembatalan";
 import Payroll from "@/pages/Payroll";
+import Rekening from "@/pages/Rekening";
 import PublicBook from "@/pages/PublicBook";
 import "@/App.css";
 
@@ -88,6 +89,7 @@ function AppRoutes() {
         <Route path="/business-rules" element={<Protected ownerOnly><BusinessRules /></Protected>} />
         <Route path="/pembatalan" element={<Pembatalan />} />
         <Route path="/payroll" element={<Protected ownerOnly><Payroll /></Protected>} />
+        <Route path="/rekening" element={<Protected ownerOnly><Rekening /></Protected>} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

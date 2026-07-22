@@ -36,3 +36,4 @@ from . import integrasi_ai_bot  # noqa: F401
 from . import business_rules  # noqa: F401
 from . import pembatalan  # noqa: F401
 from . import payroll  # noqa: F401
+from . import rekening  # noqa: F401
