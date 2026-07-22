@@ -209,15 +209,20 @@ async def hapus_rekening(rid: str, user: dict = Depends(require_owner)):
 
 @api.post("/rekening/transaksi")
 async def buat_transaksi(body: RekeningTransaksiCreate, user: dict = Depends(require_owner)):
-    if body.jenis not in ("pemasukan", "pengeluaran"):
-        raise HTTPException(400, "jenis harus 'pemasukan' atau 'pengeluaran'")
+    # jenis "pengeluaran" SENGAJA tidak boleh dicatat manual di sini lagi (2026-07-22,
+    # permintaan user - ditemukan duplikasi fungsi dengan halaman Pengeluaran yang sudah
+    # ada). Pengeluaran sekarang SATU sumber kebenaran: POST /expenses - yang otomatis
+    # ikut ter-posting ke rekening default lewat auto_posting() (lihat V1.5). Kalau boleh
+    # dicatat dobel di sini, datanya bisa DIVERGEN dari Laporan Pengeluaran/Keuangan yang
+    # sudah dipakai luas (payroll, Telegram, dst). "pemasukan" tetap boleh manual - itu
+    # tidak ada halaman lain yang menanganinya (mis. modal owner, bunga bank, dll).
+    if body.jenis != "pemasukan":
+        raise HTTPException(400, "Pencatatan manual di sini cuma untuk 'pemasukan' - pengeluaran dicatat di halaman Pengeluaran (otomatis tersinkron ke rekening default)")
     if body.nominal <= 0:
         raise HTTPException(400, "Nominal harus lebih dari 0")
     r = await db.rekening.find_one({"id": body.rekening_id})
     if not r:
         raise HTTPException(404, "Rekening tidak ditemukan")
-    if body.jenis == "pengeluaran" and int(r.get("saldo") or 0) < body.nominal and r["jenis"] != "pinjaman":
-        raise HTTPException(400, f"Saldo {r['nama']} tidak cukup (saldo Rp{int(r.get('saldo') or 0):,})".replace(",", "."))
     doc = await _catat_transaksi(body.rekening_id, body.jenis, body.nominal, body.kategori,
                                   body.deskripsi, body.tanggal, user)
     await log_activity(user, "transaksi_rekening",
@@ -387,52 +392,10 @@ async def cash_risk(user: dict = Depends(require_owner)):
     return out
 
 
-# ---- AI Insight (reuse pola OpenAI yang sama dengan Telegram bot owner) ----
-
-INSIGHT_SYSTEM_PROMPT = """Kamu adalah asisten kas eksekutif untuk owner Pelangi Homestay.
-Tulis ringkasan kondisi kas singkat (maksimal 5-6 kalimat pendek, gaya seperti briefing
-eksekutif - lihat contoh), Bahasa Indonesia, berdasarkan data yang diberikan.
-ATURAN KERAS: PAKAI PERSIS angka yang diberikan di data, JANGAN PERNAH mengarang/menaksir
-angka yang tidak ada di data. Kalau suatu data tidak tersedia (mis. forecast tidak bisa
-dihitung), jangan sebut-sebut itu sama sekali - jangan mengarang alasan.
-Contoh gaya (bukan template wajib, cuma referensi nada):
-"Cash perusahaan saat ini Rp135.000.000. Sebesar Rp82.000.000 sudah dialokasikan menjadi
-dana tabungan. Dana operasional aman untuk 24 hari. Dana Renovasi diperkirakan mencapai
-target dalam 5 bulan. Tidak ada risiko likuiditas.\""""
-
-
-@api.get("/rekening/insight")
-async def ai_insight(user: dict = Depends(require_owner)):
-    dash = await dashboard_rekening(user)
-    risk = await cash_risk(user)
-    forecasts = []
-    for g in dash["goals"]:
-        f = await forecast_rekening(g["id"], user)
-        if f.get("status") == "berjalan":
-            forecasts.append(f)
-    konteks = (
-        f"Total Cash: Rp{dash['total_cash']:,}\n"
-        f"Operasional: Rp{dash['operasional']:,}\n"
-        f"Tabungan: Rp{dash['tabungan']:,}\n"
-        f"Pinjaman: Rp{dash['pinjaman']:,}\n"
-        f"Net Cash: Rp{dash['net_cash']:,}\n"
-        f"Risiko kas operasional: {[(r['nama'], r['status'], r.get('hari_tersisa')) for r in risk]}\n"
-        f"Forecast goal tabungan: {[(f['nama'], f.get('estimasi_bulan'), f.get('estimasi_tanggal')) for f in forecasts]}\n"
-    ).replace(",", ".")
-    from openai import OpenAI
-    client = OpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
-    if not client:
-        return {"insight": "AI belum aktif (OPENAI_API_KEY belum diisi) - lihat angka di dashboard langsung."}
-    try:
-        resp = await asyncio.to_thread(
-            client.chat.completions.create, model="gpt-4o-mini", temperature=0.4,
-            messages=[{"role": "system", "content": INSIGHT_SYSTEM_PROMPT},
-                     {"role": "user", "content": konteks}],
-        )
-        return {"insight": resp.choices[0].message.content}
-    except Exception as e:
-        logging.getLogger("rekening").warning(f"Gagal generate AI insight kas: {e}")
-        return {"insight": "Gagal membuat ringkasan AI saat ini - lihat angka di dashboard langsung."}
+# AI Insight kas SENGAJA dipindah & digabung ke satu panel terpadu di Dashboard utama
+# (2026-07-22, permintaan user - sebelumnya ada insight terpisah di sini, sekarang jadi
+# bagian dari GET /reports/ai-insight yang juga mencakup okupansi & pengeluaran tertinggi).
+# forecast_rekening & cash_risk di bawah tetap dipakai endpoint itu (import langsung).
 
 
 # ---- Smart Allocation Rules (V2) ----

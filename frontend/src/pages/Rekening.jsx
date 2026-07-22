@@ -11,7 +11,7 @@ import { Progress } from "@/components/ui/progress";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
-  Plus, Trash2, PencilLine, ArrowRightLeft, Sparkles, AlertTriangle,
+  Plus, Trash2, PencilLine, ArrowRightLeft, AlertTriangle,
   Upload, Wallet, PiggyBank, Landmark, TrendingDown, Zap,
 } from "lucide-react";
 
@@ -25,7 +25,7 @@ export default function Rekening() {
       <div>
         <p className="text-xs uppercase tracking-[0.25em] text-slate-500">Cash & Account Intelligence</p>
         <h1 className="text-3xl sm:text-4xl font-extrabold">Cash & Rekening</h1>
-        <p className="text-slate-500 mt-1">Posisi kas per rekening, transfer internal, target tabungan, & insight AI — bukan pengganti Laporan Keuangan, ini lapisan "uang ada di mana" di atasnya.</p>
+        <p className="text-slate-500 mt-1">Posisi kas per rekening, transfer internal, & target tabungan — bukan pengganti Laporan Keuangan, ini lapisan "uang ada di mana" di atasnya. Ringkasan AI ada di Dashboard utama.</p>
       </div>
 
       <Tabs value={tab} onValueChange={setTab}>
@@ -67,8 +67,6 @@ function StatCard({ label, value, sub, icon: Icon, tone = "default" }) {
 
 function DashboardTab() {
   const [dash, setDash] = useState(null);
-  const [insight, setInsight] = useState("");
-  const [insightLoading, setInsightLoading] = useState(true);
   const [risk, setRisk] = useState([]);
 
   const load = async () => {
@@ -77,14 +75,7 @@ function DashboardTab() {
     ]);
     setDash(d); setRisk(r);
   };
-  const loadInsight = async () => {
-    setInsightLoading(true);
-    try {
-      const { data } = await api.get("/rekening/insight");
-      setInsight(data.insight);
-    } finally { setInsightLoading(false); }
-  };
-  useEffect(() => { load(); loadInsight(); }, []);
+  useEffect(() => { load(); }, []);
 
   if (!dash) return <div className="text-slate-500 text-sm">Memuat…</div>;
 
@@ -109,15 +100,7 @@ function DashboardTab() {
         <StatCard label="Net Cash" value={dash.net_cash} tone={dash.net_cash < 0 ? "danger" : "default"} />
       </div>
 
-      <Card className="border-slate-200 bg-teal-50/40">
-        <CardContent className="p-5">
-          <div className="flex items-center gap-2 mb-2">
-            <Sparkles className="w-4 h-4 text-blue-700" />
-            <p className="font-bold text-sm">Executive Insight</p>
-          </div>
-          <p className="text-sm text-slate-700 whitespace-pre-line">{insightLoading ? "Menyusun ringkasan…" : insight}</p>
-        </CardContent>
-      </Card>
+      <p className="text-xs text-slate-500 -mt-2">Ringkasan AI (okupansi, pengeluaran tertinggi, & posisi kas ini) ada di Dashboard utama, bukan di sini.</p>
 
       {risk.some((r) => r.status !== "aman") && (
         <Card className="border-amber-300 bg-amber-50">
@@ -332,7 +315,7 @@ function RekeningSelect({ items, value, onChange, exclude, testId }) {
 function TransaksiTab() {
   const [rekening, setRekening] = useState([]);
   const [riwayat, setRiwayat] = useState([]);
-  const [txForm, setTxForm] = useState({ rekening_id: "", jenis: "pengeluaran", nominal: "", kategori: "", deskripsi: "" });
+  const [txForm, setTxForm] = useState({ rekening_id: "", jenis: "pemasukan", nominal: "", kategori: "", deskripsi: "" });
   const [trForm, setTrForm] = useState({ rekening_asal_id: "", rekening_tujuan_id: "", nominal: "", deskripsi: "" });
   const [saving, setSaving] = useState(false);
 
@@ -347,7 +330,7 @@ function TransaksiTab() {
     setSaving(true);
     try {
       await api.post("/rekening/transaksi", { ...txForm, nominal: Number(txForm.nominal) });
-      toast.success("Transaksi dicatat"); setTxForm({ rekening_id: "", jenis: "pengeluaran", nominal: "", kategori: "", deskripsi: "" }); load();
+      toast.success("Transaksi dicatat"); setTxForm({ rekening_id: "", jenis: "pemasukan", nominal: "", kategori: "", deskripsi: "" }); load();
     } catch (e) { toast.error(e?.response?.data?.detail || "Gagal"); }
     finally { setSaving(false); }
   };
@@ -369,12 +352,9 @@ function TransaksiTab() {
       <div className="space-y-6">
         <Card className="border-slate-200">
           <CardContent className="p-5 space-y-3">
-            <h3 className="font-bold">Pemasukan / Pengeluaran Manual</h3>
+            <h3 className="font-bold">Pemasukan Manual (Lainnya)</h3>
+            <p className="text-xs text-slate-500">Untuk pengeluaran, catat di halaman <a href="/pengeluaran" className="underline font-medium">Pengeluaran</a> — otomatis tersinkron ke rekening default, supaya tidak dobel catat. Form ini khusus pemasukan lain (mis. modal, bunga bank) yang belum ada tempatnya.</p>
             <RekeningSelect items={rekening} value={txForm.rekening_id} onChange={(v) => setTxForm((f) => ({ ...f, rekening_id: v }))} testId="tx-form-rekening" />
-            <select value={txForm.jenis} onChange={(e) => setTxForm((f) => ({ ...f, jenis: e.target.value }))} className="w-full h-10 px-3 rounded-md border border-slate-200 text-sm">
-              <option value="pengeluaran">Pengeluaran</option>
-              <option value="pemasukan">Pemasukan</option>
-            </select>
             <Input type="number" placeholder="Nominal (Rp)" value={txForm.nominal} onChange={(e) => setTxForm((f) => ({ ...f, nominal: e.target.value }))} data-testid="tx-form-nominal" />
             <Input placeholder="Kategori" value={txForm.kategori} onChange={(e) => setTxForm((f) => ({ ...f, kategori: e.target.value }))} />
             <Input placeholder="Deskripsi" value={txForm.deskripsi} onChange={(e) => setTxForm((f) => ({ ...f, deskripsi: e.target.value }))} />

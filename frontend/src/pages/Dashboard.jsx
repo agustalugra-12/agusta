@@ -48,6 +48,9 @@ export default function Dashboard() {
   const [bookings, setBookings] = useState([]);
   const [bookingRequests, setBookingRequests] = useState([]); // waiting_approval — supaya owner/resepsionis lihat langsung dari Dashboard, tidak perlu buka halaman terpisah
   const [kedatanganHarian, setKedatanganHarian] = useState([]); // grafik kedatangan tamu 30 hari (2026-07-21, permintaan user)
+  const [aiInsight, setAiInsight] = useState("");
+  const [aiInsightLoading, setAiInsightLoading] = useState(true);
+  const isOwner = user?.role === "owner";
   const [approveReqTarget, setApproveReqTarget] = useState(null);
   const [rejectReqTarget, setRejectReqTarget] = useState(null);
   const [filterDate, setFilterDate] = useState(todayLocal());
@@ -163,9 +166,21 @@ export default function Dashboard() {
     } catch (e) { console.error(e); }
   };
 
+  const loadAiInsight = async () => {
+    setAiInsightLoading(true);
+    try {
+      const { data } = await api.get("/reports/ai-insight");
+      setAiInsight(data.insight);
+    } catch (e) { console.error(e); }
+    finally { setAiInsightLoading(false); }
+  };
+
   useEffect(() => {
     load();
     const t = setInterval(load, 30000);
+    // AI insight sengaja TIDAK ikut polling 30 detik (mahal & lambat, tidak perlu
+    // realtime) - cukup dimuat sekali saat halaman dibuka.
+    if (isOwner) loadAiInsight();
     return () => clearInterval(t);
   }, []);
 
@@ -490,6 +505,20 @@ export default function Dashboard() {
         <RevCard icon={CalendarRange} label="Pendapatan Bulan Ini" value={fmtRp(summary?.pendapatan_bulan_ini || 0)} hint="Total semua transaksi" />
         <RevCard icon={Wallet} label="Laba Bersih Bulan" value={fmtRp(summary?.laba_bersih_bulan_ini || 0)} hint={`Pengeluaran ${fmtRp(summary?.pengeluaran_bulan_ini || 0)}`} />
       </div>
+
+      {/* AI Business Insight (2026-07-22, permintaan user - satu panel terpadu okupansi +
+          pengeluaran tertinggi + posisi kas, owner-only, biar gampang dilihat di satu tempat) */}
+      {isOwner && (
+        <Card className="border-slate-200 bg-teal-50/40">
+          <CardContent className="p-4 sm:p-5">
+            <div className="flex items-center gap-2 mb-2">
+              <Sparkles className="w-4 h-4 text-blue-700" />
+              <p className="font-bold text-sm">AI Business Insight</p>
+            </div>
+            <p className="text-sm text-slate-700 whitespace-pre-line">{aiInsightLoading ? "Menyusun ringkasan…" : aiInsight}</p>
+          </CardContent>
+        </Card>
+      )}
 
       {/* Grafik Kedatangan Tamu 30 Hari (2026-07-21, permintaan user) */}
       <Card className="border-slate-200">
