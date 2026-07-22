@@ -4,7 +4,7 @@ import { useAuth } from "@/context/AuthContext";
 import { Button } from "@/components/ui/button";
 import {
   LayoutDashboard, BedDouble, ShoppingCart, Boxes,
-  Wallet, Sparkles, BarChart3, UserCog, ShieldCheck, LogOut, Menu, HandCoins, DoorOpen, ListChecks, Mail, RefreshCw, CreditCard, MessageSquare, Shuffle, BedSingle, Send, Wand2, Tag, AlertTriangle, Wrench, Inbox, CalendarClock, Gavel, Bell, Ban, Users, BadgeDollarSign, Landmark,
+  Wallet, Sparkles, BarChart3, UserCog, ShieldCheck, LogOut, Menu, HandCoins, DoorOpen, ListChecks, Mail, RefreshCw, CreditCard, MessageSquare, Shuffle, Send, Wand2, Tag, AlertTriangle, Wrench, Inbox, CalendarClock, Gavel, Bell, Ban, Users, BadgeDollarSign, Landmark,
 } from "lucide-react";
 import { useState, useEffect } from "react";
 import { playAlertSound, unlockAlertSound } from "@/lib/alertSound";
@@ -18,11 +18,10 @@ const navItems = [
   { to: "/booking-requests", label: "Booking Request", icon: Inbox },
   { to: "/pembatalan", label: "Pembatalan", icon: Ban },
   { to: "/otomasi-email", label: "Otomasi Email", icon: Mail, ownerOnly: true },
-  { to: "/sinkronisasi-ketersediaan", label: "Sinkronisasi", icon: RefreshCw, ownerOnly: true },
+  { to: "/sinkronisasi-ketersediaan", label: "Status Integrasi", icon: RefreshCw, ownerOnly: true },
   { to: "/pembayaran", label: "Pembayaran", icon: CreditCard },
-  { to: "/whatsapp-otomatis", label: "WhatsApp Bot", icon: MessageSquare, ownerOnly: true },
+  { to: "/whatsapp-otomatis", label: "Integrasi WhatsApp", icon: MessageSquare, ownerOnly: true },
   { to: "/pemetaan-tipe-kamar", label: "Pemetaan Kamar", icon: Shuffle, ownerOnly: true },
-  { to: "/extra-bed", label: "Extra Bed", icon: BedSingle },
   { to: "/pengiriman-voucher", label: "Voucher Terkirim", icon: Send, ownerOnly: true },
   { to: "/rekomendasi-checkin", label: "Rekomendasi Check-in", icon: Wand2 },
   { to: "/kalender-harga", label: "Kalender Harga", icon: Tag, ownerOnly: true },

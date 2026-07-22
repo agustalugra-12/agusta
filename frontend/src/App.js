@@ -25,7 +25,6 @@ import SinkronisasiKetersediaan from "@/pages/SinkronisasiKetersediaan";
 import Pembayaran from "@/pages/Pembayaran";
 import PesanWhatsAppOtomatis from "@/pages/PesanWhatsAppOtomatis";
 import PemetaanTipeKamar from "@/pages/PemetaanTipeKamar";
-import PermintaanKhususExtraBed from "@/pages/PermintaanKhususExtraBed";
 import PengirimanVoucherOtomatis from "@/pages/PengirimanVoucherOtomatis";
 import RekomendasiCheckinDayUse from "@/pages/RekomendasiCheckinDayUse";
 import Komplain from "@/pages/Komplain";
@@ -79,7 +78,6 @@ function AppRoutes() {
         <Route path="/pembayaran" element={<Pembayaran />} />
         <Route path="/whatsapp-otomatis" element={<PesanWhatsAppOtomatis />} />
         <Route path="/pemetaan-tipe-kamar" element={<PemetaanTipeKamar />} />
-        <Route path="/extra-bed" element={<PermintaanKhususExtraBed />} />
         <Route path="/pengiriman-voucher" element={<PengirimanVoucherOtomatis />} />
         <Route path="/rekomendasi-checkin" element={<RekomendasiCheckinDayUse />} />
         <Route path="/komplain" element={<Komplain />} />

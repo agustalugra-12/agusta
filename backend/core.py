@@ -289,7 +289,7 @@ async def push_sync_event(data_type: str, detail: str) -> None:
     """Dorong notifikasi perubahan data Pelangi PMS ke bot WhatsApp (Sinkronisasi Data
     PMS) — best-effort, tidak boleh menggagalkan aksi utama (booking/checkin/dst) kalau
     provider bot sedang bermasalah. Satu kali retry otomatis; kegagalan dicatat ke
-    `wa_connection_log` supaya bisa dipantau di Pemantauan Status / Sinkronisasi Data PMS.
+    `wa_connection_log` supaya bisa dipantau di halaman Sinkronisasi Data PMS.
     """
     cfg = await db.webhook_config.find_one({})
     if not cfg or not cfg.get("aktif") or not cfg.get("webhook_url") or not cfg.get("api_key"):

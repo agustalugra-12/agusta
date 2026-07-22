@@ -60,7 +60,6 @@ async def startup():
     await db.push_subscriptions.create_index("user_id")
     await db.booking_requests.create_index("status")
     await db.booking_requests.create_index("created_at")
-    await db.wa_booking_sessions.create_index("no_hp", unique=True)
     await db.jadwal_kerja.create_index([("year", 1), ("month", 1)], unique=True)
     await db.jadwal_shifts.create_index([("jadwal_id", 1), ("staff_id", 1), ("tanggal", 1)], unique=True)
     await db.kasbon.create_index("staff_id")

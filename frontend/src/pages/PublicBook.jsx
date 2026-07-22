@@ -9,7 +9,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { bookingConfirmationWaLink, waLink, STATUS_BAYAR_LABEL } from "@/lib/apiClient";
-import { ExtraBedSelector } from "@/pages/PermintaanKhususExtraBed";
+import { ExtraBedSelector } from "@/components/ExtraBedSelector";
 import {
   BedDouble, Wifi, Snowflake, Tv, Droplets, Bath, Trees, CheckCircle2, XCircle,
   Calendar, Clock, User, Phone, IdCard, Car, Users as UsersIcon, Building2, ArrowRight, Mail, Ban, AlertTriangle,

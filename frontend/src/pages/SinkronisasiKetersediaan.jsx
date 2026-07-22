@@ -332,10 +332,10 @@ export default function SinkronisasiKetersediaan() {
   return (
     <div className="space-y-6" data-testid="sinkronisasi-ketersediaan-page">
       <div>
-        <p className="text-xs uppercase tracking-[0.25em] text-slate-500">Fase 2 — AI Reservation Automation</p>
-        <h1 className="text-3xl sm:text-4xl font-extrabold">Sinkronisasi Ketersediaan</h1>
+        <p className="text-xs uppercase tracking-[0.25em] text-slate-500">Status Integrasi</p>
+        <h1 className="text-3xl sm:text-4xl font-extrabold">Status Integrasi</h1>
         <p className="text-slate-500 mt-1">
-          Pusat sinkronisasi stok kamar antara Pelangi PMS dan semua saluran penjualan.
+          Status terhubung/tidaknya tiap saluran penjualan (PMS, Website, Email OTA, WhatsApp) — bukan mesin sinkronisasi, mesin otomasi OTA yang sungguhan ada di halaman Otomasi Email.
         </p>
       </div>
 
