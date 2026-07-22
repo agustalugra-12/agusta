@@ -966,6 +966,7 @@ class RekeningUpdate(BaseModel):
     warna: Optional[str] = None
     icon: Optional[str] = None
     status: Optional[str] = None  # aktif | nonaktif
+    default_operasional: Optional[bool] = None  # lihat catatan V1.5 di routes/rekening.py
 
 class RekeningTransaksiCreate(BaseModel):
     """Pemasukan/pengeluaran manual pada 1 rekening (BUKAN transfer - lihat TransferIn)."""

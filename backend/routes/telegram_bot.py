@@ -339,6 +339,8 @@ async def _catat_pengeluaran_items(user_doc: dict, items: list, foto_url: str = 
         }
         await db.expenses.insert_one(doc)
         await log_activity(user_doc, "expense", f"Pengeluaran (Telegram) Operasional Rp{it['nominal']:,}".replace(",", "."))
+        from routes.rekening import auto_posting
+        await auto_posting("pengeluaran", it["nominal"], "Operasional", it["deskripsi"])
         baris.append(f"  - {it['deskripsi']}: {_rp(it['nominal'])}")
         total += it["nominal"]
     prefix = "✅ Pengeluaran tercatat:" if len(items) == 1 else f"✅ {len(items)} pengeluaran tercatat:"

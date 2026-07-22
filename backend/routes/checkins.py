@@ -169,6 +169,13 @@ async def checkout(checkin_id: str, body: CheckoutIn, user: dict = Depends(get_c
     if c.get("guest_id"):
         await db.guests.update_one({"id": c["guest_id"]}, {"$inc": {"total_transaksi": calc["total"]}})
     await log_activity(user, "checkout", f"Check-out {c['nama_tamu']} kamar {c['room_nomor']}, total Rp{calc['total']:,}".replace(",", "."), entity=c["room_nomor"])
+    # Cash & Account Intelligence V1.5 (2026-07-22) - posting `total_bayar` (uang yang
+    # BENAR-BENAR dikumpulkan staf saat checkout ini, bukan `calc["total"]`) ke rekening
+    # operasional default, best-effort. Kalau booking ini sebelumnya sudah dibayar online
+    # via Tripay, itu SUDAH terposting terpisah di webhook Tripay - `total_bayar` di sini
+    # cuma yang dikumpulkan fisik di titik checkout, tidak dobel hitung.
+    from routes.rekening import auto_posting
+    await auto_posting("pemasukan", total_bayar, "Check-out Day Use", f"Kamar {c['room_nomor']} - {c['nama_tamu']}")
     res = {**c, **updates}
     res.pop("_id", None)
     return res

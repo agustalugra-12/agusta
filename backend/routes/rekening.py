@@ -62,6 +62,38 @@ async def _catat_transaksi(rekening_id: str, jenis: str, nominal: int, kategori:
     return doc
 
 
+_AUTO_POSTING_USER = {"nama": "Sistem (auto-posting)", "id": "system"}
+
+
+async def auto_posting(jenis: str, nominal: int, kategori: str, deskripsi: str, tanggal: Optional[str] = None) -> None:
+    """V1.5 (2026-07-22, permintaan user 'lanjut v1.5') - hubungkan ledger rekening ke uang
+    yang BENAR-BENAR bergerak di alur production yang sudah ada (Tripay settlement, checkout
+    Day Use, penjualan Kasir, pengeluaran/payroll) TANPA owner perlu catat manual lagi.
+
+    Semua posting otomatis diarahkan ke SATU rekening operasional yang ditandai
+    `default_operasional=true` (diatur owner di tab Rekening, tombol "Jadikan Default
+    Posting Otomatis") - keputusan desain sengaja SEDERHANA: sistem tidak tahu uang Tripay/
+    tunai/dsb sungguhan masuk rekening bank yang mana, jadi tidak dipaksa menebak per-metode
+    pembayaran, cukup 1 titik kumpul yang owner pilih sendiri (bisa dipindah manual/transfer
+    internal kapan saja setelah itu).
+
+    SELALU best-effort & TIDAK PERNAH melempar exception ke pemanggil - dipanggil dari alur
+    UANG SUNGGUHAN (webhook Tripay, checkout, kasir) yang tidak boleh gagal gara-gara modul
+    Cash Intelligence ini bermasalah/rekening belum diset. Kalau belum ada rekening default,
+    diam-diam dilewati (dicatat sbg info log, bukan warning - ini kondisi normal buat yang
+    belum pakai modul V1.5 sama sekali)."""
+    if nominal <= 0:
+        return
+    try:
+        rekening = await db.rekening.find_one({"default_operasional": True, "status": "aktif"})
+        if not rekening:
+            logging.getLogger("rekening").info(f"auto_posting dilewati (belum ada rekening operasional default): {kategori} Rp{nominal}")
+            return
+        await _catat_transaksi(rekening["id"], jenis, nominal, kategori, deskripsi, tanggal, _AUTO_POSTING_USER, source="auto_posting")
+    except Exception as e:
+        logging.getLogger("rekening").warning(f"auto_posting gagal ({kategori} Rp{nominal}): {e}")
+
+
 async def _cek_smart_rules_saldo(rekening_id: str, user: dict):
     """Trigger saldo_diatas - dipanggil tiap kali saldo `rekening_id` berubah. SENGAJA tidak
     dipanggil ulang utk rekening_tujuan_id di dalam transfer yang dihasilkan fungsi ini sendiri
@@ -106,6 +138,7 @@ async def buat_rekening(body: RekeningCreate, user: dict = Depends(require_owner
         "no_rekening": body.no_rekening, "pemilik": body.pemilik, "jenis": body.jenis,
         "saldo": int(body.saldo_awal or 0), "target": body.target,
         "warna": body.warna, "icon": body.icon, "status": "aktif",
+        "default_operasional": False,
         "created_at": now_iso(), "updated_at": now_iso(),
     }
     await db.rekening.insert_one(doc)
@@ -142,10 +175,15 @@ async def update_rekening(rid: str, body: RekeningUpdate, user: dict = Depends(r
         raise HTTPException(400, "Target cuma berlaku untuk rekening jenis tabungan")
     if body.status is not None and body.status not in ("aktif", "nonaktif"):
         raise HTTPException(400, "Status harus 'aktif' atau 'nonaktif'")
+    if body.default_operasional and r["jenis"] != "operasional":
+        raise HTTPException(400, "Rekening operasional default harus jenis 'operasional'")
     updates = {k: v for k, v in body.dict(exclude_unset=True).items() if v is not None}
     if not updates:
         return _rekening_out(r)
     updates["updated_at"] = now_iso()
+    if body.default_operasional:
+        # Cuma 1 rekening boleh jadi tujuan auto-posting (V1.5) - lepas dari rekening lain dulu.
+        await db.rekening.update_many({"id": {"$ne": rid}}, {"$set": {"default_operasional": False}})
     await db.rekening.update_one({"id": rid}, {"$set": updates})
     await log_activity(user, "update_rekening", f"Ubah rekening {r['nama']}")
     return _rekening_out(await db.rekening.find_one({"id": rid}, {"_id": 0}))

@@ -264,6 +264,11 @@ async def tripay_callback(request: Request):
                         logging.getLogger("tripay").warning(
                             f"Gagal kirim voucher otomatis (Tripay) booking {gb['kode']}: {e}"
                         )
+                    # Cash & Account Intelligence V1.5 (2026-07-22) - posting otomatis ke
+                    # rekening operasional default, best-effort (lihat docstring auto_posting).
+                    from routes.rekening import auto_posting
+                    await auto_posting("pemasukan", int(total_amount or 0), "Booking Tamu (Tripay)",
+                                        f"Booking {gb['kode']} - {gb.get('nama_tamu', '-')}")
                     await send_push(
                         "Pembayaran Diterima",
                         f"Booking {gb['kode']} - {gb.get('nama_tamu', '-')} - Kamar {gb.get('room_nomor', '-')} sudah dibayar",

@@ -210,6 +210,11 @@ function RekeningTab() {
     load();
   };
 
+  const setDefaultOperasional = async (r) => {
+    await api.put(`/rekening/${r.id}`, { default_operasional: true });
+    toast.success(`${r.nama} dijadikan tujuan posting otomatis`); load();
+  };
+
   const remove = async (r) => {
     if (!window.confirm(`Hapus rekening ${r.nama}?`)) return;
     try {
@@ -222,8 +227,13 @@ function RekeningTab() {
 
   return (
     <div className="space-y-6">
-      <div className="flex justify-end">
-        <Button onClick={openAdd} className="bg-blue-700 hover:bg-blue-800" data-testid="rekening-add-btn">
+      <div className="flex items-start justify-between gap-4">
+        <p className="text-xs text-slate-500 max-w-lg">
+          Pembayaran booking (Tripay), checkout Day Use, penjualan Kasir, dan pengeluaran/payroll
+          sekarang otomatis tercatat ke rekening operasional yang ditandai "Default Posting" —
+          set salah satu rekening operasional di bawah kalau belum ada.
+        </p>
+        <Button onClick={openAdd} className="bg-blue-700 hover:bg-blue-800 shrink-0" data-testid="rekening-add-btn">
           <Plus className="w-4 h-4 mr-1" /> Tambah Rekening
         </Button>
       </div>
@@ -245,7 +255,10 @@ function RekeningTab() {
                           <p className="font-bold">{r.nama}</p>
                           <p className="text-xs text-slate-500">{r.bank}{r.no_rekening ? ` · ${r.no_rekening}` : ""}</p>
                         </div>
-                        <Badge variant={r.status === "aktif" ? "default" : "secondary"}>{r.status}</Badge>
+                        <div className="flex flex-col items-end gap-1">
+                          <Badge variant={r.status === "aktif" ? "default" : "secondary"}>{r.status}</Badge>
+                          {r.default_operasional && <Badge className="bg-blue-700">Default Posting</Badge>}
+                        </div>
                       </div>
                       <p className="text-xl font-extrabold mt-3">{fmtRp(r.saldo)}</p>
                       {r.jenis === "tabungan" && r.target && (
@@ -254,7 +267,10 @@ function RekeningTab() {
                           <p className="text-[11px] text-slate-500">{r.progress_persen}% dari {fmtRp(r.target)}</p>
                         </div>
                       )}
-                      <div className="flex gap-2 mt-3">
+                      <div className="flex flex-wrap gap-2 mt-3">
+                        {r.jenis === "operasional" && !r.default_operasional && (
+                          <Button size="sm" variant="outline" onClick={() => setDefaultOperasional(r)} data-testid={`rekening-set-default-${r.id}`}>Jadikan Default Posting Otomatis</Button>
+                        )}
                         <Button size="sm" variant="outline" onClick={() => toggleStatus(r)}>{r.status === "aktif" ? "Nonaktifkan" : "Aktifkan"}</Button>
                         <Button size="sm" variant="outline" className="text-red-600 hover:bg-red-50" onClick={() => remove(r)}><Trash2 className="w-3.5 h-3.5" /></Button>
                       </div>

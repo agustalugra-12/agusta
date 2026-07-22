@@ -46,6 +46,8 @@ async def create_kasir(body: KasirCreate, user: dict = Depends(get_current_user)
         if r["kategori"] != "laundry":
             await db.products.update_one({"id": r["product_id"]}, {"$inc": {"stok": -r["qty"]}})
     await log_activity(user, "kasir", f"Transaksi kasir {trx_no} total Rp{total:,}".replace(",", "."))
+    from routes.rekening import auto_posting
+    await auto_posting("pemasukan", total_bayar, "Penjualan Kasir", f"Transaksi {trx_no}")
     doc.pop("_id", None)
     return doc
 
