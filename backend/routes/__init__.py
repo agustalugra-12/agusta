@@ -37,3 +37,4 @@ from . import business_rules  # noqa: F401
 from . import pembatalan  # noqa: F401
 from . import payroll  # noqa: F401
 from . import rekening  # noqa: F401
+from . import ai_grow  # noqa: F401

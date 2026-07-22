@@ -322,77 +322,10 @@ async def report_summary(user: dict = Depends(get_current_user)):
     }
 
 
-AI_BUSINESS_INSIGHT_SYSTEM_PROMPT = """Kamu asisten bisnis eksekutif untuk owner Pelangi Homestay.
-Tulis ringkasan kondisi bisnis singkat (maksimal 6-7 kalimat pendek, gaya briefing
-eksekutif, Bahasa Indonesia) dari data yang diberikan - gabungkan okupansi, pengeluaran
-tertinggi, dan posisi kas (kalau datanya ada) jadi satu narasi mengalir, BUKAN daftar
-per-kategori terpisah.
-ATURAN KERAS: PAKAI PERSIS angka yang diberikan, JANGAN PERNAH mengarang/menaksir angka
-yang tidak ada di data. Kalau suatu bagian data tidak tersedia (mis. belum ada rekening
-kas), jangan sebut-sebut bagian itu sama sekali - jangan mengarang alasan. Kalau ada
-sesuatu yang perlu perhatian owner (pengeluaran kategori tertentu naik tajam, okupansi
-rendah, kas berisiko), sebutkan sebagai rekomendasi singkat di kalimat terakhir."""
-
-
-@api.get("/reports/ai-insight")
-async def ai_business_insight(user: dict = Depends(require_owner)):
-    """Satu panel AI Insight terpadu untuk Dashboard utama (2026-07-22, permintaan user -
-    sebelumnya ada insight AI terpisah di tab Cash & Rekening & tidak ada penjelasan AI sama
-    sekali soal pengeluaran tertinggi di Laporan; digabung jadi SATU tempat di Dashboard
-    utama biar gampang dilihat, bukan tersebar). Gabungan 3 sumber data nyata:
-    okupansi+pendapatan+pengeluaran bulan ini (reuse report_summary), 5 kategori pengeluaran
-    tertinggi 30 hari terakhir (agregasi langsung db.expenses), & posisi kas dari modul
-    Cash & Rekening KALAU owner sudah pakai modul itu (best-effort, dilewati kalau belum ada
-    rekening - modul V1.5 opsional, tidak wajib dipakai)."""
-    summary = await report_summary(user)
-
-    batas_30_hari = (datetime.now(timezone.utc) - timedelta(days=30)).date().isoformat()
-    exp_30hari = await db.expenses.find({"tanggal": {"$gte": batas_30_hari}}, {"_id": 0, "kategori": 1, "nominal": 1}).to_list(2000)
-    per_kategori: Dict[str, int] = {}
-    for e in exp_30hari:
-        k = e.get("kategori") or "Lainnya"
-        per_kategori[k] = per_kategori.get(k, 0) + int(e.get("nominal") or 0)
-    top_pengeluaran = sorted(per_kategori.items(), key=lambda x: -x[1])[:5]
-
-    cash_info = None
-    try:
-        from routes.rekening import dashboard_rekening, cash_risk
-        dash = await dashboard_rekening(user)
-        if dash["rekening"]:
-            risk = await cash_risk(user)
-            cash_info = {"total_cash": dash["total_cash"], "net_cash": dash["net_cash"],
-                        "risiko": [(r["nama"], r["status"], r.get("hari_tersisa")) for r in risk if r["status"] != "aman"]}
-    except Exception as e:
-        logging.getLogger("reports").info(f"ai_business_insight: cash info dilewati ({e})")
-
-    konteks_parts = [
-        f"Okupansi hari ini: {summary['okupansi_persen']}% ({summary['total_rooms'] - summary['rooms']['kosong']}/{summary['total_rooms']} kamar terisi)",
-        f"Pendapatan bulan ini: Rp{summary['pendapatan_bulan_ini']:,}".replace(",", "."),
-        f"Pengeluaran bulan ini: Rp{summary['pengeluaran_bulan_ini']:,}".replace(",", "."),
-        f"Laba bersih bulan ini: Rp{summary['laba_bersih_bulan_ini']:,}".replace(",", "."),
-        f"5 kategori pengeluaran tertinggi (30 hari terakhir): {[(k, f'Rp{v:,}'.replace(',', '.')) for k, v in top_pengeluaran]}",
-    ]
-    if cash_info:
-        konteks_parts.append(f"Total Cash (semua rekening): Rp{cash_info['total_cash']:,}".replace(",", "."))
-        konteks_parts.append(f"Net Cash (dikurangi pinjaman): Rp{cash_info['net_cash']:,}".replace(",", "."))
-        if cash_info["risiko"]:
-            konteks_parts.append(f"Rekening berisiko kas: {cash_info['risiko']}")
-    konteks = "\n".join(konteks_parts)
-
-    if not OPENAI_API_KEY:
-        return {"insight": "AI belum aktif (OPENAI_API_KEY belum diisi) - lihat angka di dashboard langsung.", "konteks": konteks_parts}
-    try:
-        from openai import OpenAI
-        client = OpenAI(api_key=OPENAI_API_KEY)
-        resp = await asyncio.to_thread(
-            client.chat.completions.create, model="gpt-4o-mini", temperature=0.4,
-            messages=[{"role": "system", "content": AI_BUSINESS_INSIGHT_SYSTEM_PROMPT},
-                     {"role": "user", "content": konteks}],
-        )
-        return {"insight": resp.choices[0].message.content, "konteks": konteks_parts}
-    except Exception as e:
-        logging.getLogger("reports").warning(f"Gagal generate AI business insight: {e}")
-        return {"insight": "Gagal membuat ringkasan AI saat ini - lihat angka di dashboard langsung.", "konteks": konteks_parts}
+# GET /reports/ai-insight DIHAPUS 2026-07-22 - digantikan sepenuhnya oleh AI Grow
+# (GET /ai-grow/daily-brief, routes/ai_grow.py), yang mencakup jauh lebih banyak (health
+# score, korelasi, prediksi, opportunity/risk engine, rekomendasi), bukan cuma narasi
+# okupansi+pengeluaran+kas.
 
 @api.get("/reports/kedatangan-harian")
 async def report_kedatangan_harian(user: dict = Depends(get_current_user)):

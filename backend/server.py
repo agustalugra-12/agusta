@@ -23,6 +23,7 @@ from routes.sinkronisasi_ketersediaan import background_sync_loop
 from routes.otomasi_email import background_gmail_fetch_loop
 from routes.telegram_bot import background_telegram_daily_report_loop
 from routes.rekening import background_smart_rule_loop
+from routes.ai_grow import background_daily_brief_loop
 
 app = FastAPI(title="Pelangi Homestay API")
 app.mount("/uploads", StaticFiles(directory=str(ROOT_DIR / "uploads")), name="uploads")
@@ -167,6 +168,9 @@ async def startup():
 
     # Cash & Account Intelligence - Smart Allocation Rule trigger tanggal_bulanan (cek 1x/6 jam).
     asyncio.create_task(background_smart_rule_loop())
+
+    # AI Grow - Daily Executive Brief ke Telegram owner tiap jam 07:30 WIB.
+    asyncio.create_task(background_daily_brief_loop())
 
 
 @app.on_event("shutdown")

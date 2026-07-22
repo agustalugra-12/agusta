@@ -48,8 +48,8 @@ export default function Dashboard() {
   const [bookings, setBookings] = useState([]);
   const [bookingRequests, setBookingRequests] = useState([]); // waiting_approval — supaya owner/resepsionis lihat langsung dari Dashboard, tidak perlu buka halaman terpisah
   const [kedatanganHarian, setKedatanganHarian] = useState([]); // grafik kedatangan tamu 30 hari (2026-07-21, permintaan user)
-  const [aiInsight, setAiInsight] = useState("");
-  const [aiInsightLoading, setAiInsightLoading] = useState(true);
+  const [brief, setBrief] = useState(null);
+  const [briefLoading, setBriefLoading] = useState(true);
   const isOwner = user?.role === "owner";
   const [approveReqTarget, setApproveReqTarget] = useState(null);
   const [rejectReqTarget, setRejectReqTarget] = useState(null);
@@ -166,21 +166,21 @@ export default function Dashboard() {
     } catch (e) { console.error(e); }
   };
 
-  const loadAiInsight = async () => {
-    setAiInsightLoading(true);
+  const loadBrief = async () => {
+    setBriefLoading(true);
     try {
-      const { data } = await api.get("/reports/ai-insight");
-      setAiInsight(data.insight);
+      const { data } = await api.get("/ai-grow/daily-brief");
+      setBrief(data);
     } catch (e) { console.error(e); }
-    finally { setAiInsightLoading(false); }
+    finally { setBriefLoading(false); }
   };
 
   useEffect(() => {
     load();
     const t = setInterval(load, 30000);
-    // AI insight sengaja TIDAK ikut polling 30 detik (mahal & lambat, tidak perlu
+    // AI Grow brief sengaja TIDAK ikut polling 30 detik (mahal & lambat, tidak perlu
     // realtime) - cukup dimuat sekali saat halaman dibuka.
-    if (isOwner) loadAiInsight();
+    if (isOwner) loadBrief();
     return () => clearInterval(t);
   }, []);
 
@@ -506,16 +506,42 @@ export default function Dashboard() {
         <RevCard icon={Wallet} label="Laba Bersih Bulan" value={fmtRp(summary?.laba_bersih_bulan_ini || 0)} hint={`Pengeluaran ${fmtRp(summary?.pengeluaran_bulan_ini || 0)}`} />
       </div>
 
-      {/* AI Business Insight (2026-07-22, permintaan user - satu panel terpadu okupansi +
-          pengeluaran tertinggi + posisi kas, owner-only, biar gampang dilihat di satu tempat) */}
+      {/* AI Grow — Daily Executive Brief (2026-07-22, permintaan user: Executive Business
+          Intelligence di atas PMS - Health Score + narasi + rekomendasi prioritas, satu
+          tempat di Dashboard utama, owner-only. Juga terkirim ke Telegram tiap 07:30 WIB. */}
       {isOwner && (
         <Card className="border-slate-200 bg-teal-50/40">
           <CardContent className="p-4 sm:p-5">
-            <div className="flex items-center gap-2 mb-2">
-              <Sparkles className="w-4 h-4 text-blue-700" />
-              <p className="font-bold text-sm">AI Business Insight</p>
+            <div className="flex items-center justify-between gap-3 mb-2">
+              <div className="flex items-center gap-2">
+                <Sparkles className="w-4 h-4 text-blue-700" />
+                <p className="font-bold text-sm">AI Grow — Daily Executive Brief</p>
+              </div>
+              {brief?.health_score && (
+                <div
+                  className={`shrink-0 text-xs font-bold px-2.5 py-1 rounded-full ${
+                    brief.health_score.skor >= 80 ? "bg-emerald-100 text-emerald-700"
+                    : brief.health_score.skor >= 60 ? "bg-amber-100 text-amber-700"
+                    : "bg-red-100 text-red-700"
+                  }`}
+                  title="Business Health Score"
+                >
+                  Health Score {brief.health_score.skor}/100
+                </div>
+              )}
             </div>
-            <p className="text-sm text-slate-700 whitespace-pre-line">{aiInsightLoading ? "Menyusun ringkasan…" : aiInsight}</p>
+            <p className="text-sm text-slate-700 whitespace-pre-line">{briefLoading ? "Menyusun ringkasan…" : brief?.narasi}</p>
+
+            {!briefLoading && brief?.rekomendasi?.length > 0 && (
+              <div className="mt-3 pt-3 border-t border-teal-900/10 space-y-1.5">
+                {brief.rekomendasi.map((r, i) => (
+                  <div key={i} className="flex items-start gap-2 text-xs">
+                    <AlertTriangle className={`w-3.5 h-3.5 mt-0.5 shrink-0 ${r.tipe === "risiko" ? "text-red-500" : "text-amber-500"}`} />
+                    <span><b>{r.judul}</b> — {r.aksi}</span>
+                  </div>
+                ))}
+              </div>
+            )}
           </CardContent>
         </Card>
       )}
