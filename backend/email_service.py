@@ -34,6 +34,17 @@ SYARAT_PEMBATALAN = [
     "- Refund diproses manual oleh staf setelah permintaan pembatalan disetujui.",
 ]
 
+# Teks sama persis dengan angka di calc_tagihan (core.py, "6 jam pertama = tarif dasar,
+# sisanya Rp 20.000/jam") - hanya ditampilkan untuk voucher Day Use (2026-07-22, permintaan
+# user: tamu yang extend/telat checkout wajib diinformasikan biayanya, bukan dikejutkan pas
+# checkout). Menginap tidak pakai baris ini (kebijakan checkout-nya beda, bukan per jam).
+SYARAT_EXTEND_DAYUSE = [
+    "Ketentuan Durasi Day Use:",
+    "- Durasi standar 6 jam sejak jam check-in.",
+    "- Extend/telat checkout melebihi 6 jam dikenakan biaya tambahan Rp 20.000/jam",
+    "  (dibulatkan ke atas per jam mulai), dihitung otomatis saat checkout.",
+]
+
 STATUS_BAYAR_LABEL = {"belum_bayar": "BELUM BAYAR", "dp": "DP (BELUM LUNAS)", "lunas": "LUNAS"}
 
 logger = logging.getLogger("email_service")
@@ -120,6 +131,17 @@ def generate_voucher_pdf(b: dict) -> bytes:
     y -= 10 * mm
     c.line(15 * mm, y, w - 15 * mm, y)
     y -= 6 * mm
+
+    if b.get("tipe") != "menginap":
+        c.setFont("Helvetica-Bold", 7)
+        c.drawString(15 * mm, y, SYARAT_EXTEND_DAYUSE[0])
+        y -= 4 * mm
+        c.setFont("Helvetica", 7)
+        for baris_syarat in SYARAT_EXTEND_DAYUSE[1:]:
+            c.drawString(15 * mm, y, baris_syarat)
+            y -= 4 * mm
+        y -= 2 * mm
+
     c.setFont("Helvetica-Bold", 7)
     c.drawString(15 * mm, y, SYARAT_PEMBATALAN[0])
     y -= 4 * mm
