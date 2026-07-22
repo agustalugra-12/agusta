@@ -155,19 +155,47 @@ async def _coba_auto_approve_day_use(doc: Dict[str, Any]) -> None:
             await _auto_reject_penuh(doc)
             return
 
-        room = avail["rooms"][0]
         jam = doc.get("jam_checkin") or "14:00"
         start = datetime.fromisoformat(f"{doc['tanggal_checkin']}T{jam}:00+07:00").astimezone(timezone.utc)
         end = start + timedelta(hours=6)
 
-        booking = await create_reservation({
-            "room_id": room["id"], "nama_tamu": doc["nama_tamu"], "no_hp": doc["no_hp"],
-            "email": "", "no_identitas": "", "kendaraan": "",
-            "jumlah_tamu": doc.get("jumlah_tamu", 1),
-            "jam_mulai": start, "jam_selesai": end,
-            "catatan": doc.get("catatan") or "", "created_by": "AI WhatsApp (otomatis)",
-            "tipe": "day_use", "dengan_sarapan": False,
-        }, source="whatsapp_auto", diskon_ai_persen=doc.get("diskon_ai_persen") or 0)
+        # `public_availability` cuma cek bentrok di granularitas TANGGAL (checkout day
+        # dianggap kosong lagi), bukan jam presisi - room pertama di daftarnya BISA tetap
+        # bentrok kalau booking lain (mis. Menginap OTA) checkout-nya lewat tengah hari yang
+        # sama (insiden nyata 2026-07-22: RedDoorz checkout siang WIB tapi masih overlap
+        # dengan slot Day Use jam 14:00-20:00). `create_reservation` yang validasi jam penuh
+        # jadi sumber kebenaran akhir - coba semua kandidat kamar berurutan, bukan cuma yang
+        # pertama, sebelum menyerah ke review staf manual (supaya Day Use tetap konsisten
+        # auto-approve selama MASIH ADA kamar yang benar-benar kosong di jam itu).
+        room = None
+        booking = None
+        last_conflict: Optional[Exception] = None
+        for kandidat_room in avail["rooms"]:
+            try:
+                booking = await create_reservation({
+                    "room_id": kandidat_room["id"], "nama_tamu": doc["nama_tamu"], "no_hp": doc["no_hp"],
+                    "email": "", "no_identitas": "", "kendaraan": "",
+                    "jumlah_tamu": doc.get("jumlah_tamu", 1),
+                    "jam_mulai": start, "jam_selesai": end,
+                    "catatan": doc.get("catatan") or "", "created_by": "AI WhatsApp (otomatis)",
+                    "tipe": "day_use", "dengan_sarapan": False,
+                }, source="whatsapp_auto", diskon_ai_persen=doc.get("diskon_ai_persen") or 0)
+                room = kandidat_room
+                break
+            except HTTPException as e:
+                if e.status_code == 400 and "sudah dibooking" in str(e.detail):
+                    last_conflict = e
+                    continue  # kamar ini bentrok jam presisi - coba kandidat berikutnya
+                raise
+        if booking is None:
+            # Semua kandidat dari public_availability ternyata bentrok jam presisi -
+            # kemungkinan besar memang penuh untuk slot ini, tapi biar aman (bukan
+            # false-negative dari precheck kasar) diserahkan ke staf, bukan auto-reject.
+            logging.getLogger("booking_requests").warning(
+                f"Auto-approve day_use {doc.get('kode')}: semua {len(avail['rooms'])} kandidat "
+                f"kamar bentrok jam presisi, fallback ke review staf. Konflik terakhir: {last_conflict}"
+            )
+            return
 
         from routes.tripay import tripay_create_transaction
         trx = await tripay_create_transaction(TripayCreateTransactionBody(
