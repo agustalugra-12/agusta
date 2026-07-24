@@ -12,7 +12,7 @@ import pytest
 import requests
 from datetime import datetime, timedelta, timezone
 
-BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "https://pwa-kasir-hotel.preview.emergentagent.com").rstrip("/")
+BASE_URL = os.environ['REACT_APP_BACKEND_URL'].rstrip("/")
 OWNER = {"username": "owner", "password": "owner123"}
 
 

@@ -5,14 +5,12 @@ from datetime import datetime, timedelta
 import pytest
 import requests
 from pymongo import MongoClient
-from dotenv import load_dotenv
+from conftest import get_env
 
-load_dotenv("/app/backend/.env")
-
-BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "https://pwa-kasir-hotel.preview.emergentagent.com").rstrip("/")
+BASE_URL = get_env("REACT_APP_BACKEND_URL")
 API = f"{BASE_URL}/api"
-MONGO_URL = os.environ.get("MONGO_URL")
-DB_NAME = os.environ.get("DB_NAME")
+MONGO_URL = get_env("MONGO_URL")
+DB_NAME = get_env("DB_NAME")
 
 mongo = MongoClient(MONGO_URL)
 db = mongo[DB_NAME]

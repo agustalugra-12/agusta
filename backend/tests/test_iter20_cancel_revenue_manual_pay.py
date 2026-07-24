@@ -9,18 +9,8 @@ import datetime as dt
 import pytest
 import requests
 
-def _load_frontend_env():
-    try:
-        with open("/app/frontend/.env") as f:
-            for line in f:
-                if line.startswith("REACT_APP_BACKEND_URL="):
-                    return line.split("=", 1)[1].strip().strip('"')
-    except Exception:
-        return None
-    return None
-
-
-BASE_URL = (os.environ.get("REACT_APP_BACKEND_URL") or _load_frontend_env()).rstrip("/")
+from conftest import get_env
+BASE_URL = get_env("REACT_APP_BACKEND_URL")
 API = f"{BASE_URL}/api"
 
 

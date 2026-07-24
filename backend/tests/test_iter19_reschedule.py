@@ -14,24 +14,10 @@ import requests
 from motor.motor_asyncio import AsyncIOMotorClient
 import asyncio
 
-def _load_env(path):
-    try:
-        with open(path) as f:
-            for line in f:
-                line = line.strip()
-                if "=" in line and not line.startswith("#"):
-                    k, v = line.split("=", 1)
-                    v = v.strip().strip('"').strip("'")
-                    os.environ.setdefault(k, v)
-    except FileNotFoundError:
-        pass
-
-_load_env("/app/frontend/.env")
-_load_env("/app/backend/.env")
-
-BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "").rstrip("/")
-MONGO_URL = os.environ.get("MONGO_URL", "mongodb://localhost:27017")
-DB_NAME = os.environ.get("DB_NAME", "test_database")
+from conftest import get_env
+BASE_URL = get_env("REACT_APP_BACKEND_URL")
+MONGO_URL = get_env("MONGO_URL")
+DB_NAME = get_env("DB_NAME")
 
 API = f"{BASE_URL}/api"
 

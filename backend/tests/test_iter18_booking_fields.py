@@ -18,20 +18,10 @@ import requests
 from motor.motor_asyncio import AsyncIOMotorClient
 
 # --- Resolve env ---
-BASE_URL = os.environ.get('REACT_APP_BACKEND_URL', '').rstrip('/')
-if not BASE_URL:
-    for line in Path('/app/frontend/.env').read_text().splitlines():
-        if line.startswith('REACT_APP_BACKEND_URL='):
-            BASE_URL = line.split('=', 1)[1].strip().rstrip('/')
-
-MONGO_URL = ''
-DB_NAME = ''
-for line in Path('/app/backend/.env').read_text().splitlines():
-    if line.startswith('MONGO_URL='):
-        MONGO_URL = line.split('=', 1)[1].strip().strip('"').strip("'")
-    if line.startswith('DB_NAME='):
-        DB_NAME = line.split('=', 1)[1].strip().strip('"').strip("'")
-assert BASE_URL and MONGO_URL and DB_NAME
+from conftest import get_env
+BASE_URL = get_env('REACT_APP_BACKEND_URL')
+MONGO_URL = get_env('MONGO_URL')
+DB_NAME = get_env('DB_NAME')
 
 
 # --- Fixtures ---

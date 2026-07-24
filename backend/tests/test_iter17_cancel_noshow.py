@@ -6,23 +6,10 @@ import requests
 from motor.motor_asyncio import AsyncIOMotorClient
 import asyncio
 
-BASE_URL = os.environ.get('REACT_APP_BACKEND_URL', '').rstrip('/')
-if not BASE_URL:
-    # fallback to frontend .env directly
-    from pathlib import Path
-    for line in Path('/app/frontend/.env').read_text().splitlines():
-        if line.startswith('REACT_APP_BACKEND_URL='):
-            BASE_URL = line.split('=', 1)[1].strip().rstrip('/')
-
-# Always read from backend/.env (env not propagated to pytest worker)
-from pathlib import Path
-MONGO_URL = ''
-DB_NAME = ''
-for line in Path('/app/backend/.env').read_text().splitlines():
-    if line.startswith('MONGO_URL='):
-        MONGO_URL = line.split('=', 1)[1].strip().strip('"').strip("'")
-    if line.startswith('DB_NAME='):
-        DB_NAME = line.split('=', 1)[1].strip().strip('"').strip("'")
+from conftest import get_env
+BASE_URL = get_env('REACT_APP_BACKEND_URL')
+MONGO_URL = get_env('MONGO_URL')
+DB_NAME = get_env('DB_NAME')
 assert MONGO_URL.startswith("mongodb"), f"Bad MONGO_URL: {MONGO_URL!r}"
 
 

@@ -14,7 +14,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 import requests
 
-BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "https://pwa-kasir-hotel.preview.emergentagent.com").rstrip("/")
+BASE_URL = os.environ['REACT_APP_BACKEND_URL'].rstrip("/")
 API = f"{BASE_URL}/api"
 
 

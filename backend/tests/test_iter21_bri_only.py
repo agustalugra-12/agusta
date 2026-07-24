@@ -2,7 +2,7 @@
 import os
 import requests
 
-BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "https://pwa-kasir-hotel.preview.emergentagent.com").rstrip("/")
+BASE_URL = os.environ['REACT_APP_BACKEND_URL'].rstrip("/")
 
 
 def test_public_bank_accounts_bri_only():
