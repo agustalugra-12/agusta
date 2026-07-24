@@ -2,25 +2,28 @@ from core import *
 
 # ---- Products / Inventory ----
 @api.get("/products")
-async def list_products(kategori: Optional[str] = None, user: dict = Depends(get_current_user)):
+async def list_products(kategori: Optional[str] = None, user: dict = Depends(get_current_user),
+                        property_id: str = Depends(get_active_property)):
     q = {}
     if kategori: q["kategori"] = kategori
-    items = await db.products.find(q, {"_id": 0}).sort("nama", 1).to_list(500)
+    items = await db.products.find(scoped(q, property_id), {"_id": 0}).sort("nama", 1).to_list(500)
     return items
 
 @api.post("/products")
-async def create_product(body: ProductCreate, user: dict = Depends(get_current_user)):
-    if await db.products.find_one({"kode": body.kode}):
+async def create_product(body: ProductCreate, user: dict = Depends(get_current_user),
+                         property_id: str = Depends(get_active_property)):
+    if await db.products.find_one(scoped({"kode": body.kode}, property_id)):
         raise HTTPException(400, "Kode produk sudah ada")
-    doc = {"id": str(uuid.uuid4()), **body.model_dump(), "created_at": now_iso()}
+    doc = {"id": str(uuid.uuid4()), **body.model_dump(), "created_at": now_iso(), "property_id": property_id}
     await db.products.insert_one(doc)
     await log_activity(user, "create_product", f"Tambah produk {body.nama}")
     doc.pop("_id", None)
     return doc
 
 @api.put("/products/{pid}")
-async def update_product(pid: str, body: ProductUpdate, user: dict = Depends(get_current_user)):
-    p = await db.products.find_one({"id": pid})
+async def update_product(pid: str, body: ProductUpdate, user: dict = Depends(get_current_user),
+                         property_id: str = Depends(get_active_property)):
+    p = await db.products.find_one(scoped({"id": pid}, property_id))
     if not p:
         raise HTTPException(404, "Produk tidak ditemukan")
     updates = {k: v for k, v in body.model_dump().items() if v is not None}
@@ -30,8 +33,9 @@ async def update_product(pid: str, body: ProductUpdate, user: dict = Depends(get
     return {"ok": True}
 
 @api.delete("/products/{pid}")
-async def delete_product(pid: str, user: dict = Depends(get_current_user)):
-    p = await db.products.find_one({"id": pid})
+async def delete_product(pid: str, user: dict = Depends(get_current_user),
+                         property_id: str = Depends(get_active_property)):
+    p = await db.products.find_one(scoped({"id": pid}, property_id))
     if not p:
         raise HTTPException(404, "Produk tidak ditemukan")
     await db.products.delete_one({"id": pid})
@@ -39,8 +43,9 @@ async def delete_product(pid: str, user: dict = Depends(get_current_user)):
     return {"ok": True}
 
 @api.post("/products/{pid}/stock")
-async def adjust_stock(pid: str, body: StockAdjust, user: dict = Depends(get_current_user)):
-    p = await db.products.find_one({"id": pid})
+async def adjust_stock(pid: str, body: StockAdjust, user: dict = Depends(get_current_user),
+                       property_id: str = Depends(get_active_property)):
+    p = await db.products.find_one(scoped({"id": pid}, property_id))
     if not p:
         raise HTTPException(404, "Produk tidak ditemukan")
     new_stok = max(0, int(p.get("stok", 0)) + body.delta)
@@ -53,6 +58,7 @@ async def adjust_stock(pid: str, body: StockAdjust, user: dict = Depends(get_cur
         "catatan": body.catatan,
         "user": user["nama"],
         "timestamp": now_iso(),
+        "property_id": property_id,
     })
     await log_activity(user, "adjust_stock", f"Stok {p['nama']} {body.delta:+d}")
     return {"ok": True, "stok": new_stok}

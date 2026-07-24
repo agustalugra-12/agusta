@@ -2,13 +2,14 @@ from core import *
 
 # ---- Kasir / Transactions ----
 @api.post("/kasir")
-async def create_kasir(body: KasirCreate, user: dict = Depends(get_current_user)):
+async def create_kasir(body: KasirCreate, user: dict = Depends(get_current_user),
+                       property_id: str = Depends(get_active_property)):
     if not body.items:
         raise HTTPException(400, "Keranjang kosong")
     rows = []
     subtotal = 0
     for it in body.items:
-        p = await db.products.find_one({"id": it.product_id})
+        p = await db.products.find_one(scoped({"id": it.product_id}, property_id))
         if not p:
             raise HTTPException(400, f"Produk tidak ditemukan")
         if it.qty <= 0:
@@ -39,6 +40,7 @@ async def create_kasir(body: KasirCreate, user: dict = Depends(get_current_user)
         "petugas": user["nama"],
         "petugas_id": user["id"],
         "timestamp": now_iso(),
+        "property_id": property_id,
     }
     await db.kasir.insert_one(doc)
     # decrement stok
@@ -53,13 +55,14 @@ async def create_kasir(body: KasirCreate, user: dict = Depends(get_current_user)
 
 @api.get("/kasir")
 async def list_kasir(from_date: Optional[str] = None, to_date: Optional[str] = None,
-                     user: dict = Depends(get_current_user)):
+                     user: dict = Depends(get_current_user),
+                     property_id: str = Depends(get_active_property)):
     q: Dict[str, Any] = {}
     if from_date or to_date:
         rng: Dict[str, Any] = {}
         if from_date: rng["$gte"] = from_date
         if to_date: rng["$lte"] = to_date
         q["timestamp"] = rng
-    items = await db.kasir.find(q, {"_id": 0}).sort("timestamp", -1).to_list(1000)
+    items = await db.kasir.find(scoped(q, property_id), {"_id": 0}).sort("timestamp", -1).to_list(1000)
     return items
 
