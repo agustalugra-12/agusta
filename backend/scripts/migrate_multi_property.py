@@ -24,7 +24,7 @@ DEFAULT_PROPERTY_SLUG = "pelangi-homestay"
 CORE_COLLECTIONS = [
     "rooms", "bookings", "checkins", "guests", "staff_kerja", "staff_profil",
     "jadwal_kerja", "jadwal_shifts", "issues", "expenses", "payroll",
-    "booking_requests", "products", "kasir", "rates",
+    "booking_requests", "products", "kasir", "rates", "services", "kasbon",
 ]
 
 

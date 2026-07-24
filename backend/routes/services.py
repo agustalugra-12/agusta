@@ -3,7 +3,8 @@ from core import *
 
 # ---- Services (Manual Layanan Tambahan) ----
 @api.post("/services")
-async def create_service(body: ServiceCreate, user: dict = Depends(get_current_user)):
+async def create_service(body: ServiceCreate, user: dict = Depends(get_current_user),
+                         property_id: str = Depends(get_active_property)):
     if body.nominal is None or body.nominal <= 0:
         raise HTTPException(400, "Nominal harus lebih dari 0")
     if not body.deskripsi or not body.deskripsi.strip():
@@ -23,6 +24,7 @@ async def create_service(body: ServiceCreate, user: dict = Depends(get_current_u
         "user": user["nama"],
         "user_id": user["id"],
         "created_at": now_iso(),
+        "property_id": property_id,
     }
     await db.services.insert_one(doc)
     await log_activity(user, "service", f"Layanan {doc['kategori']} '{doc['deskripsi']}' Rp{doc['nominal']:,}".replace(",", "."), entity=kode)
@@ -31,19 +33,21 @@ async def create_service(body: ServiceCreate, user: dict = Depends(get_current_u
 
 @api.get("/services")
 async def list_services(from_date: Optional[str] = None, to_date: Optional[str] = None,
-                        user: dict = Depends(get_current_user)):
+                        user: dict = Depends(get_current_user),
+                        property_id: str = Depends(get_active_property)):
     q: Dict[str, Any] = {}
     if from_date or to_date:
         rng: Dict[str, Any] = {}
         if from_date: rng["$gte"] = from_date
         if to_date: rng["$lte"] = to_date + "T23:59:59"
         q["tanggal"] = rng
-    items = await db.services.find(q, {"_id": 0}).sort("tanggal", -1).to_list(2000)
+    items = await db.services.find(scoped(q, property_id), {"_id": 0}).sort("tanggal", -1).to_list(2000)
     return items
 
 @api.delete("/services/{sid}")
-async def delete_service(sid: str, user: dict = Depends(require_owner)):
-    doc = await db.services.find_one({"id": sid})
+async def delete_service(sid: str, user: dict = Depends(require_owner),
+                         property_id: str = Depends(get_active_property)):
+    doc = await db.services.find_one(scoped({"id": sid}, property_id))
     if not doc:
         raise HTTPException(404, "Layanan tidak ditemukan")
     await db.services.delete_one({"id": sid})

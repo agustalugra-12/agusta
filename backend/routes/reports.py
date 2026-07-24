@@ -4,28 +4,30 @@ import logging
 
 # ---- Reports ----
 @api.get("/reports/booking-widgets")
-async def booking_widgets(user: dict = Depends(get_current_user)):
+async def booking_widgets(user: dict = Depends(get_current_user), property_id: str = Depends(get_active_property)):
     """Widget statistik booking untuk Dashboard."""
     today_start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
     today_end = today_start + timedelta(days=1)
     # Booking hari ini = jam_mulai dalam rentang hari ini
-    today_bk = await db.bookings.count_documents({
+    today_bk = await db.bookings.count_documents(scoped({
         "jam_mulai": {"$gte": today_start.isoformat(), "$lt": today_end.isoformat()},
         "status": {"$in": ["aktif", "booking_pending", "booking_paid", "checked_in"]},
-    })
-    pending_count = await db.bookings.count_documents({"status": "booking_pending"})
-    paid_count = await db.bookings.count_documents({"status": "booking_paid"})
+    }, property_id))
+    pending_count = await db.bookings.count_documents(scoped({"status": "booking_pending"}, property_id))
+    paid_count = await db.bookings.count_documents(scoped({"status": "booking_paid"}, property_id))
     # Pendapatan online = sum total dari booking_paid bulan ini
     month_start = datetime.now(timezone.utc).replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-    online_paid = await db.bookings.find({
+    online_paid = await db.bookings.find(scoped({
         "source": "online", "payment_status": "paid",
         "paid_at": {"$gte": month_start.isoformat()},
-    }, {"_id": 0, "total": 1, "amount_due": 1}).to_list(1000)
+    }, property_id), {"_id": 0, "total": 1, "amount_due": 1}).to_list(1000)
     pendapatan_online = sum(int(b.get("amount_due") or b.get("total", 0)) for b in online_paid)
     # Total semua transaksi payment gateway settlement (lifetime, gabungan riwayat Tripay +
     # Midtrans lama — field ini TIDAK filter `gateway`, sengaja mencakup histori keduanya).
     # gross_amount disimpan sebagai string "61800.00". "capture" = status khusus Midtrans lama
     # (kartu kredit), tidak pernah dihasilkan Tripay lagi tapi tetap relevan utk histori.
+    # payment_log TIDAK di-scope per properti (belum ada property_id di collection ini,
+    # scope-nya masih global) - lihat memory checkpoint multi-properti untuk gap ini.
     payment_total = await db.payment_log.aggregate([
         {"$match": {"transaction_status": {"$in": ["settlement", "capture"]}}},
         {"$group": {"_id": None, "sum": {"$sum": {"$toDouble": "$gross_amount"}}, "count": {"$sum": 1}}},
@@ -33,13 +35,13 @@ async def booking_widgets(user: dict = Depends(get_current_user)):
     payment_sum = int(payment_total[0]["sum"]) if payment_total else 0
     payment_count = payment_total[0]["count"] if payment_total else 0
     # Walk-in vs Online (bulan ini)
-    online_bulan = await db.bookings.count_documents({
+    online_bulan = await db.bookings.count_documents(scoped({
         "source": "online", "created_at": {"$gte": month_start.isoformat()},
-    })
+    }, property_id))
     # Walk-in = check-ins langsung dari dashboard (tanpa booking online) bulan ini
-    walk_bulan = await db.checkins.count_documents({
+    walk_bulan = await db.checkins.count_documents(scoped({
         "jam_checkin": {"$gte": month_start.isoformat()},
-    })
+    }, property_id))
     return {
         "booking_hari_ini": today_bk,
         "booking_pending": pending_count,
@@ -53,7 +55,8 @@ async def booking_widgets(user: dict = Depends(get_current_user)):
 
 
 @api.get("/reports/cancellation-revenue")
-async def cancellation_revenue(from_date: str, to_date: str, user: dict = Depends(get_current_user)):
+async def cancellation_revenue(from_date: str, to_date: str, user: dict = Depends(get_current_user),
+                               property_id: str = Depends(get_active_property)):
     """Pendapatan dari cancel fee (10% × total) + no-show retention (amount_due booking_paid yang jadi no_show).
     from_date/to_date: YYYY-MM-DD (inclusive).
     Returns: { cancel_fees_total, no_show_total, grand_total, by_day:[...], items:[...] }
@@ -63,14 +66,14 @@ async def cancellation_revenue(from_date: str, to_date: str, user: dict = Depend
         d_to = datetime.fromisoformat(to_date).replace(hour=23, minute=59, second=59, microsecond=999999)
     except Exception:
         raise HTTPException(400, "Format tanggal harus YYYY-MM-DD")
-    cancels = await db.bookings.find({
+    cancels = await db.bookings.find(scoped({
         "status": "cancelled", "cancel_fee": {"$gt": 0},
         "cancelled_at": {"$gte": d_from.isoformat(), "$lte": d_to.isoformat()},
-    }, {"_id": 0}).to_list(2000)
-    no_shows = await db.bookings.find({
+    }, property_id), {"_id": 0}).to_list(2000)
+    no_shows = await db.bookings.find(scoped({
         "status": "no_show",
         "no_show_at": {"$gte": d_from.isoformat(), "$lte": d_to.isoformat()},
-    }, {"_id": 0}).to_list(2000)
+    }, property_id), {"_id": 0}).to_list(2000)
     cancel_total = sum(int(b.get("cancel_fee") or 0) for b in cancels)
     noshow_total = sum(int(b.get("amount_due") or 0) for b in no_shows)
     # group per hari
@@ -114,7 +117,8 @@ async def cancellation_revenue(from_date: str, to_date: str, user: dict = Depend
 # ---- Reports: Service Fee 3% + Manual Services ----
 @api.get("/reports/service-revenue")
 async def report_service_revenue(from_date: str = Query(...), to_date: str = Query(...),
-                                  user: dict = Depends(get_current_user)):
+                                  user: dict = Depends(get_current_user),
+                                  property_id: str = Depends(get_active_property)):
     """Aggregate service fee income:
     - checkin_service_fee: service_fee 3% dari checkins selesai (walk-in)
     - booking_service_fee: service_fee 3% dari bookings publik (payment_status=paid, source=online)
@@ -125,7 +129,7 @@ async def report_service_revenue(from_date: str = Query(...), to_date: str = Que
 
     # 1) service_fee 3% dari checkins (walk-in)
     ci = await db.checkins.find(
-        {"jam_checkout": {"$gte": start, "$lte": end}, "status": "selesai"},
+        scoped({"jam_checkout": {"$gte": start, "$lte": end}, "status": "selesai"}, property_id),
         {"_id": 0}
     ).to_list(5000)
     checkin_items = []
@@ -149,11 +153,11 @@ async def report_service_revenue(from_date: str = Query(...), to_date: str = Que
 
     # 2) service_fee 3% dari bookings publik yang sudah dibayar
     bk = await db.bookings.find(
-        {
+        scoped({
             "jam_mulai": {"$gte": start, "$lte": end},
             "source": "online",
             "payment_status": "paid",
-        },
+        }, property_id),
         {"_id": 0}
     ).to_list(5000)
     booking_items = []
@@ -177,7 +181,7 @@ async def report_service_revenue(from_date: str = Query(...), to_date: str = Que
 
     # 3) manual services
     svc = await db.services.find(
-        {"tanggal": {"$gte": start, "$lte": end}},
+        scoped({"tanggal": {"$gte": start, "$lte": end}}, property_id),
         {"_id": 0}
     ).sort("tanggal", -1).to_list(5000)
     manual_total = sum(int(s.get("nominal") or 0) for s in svc)
@@ -221,11 +225,11 @@ async def report_service_revenue(from_date: str = Query(...), to_date: str = Que
     }
 
 @api.get("/reports/summary")
-async def report_summary(user: dict = Depends(get_current_user)):
+async def report_summary(user: dict = Depends(get_current_user), property_id: str = Depends(get_active_property)):
     today_iso = datetime.now(timezone.utc).date().isoformat()
     month_start = datetime.now(timezone.utc).replace(day=1, hour=0, minute=0, second=0, microsecond=0).isoformat()
     # rooms
-    rooms = await db.rooms.find({}, {"_id": 0}).to_list(500)
+    rooms = await db.rooms.find(scoped({}, property_id), {"_id": 0}).to_list(500)
     counts = {"kosong": 0, "day_use": 0, "menginap": 0, "perlu_dibersihkan": 0, "maintenance": 0, "dipesan_hari_ini": 0}
     # Kamar berstatus "kosong" tapi SUDAH ada booking (aktif/booking_pending/booking_paid) yang
     # menempati hari ini dihitung sebagai "dipesan_hari_ini", BUKAN "kosong" — sebelumnya kartu
@@ -237,11 +241,11 @@ async def report_summary(user: dict = Depends(get_current_user)):
     today_date = datetime.now(timezone.utc).date()
     today_start_dt = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
     today_end_dt = today_start_dt + timedelta(days=1)
-    today_bookings = await db.bookings.find({
+    today_bookings = await db.bookings.find(scoped({
         "status": {"$in": ["aktif", "booking_pending", "booking_paid"]},
         "jam_mulai": {"$lt": today_end_dt.isoformat()},
         "jam_selesai": {"$gt": today_start_dt.isoformat()},
-    }, {"_id": 0, "room_id": 1, "jam_mulai": 1, "jam_selesai": 1}).to_list(500)
+    }, property_id), {"_id": 0, "room_id": 1, "jam_mulai": 1, "jam_selesai": 1}).to_list(500)
     rooms_dipesan_hari_ini = set()
     for b in today_bookings:
         b_start = parse_iso(b["jam_mulai"], "jam_mulai").date()
@@ -256,8 +260,8 @@ async def report_summary(user: dict = Depends(get_current_user)):
         else:
             counts[status] = counts.get(status, 0) + 1
     # checkins today
-    ci_today = await db.checkins.find({"jam_checkin": {"$gte": today_iso}}, {"_id": 0}).to_list(500)
-    co_today = await db.checkins.find({"jam_checkout": {"$gte": today_iso}, "status": "selesai"}, {"_id": 0}).to_list(500)
+    ci_today = await db.checkins.find(scoped({"jam_checkin": {"$gte": today_iso}}, property_id), {"_id": 0}).to_list(500)
+    co_today = await db.checkins.find(scoped({"jam_checkout": {"$gte": today_iso}, "status": "selesai"}, property_id), {"_id": 0}).to_list(500)
     rev_room_today = sum(c.get("total", 0) for c in co_today)
     # booking online/OTA/WhatsApp yang sudah lunas (dibucket per paid_at — tanggal uang benar-benar
     # masuk, sama seperti /reports/daily & /reports/rooms yang sudah lebih dulu diperbaiki 2026-07-13;
@@ -267,35 +271,35 @@ async def report_summary(user: dict = Depends(get_current_user)):
     # emailnya tidak mencantumkan nominal, sempat memakai ESTIMASI tarif publik PMS sebagai
     # placeholder (lihat buat_reservasi_otomatis, routes/otomasi_email.py) - jangan dihitung
     # sebagai pendapatan asli sampai staf konfirmasi nominal settlement sungguhan.
-    bk_today = await db.bookings.find({
+    bk_today = await db.bookings.find(scoped({
         "source": {"$in": ["ota", "online", "whatsapp"]}, "payment_status": "paid",
         "paid_at": {"$gte": today_iso}, "ota_harga_dikonfirmasi": {"$ne": False},
-    }, {"_id": 0, "total": 1}).to_list(1000)
+    }, property_id), {"_id": 0, "total": 1}).to_list(1000)
     rev_booking_today = sum(int(b.get("total") or 0) for b in bk_today)
     # kasir today / month
-    kasir_today = await db.kasir.find({"timestamp": {"$gte": today_iso}}, {"_id": 0}).to_list(1000)
+    kasir_today = await db.kasir.find(scoped({"timestamp": {"$gte": today_iso}}, property_id), {"_id": 0}).to_list(1000)
     rev_kasir_today = sum(k.get("total", 0) for k in kasir_today)
     rev_per_kat = {"makanan": 0, "minuman": 0, "laundry": 0}
     for k in kasir_today:
         for it in k.get("items", []):
             rev_per_kat[it["kategori"]] = rev_per_kat.get(it["kategori"], 0) + it["subtotal"]
     # month
-    ci_month = await db.checkins.find({"jam_checkout": {"$gte": month_start}, "status": "selesai"}, {"_id": 0}).to_list(2000)
-    kasir_month = await db.kasir.find({"timestamp": {"$gte": month_start}}, {"_id": 0}).to_list(2000)
-    bk_month = await db.bookings.find({
+    ci_month = await db.checkins.find(scoped({"jam_checkout": {"$gte": month_start}, "status": "selesai"}, property_id), {"_id": 0}).to_list(2000)
+    kasir_month = await db.kasir.find(scoped({"timestamp": {"$gte": month_start}}, property_id), {"_id": 0}).to_list(2000)
+    bk_month = await db.bookings.find(scoped({
         "source": {"$in": ["ota", "online", "whatsapp"]}, "payment_status": "paid",
         "paid_at": {"$gte": month_start}, "ota_harga_dikonfirmasi": {"$ne": False},
-    }, {"_id": 0, "total": 1}).to_list(5000)
+    }, property_id), {"_id": 0, "total": 1}).to_list(5000)
     rev_booking_month = sum(int(b.get("total") or 0) for b in bk_month)
     # services (manual)
-    svc_today = await db.services.find({"tanggal": {"$gte": today_iso}}, {"_id": 0}).to_list(500)
-    svc_month = await db.services.find({"tanggal": {"$gte": month_start}}, {"_id": 0}).to_list(2000)
+    svc_today = await db.services.find(scoped({"tanggal": {"$gte": today_iso}}, property_id), {"_id": 0}).to_list(500)
+    svc_month = await db.services.find(scoped({"tanggal": {"$gte": month_start}}, property_id), {"_id": 0}).to_list(2000)
     rev_svc_today = sum(s.get("nominal", 0) for s in svc_today)
     rev_svc_month = sum(s.get("nominal", 0) for s in svc_month)
     rev_month = sum(c.get("total", 0) for c in ci_month) + sum(k.get("total", 0) for k in kasir_month) + rev_svc_month + rev_booking_month
     # expenses
-    exp_today = await db.expenses.find({"tanggal": {"$gte": today_iso}}, {"_id": 0}).to_list(500)
-    exp_month = await db.expenses.find({"tanggal": {"$gte": month_start}}, {"_id": 0}).to_list(2000)
+    exp_today = await db.expenses.find(scoped({"tanggal": {"$gte": today_iso}}, property_id), {"_id": 0}).to_list(500)
+    exp_month = await db.expenses.find(scoped({"tanggal": {"$gte": month_start}}, property_id), {"_id": 0}).to_list(2000)
     total_exp_today = sum(e.get("nominal", 0) for e in exp_today)
     total_exp_month = sum(e.get("nominal", 0) for e in exp_month)
     # Okupansi harian (2026-07-21, permintaan user) - kamar yang TIDAK "kosong" (day_use,
@@ -328,7 +332,7 @@ async def report_summary(user: dict = Depends(get_current_user)):
 # okupansi+pengeluaran+kas.
 
 @api.get("/reports/kedatangan-harian")
-async def report_kedatangan_harian(user: dict = Depends(get_current_user)):
+async def report_kedatangan_harian(user: dict = Depends(get_current_user), property_id: str = Depends(get_active_property)):
     """Jumlah kedatangan tamu per hari, 30 hari terakhir (2026-07-21, permintaan user -
     grafik tren kedatangan di Dashboard utama). Sumber `db.bookings.jam_mulai` (tanggal
     check-in), BUKAN `db.checkins` - collection itu jarang terisi (cuma jalur check-in
@@ -340,10 +344,10 @@ async def report_kedatangan_harian(user: dict = Depends(get_current_user)):
     end_date = datetime.now(timezone.utc).date()
     start_date = end_date - timedelta(days=29)
     start_dt = datetime.combine(start_date, datetime.min.time()).replace(tzinfo=timezone.utc)
-    bookings = await db.bookings.find({
+    bookings = await db.bookings.find(scoped({
         "status": {"$ne": "cancelled"},
         "jam_mulai": {"$gte": start_dt.isoformat()},
-    }, {"_id": 0, "jam_mulai": 1}).to_list(5000)
+    }, property_id), {"_id": 0, "jam_mulai": 1}).to_list(5000)
     per_tanggal: Dict[str, int] = {}
     for b in bookings:
         try:
@@ -360,7 +364,8 @@ async def report_kedatangan_harian(user: dict = Depends(get_current_user)):
 
 @api.get("/reports/daily")
 async def report_daily(from_date: str = Query(...), to_date: str = Query(...),
-                       user: dict = Depends(get_current_user)):
+                       user: dict = Depends(get_current_user),
+                       property_id: str = Depends(get_active_property)):
     """Return per-day revenue between dates (inclusive). Dates: YYYY-MM-DD.
     "kamar" mencakup walk-in (checkins, dibucket per jam_checkout) DAN booking
     online/OTA/WhatsApp yang sudah lunas (bookings, dibucket per paid_at — tanggal uang
@@ -369,16 +374,16 @@ async def report_daily(from_date: str = Query(...), to_date: str = Query(...),
     terpisah di sistem ini (dua alur guest-arrival yang independen)."""
     start = from_date
     end = to_date + "T23:59:59"
-    ci = await db.checkins.find({"jam_checkout": {"$gte": start, "$lte": end}, "status": "selesai"}, {"_id": 0}).to_list(5000)
-    bk = await db.bookings.find({
+    ci = await db.checkins.find(scoped({"jam_checkout": {"$gte": start, "$lte": end}, "status": "selesai"}, property_id), {"_id": 0}).to_list(5000)
+    bk = await db.bookings.find(scoped({
         "source": {"$in": ["ota", "online", "whatsapp"]},
         "payment_status": "paid",
         "paid_at": {"$gte": start, "$lte": end},
         "ota_harga_dikonfirmasi": {"$ne": False},
-    }, {"_id": 0, "total": 1, "paid_at": 1}).to_list(5000)
-    ks = await db.kasir.find({"timestamp": {"$gte": start, "$lte": end}}, {"_id": 0}).to_list(5000)
-    ex = await db.expenses.find({"tanggal": {"$gte": start, "$lte": end}}, {"_id": 0}).to_list(5000)
-    sv = await db.services.find({"tanggal": {"$gte": start, "$lte": end}}, {"_id": 0}).to_list(5000)
+    }, property_id), {"_id": 0, "total": 1, "paid_at": 1}).to_list(5000)
+    ks = await db.kasir.find(scoped({"timestamp": {"$gte": start, "$lte": end}}, property_id), {"_id": 0}).to_list(5000)
+    ex = await db.expenses.find(scoped({"tanggal": {"$gte": start, "$lte": end}}, property_id), {"_id": 0}).to_list(5000)
+    sv = await db.services.find(scoped({"tanggal": {"$gte": start, "$lte": end}}, property_id), {"_id": 0}).to_list(5000)
     by_day: Dict[str, Dict[str, int]] = {}
     def bucket(iso):
         return iso[:10]
@@ -418,7 +423,8 @@ async def report_daily(from_date: str = Query(...), to_date: str = Query(...),
 
 @api.get("/reports/kas-metode-bayar")
 async def report_kas_metode_bayar(from_date: str = Query(...), to_date: str = Query(...),
-                                  user: dict = Depends(get_current_user)):
+                                  user: dict = Depends(get_current_user),
+                                  property_id: str = Depends(get_active_property)):
     """Rekap uang masuk per metode bayar (Tunai/QRIS/Transfer) dari Kasir (POS) & Check-In
     (walk-in) — supaya owner bisa cocokkan uang cash fisik yang harus ada di laci vs sistem.
     SENGAJA tidak termasuk booking online/OTA (Tripay) karena uangnya masuk ke rekening/payment
@@ -427,9 +433,9 @@ async def report_kas_metode_bayar(from_date: str = Query(...), to_date: str = Qu
     start = from_date
     end = to_date + "T23:59:59"
     totals = {"tunai": 0, "qris": 0, "transfer": 0}
-    ks = await db.kasir.find({"timestamp": {"$gte": start, "$lte": end}}, {"_id": 0, "pembayaran": 1}).to_list(5000)
+    ks = await db.kasir.find(scoped({"timestamp": {"$gte": start, "$lte": end}}, property_id), {"_id": 0, "pembayaran": 1}).to_list(5000)
     ci = await db.checkins.find(
-        {"status": "selesai", "jam_checkout": {"$gte": start, "$lte": end}},
+        scoped({"status": "selesai", "jam_checkout": {"$gte": start, "$lte": end}}, property_id),
         {"_id": 0, "pembayaran": 1},
     ).to_list(5000)
     for row in ks + ci:
@@ -441,7 +447,8 @@ async def report_kas_metode_bayar(from_date: str = Query(...), to_date: str = Qu
 
 @api.get("/reports/rooms")
 async def report_rooms(from_date: str = Query(...), to_date: str = Query(...),
-                       user: dict = Depends(get_current_user)):
+                       user: dict = Depends(get_current_user),
+                       property_id: str = Depends(get_active_property)):
     """Transaksi kamar walk-in (checkins) DIGABUNG booking online/OTA/WhatsApp yang sudah
     lunas (bookings, dibucket per paid_at) — sebelumnya cuma checkins, bikin RedDoorz/booking
     online tidak pernah terhitung di "Total Transaksi" & pendapatan kamar. Tidak ada duplikasi
@@ -449,15 +456,15 @@ async def report_rooms(from_date: str = Query(...), to_date: str = Query(...),
     start = from_date
     end = to_date + "T23:59:59"
     items = await db.checkins.find(
-        {"jam_checkout": {"$gte": start, "$lte": end}, "status": "selesai"},
+        scoped({"jam_checkout": {"$gte": start, "$lte": end}, "status": "selesai"}, property_id),
         {"_id": 0}
     ).to_list(5000)
-    bk = await db.bookings.find({
+    bk = await db.bookings.find(scoped({
         "source": {"$in": ["ota", "online", "whatsapp"]},
         "payment_status": "paid",
         "paid_at": {"$gte": start, "$lte": end},
         "ota_harga_dikonfirmasi": {"$ne": False},
-    }, {"_id": 0}).to_list(5000)
+    }, property_id), {"_id": 0}).to_list(5000)
     booking_items = [{
         "id": b["id"], "trx_no": b.get("kode"),
         "nama_tamu": b.get("nama_tamu"), "room_nomor": b.get("room_nomor"), "room_tipe": b.get("room_tipe"),
@@ -482,11 +489,12 @@ async def report_rooms(from_date: str = Query(...), to_date: str = Query(...),
 
 @api.get("/reports/kasir-detail")
 async def report_kasir_detail(from_date: str = Query(...), to_date: str = Query(...),
-                              user: dict = Depends(get_current_user)):
+                              user: dict = Depends(get_current_user),
+                              property_id: str = Depends(get_active_property)):
     start = from_date
     end = to_date + "T23:59:59"
     trxs = await db.kasir.find(
-        {"timestamp": {"$gte": start, "$lte": end}},
+        scoped({"timestamp": {"$gte": start, "$lte": end}}, property_id),
         {"_id": 0}
     ).sort("timestamp", -1).to_list(5000)
     per_kat = {"makanan": 0, "minuman": 0, "laundry": 0}
@@ -505,10 +513,11 @@ async def report_kasir_detail(from_date: str = Query(...), to_date: str = Query(
 
 @api.get("/reports/items-sold")
 async def report_items_sold(from_date: str = Query(...), to_date: str = Query(...),
-                            user: dict = Depends(get_current_user)):
+                            user: dict = Depends(get_current_user),
+                            property_id: str = Depends(get_active_property)):
     start = from_date
     end = to_date + "T23:59:59"
-    trxs = await db.kasir.find({"timestamp": {"$gte": start, "$lte": end}}, {"_id": 0}).to_list(5000)
+    trxs = await db.kasir.find(scoped({"timestamp": {"$gte": start, "$lte": end}}, property_id), {"_id": 0}).to_list(5000)
     agg: Dict[str, Dict[str, Any]] = {}
     for t in trxs:
         for it in t.get("items", []):
@@ -525,7 +534,8 @@ async def report_items_sold(from_date: str = Query(...), to_date: str = Query(..
 
 @api.get("/reports/top-products")
 async def report_top_products(period: str = Query("month"), limit: int = Query(10),
-                              user: dict = Depends(get_current_user)):
+                              user: dict = Depends(get_current_user),
+                              property_id: str = Depends(get_active_property)):
     """period: today | month | year"""
     now = datetime.now(timezone.utc)
     if period == "today":
@@ -534,7 +544,7 @@ async def report_top_products(period: str = Query("month"), limit: int = Query(1
         start = now.replace(month=1, day=1, hour=0, minute=0, second=0, microsecond=0).isoformat()
     else:
         start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0).isoformat()
-    trxs = await db.kasir.find({"timestamp": {"$gte": start}}, {"_id": 0}).to_list(10000)
+    trxs = await db.kasir.find(scoped({"timestamp": {"$gte": start}}, property_id), {"_id": 0}).to_list(10000)
     agg: Dict[str, Dict[str, Any]] = {}
     for t in trxs:
         for it in t.get("items", []):
@@ -548,7 +558,8 @@ async def report_top_products(period: str = Query("month"), limit: int = Query(1
 
 @api.get("/reports/shift")
 async def report_shift(from_date: str = Query(...), to_date: str = Query(...),
-                        user: dict = Depends(get_current_user)):
+                        user: dict = Depends(get_current_user),
+                        property_id: str = Depends(get_active_property)):
     """Laporan aktivitas per petugas per hari. Sistem ini tidak punya konsep clock-in/out
     shift asli — laporan ini dirangkum dari jejak petugas yang sudah tercatat di tiap modul
     (kasir, check-in/out, pengeluaran, housekeeping), dikelompokkan per tanggal + nama
@@ -577,7 +588,7 @@ async def report_shift(from_date: str = Query(...), to_date: str = Query(...),
         return rows[key]
 
     kasir_docs = await db.kasir.find(
-        {"timestamp": {"$gte": start, "$lte": end}}, {"_id": 0, "timestamp": 1, "petugas": 1, "total": 1}
+        scoped({"timestamp": {"$gte": start, "$lte": end}}, property_id), {"_id": 0, "timestamp": 1, "petugas": 1, "total": 1}
     ).to_list(10000)
     for k in kasir_docs:
         r = row(bucket(k.get("timestamp")), k.get("petugas"))
@@ -585,14 +596,14 @@ async def report_shift(from_date: str = Query(...), to_date: str = Query(...),
         r["kasir_total"] += int(k.get("total") or 0)
 
     checkin_docs = await db.checkins.find(
-        {"jam_checkin": {"$gte": start, "$lte": end}}, {"_id": 0, "jam_checkin": 1, "petugas_checkin": 1}
+        scoped({"jam_checkin": {"$gte": start, "$lte": end}}, property_id), {"_id": 0, "jam_checkin": 1, "petugas_checkin": 1}
     ).to_list(10000)
     for c in checkin_docs:
         r = row(bucket(c.get("jam_checkin")), c.get("petugas_checkin"))
         r["checkin_count"] += 1
 
     checkout_docs = await db.checkins.find(
-        {"jam_checkout": {"$gte": start, "$lte": end}}, {"_id": 0, "jam_checkout": 1, "petugas_checkout": 1, "total": 1}
+        scoped({"jam_checkout": {"$gte": start, "$lte": end}}, property_id), {"_id": 0, "jam_checkout": 1, "petugas_checkout": 1, "total": 1}
     ).to_list(10000)
     for c in checkout_docs:
         if not c.get("jam_checkout"):
@@ -602,7 +613,7 @@ async def report_shift(from_date: str = Query(...), to_date: str = Query(...),
         r["checkout_total"] += int(c.get("total") or 0)
 
     expense_docs = await db.expenses.find(
-        {"tanggal": {"$gte": start, "$lte": end}}, {"_id": 0, "tanggal": 1, "user": 1, "nominal": 1}
+        scoped({"tanggal": {"$gte": start, "$lte": end}}, property_id), {"_id": 0, "tanggal": 1, "user": 1, "nominal": 1}
     ).to_list(10000)
     for e in expense_docs:
         r = row(bucket(e.get("tanggal")), e.get("user"))

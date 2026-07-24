@@ -11,16 +11,17 @@ SOURCE_TO_SALURAN = {"online": "website", "ota": "ota", "whatsapp": "whatsapp"}
 
 @api.get("/laporan-analitik/pendapatan")
 async def laporan_pendapatan(from_date: str = Query(...), to_date: str = Query(...),
-                              user: dict = Depends(get_current_user)):
+                              user: dict = Depends(get_current_user),
+                              property_id: str = Depends(get_active_property)):
     """Pendapatan harian dari booking multi-saluran yang sudah dibayar (payment_status=paid),
     dikelompokkan per tanggal paid_at. Tidak termasuk pendapatan walk-in (sudah ada di /reports/daily)."""
     start = from_date
     end = to_date + "T23:59:59"
-    bks = await db.bookings.find({
+    bks = await db.bookings.find(scoped({
         "payment_status": "paid",
         "paid_at": {"$gte": start, "$lte": end},
         "ota_harga_dikonfirmasi": {"$ne": False},
-    }, {"_id": 0, "total": 1, "paid_at": 1}).to_list(5000)
+    }, property_id), {"_id": 0, "total": 1, "paid_at": 1}).to_list(5000)
     by_day: Dict[str, int] = {}
     for b in bks:
         d = (b.get("paid_at") or "")[:10]
@@ -30,16 +31,17 @@ async def laporan_pendapatan(from_date: str = Query(...), to_date: str = Query(.
 
 @api.get("/laporan-analitik/performa-saluran")
 async def laporan_performa_saluran(channel: str = Query("Semua"),
-                                    user: dict = Depends(get_current_user)):
+                                    user: dict = Depends(get_current_user),
+                                    property_id: str = Depends(get_active_property)):
     """Jumlah booking & pendapatan (paid) per saluran (ota/website/whatsapp), lifetime.
     channel: 'Semua' atau salah satu key saluran untuk filter satu saja."""
     keys = SALURAN_KEYS if channel == "Semua" else [channel]
     sources = [src for src, key in SOURCE_TO_SALURAN.items() if key in keys]
-    bks = await db.bookings.find({
+    bks = await db.bookings.find(scoped({
         "source": {"$in": sources},
         "payment_status": "paid",
         "ota_harga_dikonfirmasi": {"$ne": False},
-    }, {"_id": 0, "source": 1, "total": 1}).to_list(10000)
+    }, property_id), {"_id": 0, "source": 1, "total": 1}).to_list(10000)
     agg = {k: {"booking": 0, "pendapatan": 0} for k in keys}
     for b in bks:
         k = SOURCE_TO_SALURAN.get(b.get("source"))
@@ -51,23 +53,24 @@ async def laporan_performa_saluran(channel: str = Query("Semua"),
 
 @api.get("/laporan-analitik/tren-okupansi")
 async def laporan_tren_okupansi(from_date: str = Query(...), to_date: str = Query(...),
-                                 user: dict = Depends(get_current_user)):
+                                 user: dict = Depends(get_current_user),
+                                 property_id: str = Depends(get_active_property)):
     """Okupansi harian (%) = jumlah kamar unik terisi hari itu / total kamar.
     Gabungan booking multi-saluran (bookings, status aktif/booking_paid) + walk-in (checkins)."""
-    total_rooms = await db.rooms.count_documents({})
+    total_rooms = await db.rooms.count_documents(scoped({}, property_id))
     d_from = datetime.fromisoformat(from_date).replace(hour=0, minute=0, second=0, microsecond=0)
     d_to = datetime.fromisoformat(to_date).replace(hour=0, minute=0, second=0, microsecond=0)
     range_start = d_from.isoformat()
     range_end = (d_to + timedelta(days=1)).isoformat()
 
-    bks = await db.bookings.find({
+    bks = await db.bookings.find(scoped({
         "status": {"$in": ["aktif", "booking_paid"]},
         "jam_mulai": {"$lt": range_end}, "jam_selesai": {"$gt": range_start},
-    }, {"_id": 0, "room_nomor": 1, "jam_mulai": 1, "jam_selesai": 1}).to_list(5000)
-    cis = await db.checkins.find({
+    }, property_id), {"_id": 0, "room_nomor": 1, "jam_mulai": 1, "jam_selesai": 1}).to_list(5000)
+    cis = await db.checkins.find(scoped({
         "jam_checkin": {"$lt": range_end},
         "$or": [{"jam_checkout": {"$gt": range_start}}, {"status": "aktif"}],
-    }, {"_id": 0, "room_nomor": 1, "jam_checkin": 1, "jam_checkout": 1}).to_list(5000)
+    }, property_id), {"_id": 0, "room_nomor": 1, "jam_checkin": 1, "jam_checkout": 1}).to_list(5000)
 
     stays = [(b["room_nomor"], b["jam_mulai"], b.get("jam_selesai") or range_end) for b in bks]
     stays += [(c["room_nomor"], c["jam_checkin"], c.get("jam_checkout") or range_end) for c in cis]
