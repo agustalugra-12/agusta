@@ -4,43 +4,61 @@ import { useAuth } from "@/context/AuthContext";
 import { Button } from "@/components/ui/button";
 import {
   LayoutDashboard, BedDouble, ShoppingCart, Boxes,
-  Wallet, Sparkles, BarChart3, UserCog, ShieldCheck, LogOut, Menu, HandCoins, DoorOpen, ListChecks, Mail, RefreshCw, CreditCard, MessageSquare, Shuffle, Send, Wand2, Tag, AlertTriangle, Wrench, Inbox, CalendarClock, Gavel, Bell, Ban, Users, BadgeDollarSign, Landmark,
+  Wallet, Sparkles, BarChart3, UserCog, ShieldCheck, LogOut, Menu, HandCoins, DoorOpen, ListChecks, Mail, RefreshCw, CreditCard, MessageSquare, Shuffle, Send, Wand2, Tag, AlertTriangle, Wrench, Inbox, CalendarClock, Gavel, Bell, Ban, BadgeDollarSign, Landmark,
 } from "lucide-react";
 import { useState, useEffect } from "react";
 import { playAlertSound, unlockAlertSound } from "@/lib/alertSound";
 
-const navItems = [
-  { to: "/", label: "Dashboard", icon: LayoutDashboard, exact: true },
-  { to: "/kasir", label: "Kasir", icon: ShoppingCart },
-  { to: "/ketersediaan", label: "Ketersediaan", icon: DoorOpen },
-  { to: "/reservasi", label: "Reservasi", icon: ListChecks },
-  { to: "/reservasi?tab=tamu", label: "Data Tamu", icon: Users },
-  { to: "/booking-requests", label: "Booking Request", icon: Inbox },
-  { to: "/pembatalan", label: "Pembatalan", icon: Ban },
-  { to: "/otomasi-email", label: "Otomasi Email", icon: Mail, ownerOnly: true },
-  { to: "/sinkronisasi-ketersediaan", label: "Status Integrasi", icon: RefreshCw, ownerOnly: true },
-  { to: "/pembayaran", label: "Pembayaran", icon: CreditCard },
-  { to: "/whatsapp-otomatis", label: "Integrasi WhatsApp", icon: MessageSquare, ownerOnly: true },
-  { to: "/pemetaan-tipe-kamar", label: "Pemetaan Kamar", icon: Shuffle, ownerOnly: true },
-  { to: "/pengiriman-voucher", label: "Voucher Terkirim", icon: Send, ownerOnly: true },
-  { to: "/rekomendasi-checkin", label: "Rekomendasi Check-in", icon: Wand2 },
-  { to: "/kalender-harga", label: "Kalender Harga", icon: Tag, ownerOnly: true },
-  { to: "/rooms", label: "Kamar", icon: BedDouble },
-  { to: "/service", label: "Service", icon: HandCoins },
-  { to: "/inventory", label: "Inventory", icon: Boxes },
-  { to: "/pengeluaran", label: "Pengeluaran", icon: Wallet, ownerOnly: true },
-  { to: "/housekeeping", label: "Housekeeping", icon: Sparkles },
-  { to: "/komplain", label: "Komplain", icon: AlertTriangle },
-  { to: "/maintenance", label: "Maintenance", icon: Wrench },
-  { to: "/service-requests", label: "Permintaan Layanan", icon: Bell },
-  { to: "/laporan", label: "Laporan", icon: BarChart3 },
-  { to: "/jadwal-kerja", label: "Jadwal Kerja", icon: CalendarClock },
-  { to: "/payroll", label: "Payroll", icon: BadgeDollarSign, ownerOnly: true },
-  { to: "/rekening", label: "Cash & Rekening", icon: Landmark, ownerOnly: true },
-  { to: "/business-rules", label: "Business Rules", icon: Gavel, ownerOnly: true },
-  { to: "/pengguna", label: "Pengguna", icon: UserCog, ownerOnly: true },
-  { to: "/audit", label: "Audit Log", icon: ShieldCheck, ownerOnly: true },
+// Dikelompokkan per seksi (2026-07-24, temuan evaluasi UX: 27 item flat tanpa
+// pengelompokan bikin staf harus memindai seluruh daftar tiap kali cari halaman) - murni
+// penataan visual, tidak mengubah satu pun rute. "Data Tamu" (dulu entri sendiri ke
+// /reservasi?tab=tamu) dilebur jadi tab di dalam halaman Reservasi sendiri (lihat
+// DaftarReservasi.jsx) - konsisten dengan pola tab di halaman lain (mis. Rekening).
+const navSections = [
+  { label: "Operasional", items: [
+    { to: "/", label: "Dashboard", icon: LayoutDashboard, exact: true },
+    { to: "/kasir", label: "Kasir", icon: ShoppingCart },
+    { to: "/ketersediaan", label: "Ketersediaan", icon: DoorOpen },
+    { to: "/reservasi", label: "Reservasi", icon: ListChecks },
+    { to: "/booking-requests", label: "Booking Request", icon: Inbox },
+    { to: "/pembatalan", label: "Pembatalan", icon: Ban },
+    { to: "/rekomendasi-checkin", label: "Rekomendasi Check-in", icon: Wand2 },
+    { to: "/rooms", label: "Kamar", icon: BedDouble },
+    { to: "/service", label: "Service", icon: HandCoins },
+    { to: "/inventory", label: "Inventory", icon: Boxes },
+    { to: "/housekeeping", label: "Housekeeping", icon: Sparkles },
+    { to: "/komplain", label: "Komplain", icon: AlertTriangle },
+    { to: "/maintenance", label: "Maintenance", icon: Wrench },
+    { to: "/service-requests", label: "Permintaan Layanan", icon: Bell },
+    { to: "/jadwal-kerja", label: "Jadwal Kerja", icon: CalendarClock },
+  ]},
+  { label: "Keuangan", items: [
+    { to: "/pembayaran", label: "Pembayaran", icon: CreditCard },
+    { to: "/pengeluaran", label: "Pengeluaran", icon: Wallet, ownerOnly: true },
+    { to: "/payroll", label: "Payroll", icon: BadgeDollarSign, ownerOnly: true },
+    { to: "/rekening", label: "Cash & Rekening", icon: Landmark, ownerOnly: true },
+    { to: "/laporan", label: "Laporan", icon: BarChart3 },
+    { to: "/kalender-harga", label: "Kalender Harga", icon: Tag, ownerOnly: true },
+  ]},
+  { label: "Integrasi", items: [
+    { to: "/otomasi-email", label: "Otomasi Email", icon: Mail, ownerOnly: true },
+    { to: "/sinkronisasi-ketersediaan", label: "Status Integrasi", icon: RefreshCw, ownerOnly: true },
+    { to: "/whatsapp-otomatis", label: "Integrasi WhatsApp", icon: MessageSquare, ownerOnly: true },
+    { to: "/pemetaan-tipe-kamar", label: "Pemetaan Kamar", icon: Shuffle, ownerOnly: true },
+    { to: "/pengiriman-voucher", label: "Voucher Terkirim", icon: Send, ownerOnly: true },
+  ]},
+  { label: "Admin", items: [
+    { to: "/business-rules", label: "Business Rules", icon: Gavel, ownerOnly: true },
+    { to: "/pengguna", label: "Pengguna", icon: UserCog, ownerOnly: true },
+    { to: "/audit", label: "Audit Log", icon: ShieldCheck, ownerOnly: true },
+  ]},
 ];
+const navItems = navSections.flatMap((s) => s.items);
+
+// Bottom nav mobile (2026-07-24, temuan evaluasi UX: sebelumnya items.slice(0, 5) — hasil
+// urutan array, bukan pilihan sadar, sampai-sampai Booking Request yang paling sensitif
+// waktu tidak masuk quick-bar) - dipilih eksplisit berdasar alur kerja harian staf.
+const mobileNavPaths = ["/", "/booking-requests", "/kasir", "/ketersediaan", "/housekeeping"];
 
 export default function Layout() {
   const { user, logout } = useAuth();
@@ -48,6 +66,12 @@ export default function Layout() {
   const [open, setOpen] = useState(false);
 
   const items = navItems.filter((it) => !it.ownerOnly || user?.role === "owner");
+  const sections = navSections
+    .map((s) => ({ ...s, items: s.items.filter((it) => !it.ownerOnly || user?.role === "owner") }))
+    .filter((s) => s.items.length > 0);
+  const mobileItems = mobileNavPaths
+    .map((p) => items.find((it) => it.to === p))
+    .filter(Boolean);
 
   // Unlock Web Audio pada interaksi pertama (kebijakan autoplay browser), lalu dengarkan
   // relay dari service worker tiap ada push masuk (pembayaran/booking/komplain baru) untuk
@@ -92,22 +116,29 @@ export default function Layout() {
             <h2 className="text-base font-bold leading-tight font-display">Homestay</h2>
           </div>
         </div>
-        <nav className="flex-1 px-3 py-4 space-y-1 overflow-y-auto">
-          {items.map((it) => (
-            <NavLink
-              key={it.to}
-              to={it.to}
-              end={it.exact}
-              data-testid={`nav-${it.label.toLowerCase().replace(/ /g, "-")}`}
-              className={({ isActive }) =>
-                `flex items-center gap-3 px-3 py-3 rounded-xl text-sm font-medium transition-colors ${
-                  isActive ? "bg-blue-700 text-white" : "text-slate-600 hover:bg-slate-100"
-                }`
-              }
-            >
-              <it.icon className="w-5 h-5" />
-              {it.label}
-            </NavLink>
+        <nav className="flex-1 px-3 py-4 space-y-4 overflow-y-auto">
+          {sections.map((s) => (
+            <div key={s.label}>
+              <p className="px-3 pb-1 text-[10px] font-bold tracking-[0.12em] uppercase text-slate-400">{s.label}</p>
+              <div className="space-y-1">
+                {s.items.map((it) => (
+                  <NavLink
+                    key={it.to}
+                    to={it.to}
+                    end={it.exact}
+                    data-testid={`nav-${it.label.toLowerCase().replace(/ /g, "-")}`}
+                    className={({ isActive }) =>
+                      `flex items-center gap-3 px-3 py-3 rounded-xl text-sm font-medium transition-colors ${
+                        isActive ? "bg-blue-700 text-white" : "text-slate-600 hover:bg-slate-100"
+                      }`
+                    }
+                  >
+                    <it.icon className="w-5 h-5" />
+                    {it.label}
+                  </NavLink>
+                ))}
+              </div>
+            </div>
           ))}
         </nav>
         <div className="border-t border-slate-100 p-4">
@@ -153,19 +184,26 @@ export default function Layout() {
               <div className="text-sm font-semibold">{user?.nama}</div>
               <div className="text-xs text-slate-500 capitalize">{user?.role}</div>
             </Link>
-            <nav className="flex-1 px-3 py-3 space-y-1 overflow-y-auto">
-              {items.map((it) => (
-                <NavLink
-                  key={it.to} to={it.to} end={it.exact} onClick={() => setOpen(false)}
-                  className={({ isActive }) =>
-                    `flex items-center gap-3 px-3 py-3 rounded-xl text-base font-medium ${
-                      isActive ? "bg-blue-700 text-white" : "text-slate-700 hover:bg-slate-100"
-                    }`
-                  }
-                >
-                  <it.icon className="w-5 h-5" />
-                  {it.label}
-                </NavLink>
+            <nav className="flex-1 px-3 py-3 space-y-4 overflow-y-auto">
+              {sections.map((s) => (
+                <div key={s.label}>
+                  <p className="px-3 pb-1 text-[10px] font-bold tracking-[0.12em] uppercase text-slate-400">{s.label}</p>
+                  <div className="space-y-1">
+                    {s.items.map((it) => (
+                      <NavLink
+                        key={it.to} to={it.to} end={it.exact} onClick={() => setOpen(false)}
+                        className={({ isActive }) =>
+                          `flex items-center gap-3 px-3 py-3 rounded-xl text-base font-medium ${
+                            isActive ? "bg-blue-700 text-white" : "text-slate-700 hover:bg-slate-100"
+                          }`
+                        }
+                      >
+                        <it.icon className="w-5 h-5" />
+                        {it.label}
+                      </NavLink>
+                    ))}
+                  </div>
+                </div>
               ))}
             </nav>
             <div className="p-4 border-t">
@@ -187,7 +225,7 @@ export default function Layout() {
       {/* Bottom nav (mobile) */}
       <nav className="no-print lg:hidden fixed bottom-0 inset-x-0 z-30 bg-white/95 backdrop-blur border-t border-slate-200">
         <div className="grid grid-cols-5">
-          {items.slice(0, 5).map((it) => (
+          {mobileItems.map((it) => (
             <NavLink
               key={it.to} to={it.to} end={it.exact}
               className={({ isActive }) =>

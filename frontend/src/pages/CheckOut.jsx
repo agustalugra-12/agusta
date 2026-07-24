@@ -29,6 +29,7 @@ function checkoutBluetoothLines(ci) {
     divider(),
   ];
   for (const p of ci.pembayaran || []) lines.push(padRow(p.metode, fmtRp(p.jumlah)));
+  if (ci.catatan_checkout) { lines.push(divider()); lines.push(padRow("Catatan", ci.catatan_checkout)); }
   lines.push(divider());
   lines.push(centerRow("Terima kasih atas kunjungan Anda"));
   return lines;
@@ -169,6 +170,9 @@ export default function CheckOut() {
             <Label>Override Overtime (jam) — opsional</Label>
             <Input data-testid="co-overtime" type="number" min="0" placeholder={`${preview?.overtime_jam ?? 0}`} value={overtimeOverride} onChange={(e) => setOvertimeOverride(e.target.value)} className="h-12 mt-1.5" />
             <p className="text-xs text-slate-500 mt-1">Kosongkan untuk pakai perhitungan otomatis.</p>
+            {overtimeOverride !== "" && (
+              <p className="text-xs text-amber-600 mt-1">Override aktif — tulis alasannya di kolom Catatan di bawah (tersimpan di struk &amp; riwayat, penting kalau tamu komplain soal tagihan nanti).</p>
+            )}
           </div>
           <div className="rounded-xl bg-blue-700 text-white p-5 flex items-center justify-between">
             <div>
@@ -202,8 +206,9 @@ export default function CheckOut() {
           </div>
 
           <div>
-            <Label>Catatan</Label>
-            <Textarea data-testid="co-catatan" value={catatan} onChange={(e) => setCatatan(e.target.value)} className="mt-1.5" rows={2} />
+            <Label>Catatan{overtimeOverride !== "" ? " (isi alasan override overtime)" : ""}</Label>
+            <Textarea data-testid="co-catatan" value={catatan} onChange={(e) => setCatatan(e.target.value)} className="mt-1.5" rows={2}
+              placeholder={overtimeOverride !== "" ? "Mis. tamu izin telat checkout karena menunggu jemputan, dispensasi dari resepsionis" : ""} />
           </div>
 
           <div className="flex gap-3">
@@ -259,6 +264,12 @@ function Receipt({ ci }) {
           <div key={i} className="flex justify-between"><span className="capitalize">{p.metode}</span><span>{fmtRp(p.jumlah)}</span></div>
         ))}
       </div>
+      {ci.catatan_checkout && (
+        <>
+          <hr className="my-2 border-dashed" />
+          <div className="text-xs"><span className="font-semibold">Catatan:</span> {ci.catatan_checkout}</div>
+        </>
+      )}
       <div className="text-center mt-3 text-xs text-slate-500">Terima kasih atas kunjungan Anda</div>
     </div>
   );

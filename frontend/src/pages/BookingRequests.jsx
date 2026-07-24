@@ -65,11 +65,16 @@ export function SetujuiDialog({ req, onOpenChange, onApproved }) {
   const [hasil, setHasil] = useState(null);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
+  // Cek silang RedDoorz (2026-07-24, temuan evaluasi UX): sebelumnya cuma teks hint pasif
+  // yang gampang terlewat saat staf buru-buru - dijadikan checkbox WAJIB (hanya untuk
+  // Menginap, RedDoorz tidak pernah dipakai Day Use) supaya benar-benar jadi langkah
+  // sadar sebelum tombol Terima bisa diklik, bukan sekadar imbauan yang bisa dilewati.
+  const [redDoorzChecked, setRedDoorzChecked] = useState(false);
 
   useEffect(() => {
     if (!req) return;
     setLoading(true);
-    setError(""); setSelected([]); setHasil(null);
+    setError(""); setSelected([]); setHasil(null); setRedDoorzChecked(false);
     // Kalau tamu SENDIRI sudah sebutkan preferensi di chat, otomatis dipakai (bukan cuma
     // default) - dikonfirmasi user 2026-07-19: staf tidak perlu pilih ulang sesuatu yang
     // tamu sudah tentukan. Tombol "Ubah" (manualOverride) tetap tersedia untuk koreksi kalau
@@ -105,6 +110,7 @@ export function SetujuiDialog({ req, onOpenChange, onApproved }) {
 
   const setujui = async () => {
     if (selected.length !== butuh || !method) return;
+    if (req.tipe === "menginap" && !redDoorzChecked) return;
     setSubmitting(true);
     setError("");
     try {
@@ -148,7 +154,6 @@ export function SetujuiDialog({ req, onOpenChange, onApproved }) {
             ) : (
               <div>
                 <Label>Pilih {butuh} kamar ({selected.length}/{butuh} dipilih)</Label>
-                <p className="text-[11px] text-slate-400 mb-1.5">Pastikan juga sudah dicek tidak bentrok di PMS RedDoorz — sistem ini hanya tahu data PMS Pelangi sendiri.</p>
                 {rooms.length === 0 ? (
                   <p className="text-red-600 text-xs">Tidak ada kamar {req.room_tipe || ""} tersedia pada tanggal ini di PMS Pelangi.</p>
                 ) : (
@@ -197,6 +202,16 @@ export function SetujuiDialog({ req, onOpenChange, onApproved }) {
                 </div>
               </>
             )}
+            {req.tipe === "menginap" && (
+              <label className="flex items-start gap-2 p-2.5 rounded-lg border-2 border-amber-300 bg-amber-50 text-xs cursor-pointer">
+                <input
+                  type="checkbox" checked={redDoorzChecked}
+                  onChange={(e) => setRedDoorzChecked(e.target.checked)}
+                  className="mt-0.5"
+                />
+                <span>Saya sudah cek silang manual ke PMS RedDoorz — kamar ini tidak bentrok di sana. <span className="text-slate-500">(Sistem ini hanya tahu data PMS Pelangi sendiri, tidak bisa cek RedDoorz otomatis.)</span></span>
+              </label>
+            )}
             {error && <p className="text-red-600 text-xs">{error}</p>}
           </div>
         ) : (
@@ -213,7 +228,7 @@ export function SetujuiDialog({ req, onOpenChange, onApproved }) {
         )}
         <DialogFooter>
           {!hasil ? (
-            <Button onClick={setujui} disabled={selected.length !== butuh || !method || submitting} className="bg-blue-700 hover:bg-blue-800">
+            <Button onClick={setujui} disabled={selected.length !== butuh || !method || submitting || (req.tipe === "menginap" && !redDoorzChecked)} className="bg-blue-700 hover:bg-blue-800">
               {submitting ? "Menerima…" : "Terima & Kirim Link Bayar"}
             </Button>
           ) : (

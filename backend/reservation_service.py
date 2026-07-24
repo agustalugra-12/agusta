@@ -103,6 +103,13 @@ async def create_reservation(data: Dict[str, Any], source: str = "public",
         raise HTTPException(400, "Kamar tidak tersedia")
 
     extra_bed_qty = max(0, min(EXTRA_BED_MAX, int(data.get("extra_bed_qty") or 0)))
+    # Aturan okupansi (2026-07-21): 1 kamar standar 2 dewasa + 1 anak, extra bed (jadi 3
+    # dewasa + 1 anak) HANYA berlaku utk tipe Cottage. Sebelumnya validasi ini cuma ada di
+    # public_create_booking (routes/public.py) - dipindah/diduplikasi ke sini supaya
+    # SEMUA pemanggil create_reservation (termasuk yang mungkin ditambah nanti) otomatis
+    # ikut aturan yang sama, bukan tergantung tiap caller ingat cek sendiri-sendiri.
+    if extra_bed_qty > 0 and r.get("tipe") != "Cottage":
+        raise HTTPException(400, "Extra bed hanya tersedia untuk tipe kamar Cottage, tidak bisa dipesan untuk Standard")
 
     if harga_override is not None:
         subtotal = harga_override["subtotal"]
