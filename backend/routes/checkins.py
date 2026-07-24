@@ -181,7 +181,7 @@ async def checkout(checkin_id: str, body: CheckoutIn, user: dict = Depends(get_c
     # via Tripay, itu SUDAH terposting terpisah di webhook Tripay - `total_bayar` di sini
     # cuma yang dikumpulkan fisik di titik checkout, tidak dobel hitung.
     from routes.rekening import auto_posting
-    await auto_posting("pemasukan", total_bayar, "Check-out Day Use", f"Kamar {c['room_nomor']} - {c['nama_tamu']}")
+    await auto_posting("pemasukan", total_bayar, "Check-out Day Use", f"Kamar {c['room_nomor']} - {c['nama_tamu']}", property_id)
     res = {**c, **updates}
     res.pop("_id", None)
     return res

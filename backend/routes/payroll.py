@@ -330,7 +330,7 @@ async def bayar_payroll(pid: str, user: dict = Depends(require_owner),
     )
     from routes.rekening import auto_posting
     await auto_posting("pengeluaran", int(p["total_diterima"]), "Gaji", f"Gaji {p['staff_nama']} periode {p['periode']}",
-                        tanggal=_tanggal_expense_payroll(p["periode"]))
+                        property_id, tanggal=_tanggal_expense_payroll(p["periode"]))
     return await db.payroll.find_one({"id": pid}, {"_id": 0})
 
 

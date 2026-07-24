@@ -19,7 +19,7 @@ async def create_expense(body: ExpenseCreate, user: dict = Depends(get_current_u
     await db.expenses.insert_one(doc)
     await log_activity(user, "expense", f"Pengeluaran {body.kategori} Rp{body.nominal:,}".replace(",", "."))
     from routes.rekening import auto_posting
-    await auto_posting("pengeluaran", body.nominal, body.kategori, body.deskripsi)
+    await auto_posting("pengeluaran", body.nominal, body.kategori, body.deskripsi, property_id)
     doc.pop("_id", None)
     return doc
 

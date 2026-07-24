@@ -41,7 +41,7 @@ def _rekening_out(r: dict) -> dict:
 
 
 async def _catat_transaksi(rekening_id: str, jenis: str, nominal: int, kategori: str, deskripsi: str,
-                            tanggal: Optional[str], user: dict, source: str = "manual",
+                            tanggal: Optional[str], user: dict, property_id: str, source: str = "manual",
                             rekening_pasangan_id: Optional[str] = None, transfer_id: Optional[str] = None,
                             cek_smart_rule: bool = True) -> dict:
     """Satu fungsi terpusat utk semua penulisan ledger + update saldo atomik ($inc) - dipakai
@@ -53,19 +53,20 @@ async def _catat_transaksi(rekening_id: str, jenis: str, nominal: int, kategori:
         "tanggal": tanggal or now_iso(), "rekening_pasangan_id": rekening_pasangan_id,
         "transfer_id": transfer_id, "direkonsiliasi": False, "source": source,
         "created_by": user["nama"], "created_by_id": user["id"], "created_at": now_iso(),
+        "property_id": property_id,
     }
     await db.rekening_transaksi.insert_one(doc)
     await db.rekening.update_one({"id": rekening_id}, {"$set": {"updated_at": now_iso()}, "$inc": {"saldo": delta}})
     doc.pop("_id", None)
     if cek_smart_rule:
-        await _cek_smart_rules_saldo(rekening_id, user)
+        await _cek_smart_rules_saldo(rekening_id, user, property_id)
     return doc
 
 
 _AUTO_POSTING_USER = {"nama": "Sistem (auto-posting)", "id": "system"}
 
 
-async def auto_posting(jenis: str, nominal: int, kategori: str, deskripsi: str, tanggal: Optional[str] = None) -> None:
+async def auto_posting(jenis: str, nominal: int, kategori: str, deskripsi: str, property_id: str, tanggal: Optional[str] = None) -> None:
     """V1.5 (2026-07-22, permintaan user 'lanjut v1.5') - hubungkan ledger rekening ke uang
     yang BENAR-BENAR bergerak di alur production yang sudah ada (Tripay settlement, checkout
     Day Use, penjualan Kasir, pengeluaran/payroll) TANPA owner perlu catat manual lagi.
@@ -85,23 +86,23 @@ async def auto_posting(jenis: str, nominal: int, kategori: str, deskripsi: str, 
     if nominal <= 0:
         return
     try:
-        rekening = await db.rekening.find_one({"default_operasional": True, "status": "aktif"})
+        rekening = await db.rekening.find_one(scoped({"default_operasional": True, "status": "aktif"}, property_id))
         if not rekening:
             logging.getLogger("rekening").info(f"auto_posting dilewati (belum ada rekening operasional default): {kategori} Rp{nominal}")
             return
-        await _catat_transaksi(rekening["id"], jenis, nominal, kategori, deskripsi, tanggal, _AUTO_POSTING_USER, source="auto_posting")
+        await _catat_transaksi(rekening["id"], jenis, nominal, kategori, deskripsi, tanggal, _AUTO_POSTING_USER, property_id, source="auto_posting")
     except Exception as e:
         logging.getLogger("rekening").warning(f"auto_posting gagal ({kategori} Rp{nominal}): {e}")
 
 
-async def _cek_smart_rules_saldo(rekening_id: str, user: dict):
+async def _cek_smart_rules_saldo(rekening_id: str, user: dict, property_id: str):
     """Trigger saldo_diatas - dipanggil tiap kali saldo `rekening_id` berubah. SENGAJA tidak
     dipanggil ulang utk rekening_tujuan_id di dalam transfer yang dihasilkan fungsi ini sendiri
     (cek_smart_rule=False di pemanggilan _catat_transaksi di bawah) - cegah rantai/infinite
     loop kalau saldo tujuan kebetulan juga di atas ambang rule lain."""
-    rules = await db.rekening_smart_rule.find({
+    rules = await db.rekening_smart_rule.find(scoped({
         "rekening_asal_id": rekening_id, "trigger_tipe": "saldo_diatas", "aktif": True,
-    }).to_list(50)
+    }, property_id)).to_list(50)
     if not rules:
         return
     r = await db.rekening.find_one({"id": rekening_id})
@@ -113,11 +114,11 @@ async def _cek_smart_rules_saldo(rekening_id: str, user: dict):
         nominal = int(rule.get("nominal_transfer") or 0)
         if saldo > ambang and nominal > 0 and saldo - nominal >= 0:
             await _catat_transaksi(rekening_id, "transfer_keluar", nominal, "Smart Allocation",
-                                    f"Otomatis (aturan: {rule.get('nama')})", None, user,
+                                    f"Otomatis (aturan: {rule.get('nama')})", None, user, property_id,
                                     source="smart_rule", rekening_pasangan_id=rule["rekening_tujuan_id"],
                                     cek_smart_rule=False)
             await _catat_transaksi(rule["rekening_tujuan_id"], "transfer_masuk", nominal, "Smart Allocation",
-                                    f"Otomatis (aturan: {rule.get('nama')})", None, user,
+                                    f"Otomatis (aturan: {rule.get('nama')})", None, user, property_id,
                                     source="smart_rule", rekening_pasangan_id=rekening_id,
                                     cek_smart_rule=False)
             await log_activity(user, "smart_allocation",
@@ -128,7 +129,8 @@ async def _cek_smart_rules_saldo(rekening_id: str, user: dict):
 # ---- CRUD Rekening ----
 
 @api.post("/rekening")
-async def buat_rekening(body: RekeningCreate, user: dict = Depends(require_owner)):
+async def buat_rekening(body: RekeningCreate, user: dict = Depends(require_owner),
+                        property_id: str = Depends(get_active_property)):
     if body.jenis not in REKENING_JENIS:
         raise HTTPException(400, f"Jenis harus salah satu dari: {', '.join(REKENING_JENIS)}")
     if body.target is not None and body.jenis != "tabungan":
@@ -140,6 +142,7 @@ async def buat_rekening(body: RekeningCreate, user: dict = Depends(require_owner
         "warna": body.warna, "icon": body.icon, "status": "aktif",
         "default_operasional": False,
         "created_at": now_iso(), "updated_at": now_iso(),
+        "property_id": property_id,
     }
     await db.rekening.insert_one(doc)
     if body.saldo_awal:
@@ -149,26 +152,28 @@ async def buat_rekening(body: RekeningCreate, user: dict = Depends(require_owner
             "deskripsi": "Saldo awal saat rekening dibuat", "tanggal": now_iso(),
             "rekening_pasangan_id": None, "transfer_id": None, "direkonsiliasi": False,
             "source": "manual", "created_by": user["nama"], "created_by_id": user["id"],
-            "created_at": now_iso(),
+            "created_at": now_iso(), "property_id": property_id,
         })
     await log_activity(user, "buat_rekening", f"Tambah rekening {body.nama} ({body.jenis}), saldo awal Rp{body.saldo_awal:,}".replace(",", "."))
     return _rekening_out(doc)
 
 
 @api.get("/rekening")
-async def list_rekening(jenis: Optional[str] = None, status: Optional[str] = None, user: dict = Depends(require_owner)):
+async def list_rekening(jenis: Optional[str] = None, status: Optional[str] = None, user: dict = Depends(require_owner),
+                        property_id: str = Depends(get_active_property)):
     q: Dict[str, Any] = {}
     if jenis:
         q["jenis"] = jenis
     if status:
         q["status"] = status
-    items = await db.rekening.find(q, {"_id": 0}).sort("created_at", 1).to_list(200)
+    items = await db.rekening.find(scoped(q, property_id), {"_id": 0}).sort("created_at", 1).to_list(200)
     return [_rekening_out(r) for r in items]
 
 
 @api.put("/rekening/{rid}")
-async def update_rekening(rid: str, body: RekeningUpdate, user: dict = Depends(require_owner)):
-    r = await db.rekening.find_one({"id": rid})
+async def update_rekening(rid: str, body: RekeningUpdate, user: dict = Depends(require_owner),
+                          property_id: str = Depends(get_active_property)):
+    r = await db.rekening.find_one(scoped({"id": rid}, property_id))
     if not r:
         raise HTTPException(404, "Rekening tidak ditemukan")
     if body.target is not None and r["jenis"] != "tabungan":
@@ -182,16 +187,18 @@ async def update_rekening(rid: str, body: RekeningUpdate, user: dict = Depends(r
         return _rekening_out(r)
     updates["updated_at"] = now_iso()
     if body.default_operasional:
-        # Cuma 1 rekening boleh jadi tujuan auto-posting (V1.5) - lepas dari rekening lain dulu.
-        await db.rekening.update_many({"id": {"$ne": rid}}, {"$set": {"default_operasional": False}})
+        # Cuma 1 rekening PER PROPERTI boleh jadi tujuan auto-posting (V1.5) - lepas dari
+        # rekening lain di properti yang SAMA dulu (properti lain tidak terpengaruh).
+        await db.rekening.update_many(scoped({"id": {"$ne": rid}}, property_id), {"$set": {"default_operasional": False}})
     await db.rekening.update_one({"id": rid}, {"$set": updates})
     await log_activity(user, "update_rekening", f"Ubah rekening {r['nama']}")
     return _rekening_out(await db.rekening.find_one({"id": rid}, {"_id": 0}))
 
 
 @api.delete("/rekening/{rid}")
-async def hapus_rekening(rid: str, user: dict = Depends(require_owner)):
-    r = await db.rekening.find_one({"id": rid})
+async def hapus_rekening(rid: str, user: dict = Depends(require_owner),
+                         property_id: str = Depends(get_active_property)):
+    r = await db.rekening.find_one(scoped({"id": rid}, property_id))
     if not r:
         raise HTTPException(404, "Rekening tidak ditemukan")
     if int(r.get("saldo") or 0) != 0:
@@ -208,7 +215,8 @@ async def hapus_rekening(rid: str, user: dict = Depends(require_owner)):
 # ---- Transaksi manual (pemasukan/pengeluaran) ----
 
 @api.post("/rekening/transaksi")
-async def buat_transaksi(body: RekeningTransaksiCreate, user: dict = Depends(require_owner)):
+async def buat_transaksi(body: RekeningTransaksiCreate, user: dict = Depends(require_owner),
+                         property_id: str = Depends(get_active_property)):
     # jenis "pengeluaran" SENGAJA tidak boleh dicatat manual di sini lagi (2026-07-22,
     # permintaan user - ditemukan duplikasi fungsi dengan halaman Pengeluaran yang sudah
     # ada). Pengeluaran sekarang SATU sumber kebenaran: POST /expenses - yang otomatis
@@ -220,11 +228,11 @@ async def buat_transaksi(body: RekeningTransaksiCreate, user: dict = Depends(req
         raise HTTPException(400, "Pencatatan manual di sini cuma untuk 'pemasukan' - pengeluaran dicatat di halaman Pengeluaran (otomatis tersinkron ke rekening default)")
     if body.nominal <= 0:
         raise HTTPException(400, "Nominal harus lebih dari 0")
-    r = await db.rekening.find_one({"id": body.rekening_id})
+    r = await db.rekening.find_one(scoped({"id": body.rekening_id}, property_id))
     if not r:
         raise HTTPException(404, "Rekening tidak ditemukan")
     doc = await _catat_transaksi(body.rekening_id, body.jenis, body.nominal, body.kategori,
-                                  body.deskripsi, body.tanggal, user)
+                                  body.deskripsi, body.tanggal, user, property_id)
     await log_activity(user, "transaksi_rekening",
                         f"{body.jenis.capitalize()} Rp{body.nominal:,} di {r['nama']}".replace(",", ""))
     return doc
@@ -233,7 +241,8 @@ async def buat_transaksi(body: RekeningTransaksiCreate, user: dict = Depends(req
 @api.get("/rekening/transaksi")
 async def list_transaksi(rekening_id: Optional[str] = None, jenis: Optional[str] = None,
                           from_date: Optional[str] = None, to_date: Optional[str] = None,
-                          user: dict = Depends(require_owner)):
+                          user: dict = Depends(require_owner),
+                          property_id: str = Depends(get_active_property)):
     q: Dict[str, Any] = {}
     if rekening_id:
         q["rekening_id"] = rekening_id
@@ -244,16 +253,17 @@ async def list_transaksi(rekening_id: Optional[str] = None, jenis: Optional[str]
         if from_date: rng["$gte"] = from_date
         if to_date: rng["$lte"] = to_date
         q["tanggal"] = rng
-    items = await db.rekening_transaksi.find(q, {"_id": 0}).sort("tanggal", -1).to_list(500)
+    items = await db.rekening_transaksi.find(scoped(q, property_id), {"_id": 0}).sort("tanggal", -1).to_list(500)
     return items
 
 
 @api.delete("/rekening/transaksi/{tid}")
-async def hapus_transaksi(tid: str, user: dict = Depends(require_owner)):
+async def hapus_transaksi(tid: str, user: dict = Depends(require_owner),
+                          property_id: str = Depends(get_active_property)):
     """Hanya untuk transaksi manual (pemasukan/pengeluaran) - transfer & smart_rule dihapus
     lewat pembatalan transfer (belum ada endpoint-nya di V1, sengaja - transfer sebaiknya
     dikoreksi lewat transaksi balik, bukan dihapus, supaya jejak audit tetap utuh)."""
-    t = await db.rekening_transaksi.find_one({"id": tid})
+    t = await db.rekening_transaksi.find_one(scoped({"id": tid}, property_id))
     if not t:
         raise HTTPException(404, "Transaksi tidak ditemukan")
     if t["jenis"] not in ("pemasukan", "pengeluaran") or t.get("transfer_id"):
@@ -268,23 +278,24 @@ async def hapus_transaksi(tid: str, user: dict = Depends(require_owner)):
 # ---- Transfer antar rekening ----
 
 @api.post("/rekening/transfer")
-async def transfer_rekening(body: TransferIn, user: dict = Depends(require_owner)):
+async def transfer_rekening(body: TransferIn, user: dict = Depends(require_owner),
+                            property_id: str = Depends(get_active_property)):
     if body.rekening_asal_id == body.rekening_tujuan_id:
         raise HTTPException(400, "Rekening asal & tujuan tidak boleh sama")
     if body.nominal <= 0:
         raise HTTPException(400, "Nominal harus lebih dari 0")
-    asal = await db.rekening.find_one({"id": body.rekening_asal_id})
-    tujuan = await db.rekening.find_one({"id": body.rekening_tujuan_id})
+    asal = await db.rekening.find_one(scoped({"id": body.rekening_asal_id}, property_id))
+    tujuan = await db.rekening.find_one(scoped({"id": body.rekening_tujuan_id}, property_id))
     if not asal or not tujuan:
         raise HTTPException(404, "Rekening asal/tujuan tidak ditemukan")
     if int(asal.get("saldo") or 0) < body.nominal:
         raise HTTPException(400, f"Saldo {asal['nama']} tidak cukup (saldo Rp{int(asal.get('saldo') or 0):,})".replace(",", "."))
     transfer_id = str(uuid.uuid4())
     keluar = await _catat_transaksi(body.rekening_asal_id, "transfer_keluar", body.nominal, "Transfer Internal",
-                                     body.deskripsi, body.tanggal, user,
+                                     body.deskripsi, body.tanggal, user, property_id,
                                      rekening_pasangan_id=body.rekening_tujuan_id, transfer_id=transfer_id)
     masuk = await _catat_transaksi(body.rekening_tujuan_id, "transfer_masuk", body.nominal, "Transfer Internal",
-                                    body.deskripsi, body.tanggal, user,
+                                    body.deskripsi, body.tanggal, user, property_id,
                                     rekening_pasangan_id=body.rekening_asal_id, transfer_id=transfer_id)
     await log_activity(user, "transfer_rekening",
                         f"Transfer Rp{body.nominal:,} dari {asal['nama']} ke {tujuan['nama']}".replace(",", "."))
@@ -292,11 +303,11 @@ async def transfer_rekening(body: TransferIn, user: dict = Depends(require_owner
 
 
 @api.get("/rekening/transfer")
-async def list_transfer(user: dict = Depends(require_owner)):
+async def list_transfer(user: dict = Depends(require_owner), property_id: str = Depends(get_active_property)):
     items = await db.rekening_transaksi.find(
-        {"jenis": "transfer_keluar"}, {"_id": 0}
+        scoped({"jenis": "transfer_keluar"}, property_id), {"_id": 0}
     ).sort("tanggal", -1).to_list(200)
-    nama_map = {r["id"]: r["nama"] for r in await db.rekening.find({}, {"_id": 0, "id": 1, "nama": 1}).to_list(200)}
+    nama_map = {r["id"]: r["nama"] for r in await db.rekening.find(scoped({}, property_id), {"_id": 0, "id": 1, "nama": 1}).to_list(200)}
     out = []
     for t in items:
         out.append({
@@ -310,15 +321,15 @@ async def list_transfer(user: dict = Depends(require_owner)):
 # ---- Dashboard ----
 
 @api.get("/rekening/dashboard")
-async def dashboard_rekening(user: dict = Depends(require_owner)):
-    items = await db.rekening.find({"status": "aktif"}, {"_id": 0}).to_list(200)
+async def dashboard_rekening(user: dict = Depends(require_owner), property_id: str = Depends(get_active_property)):
+    items = await db.rekening.find(scoped({"status": "aktif"}, property_id), {"_id": 0}).to_list(200)
     per_jenis: Dict[str, int] = {"operasional": 0, "tabungan": 0, "pinjaman": 0}
     for r in items:
         per_jenis[r["jenis"]] = per_jenis.get(r["jenis"], 0) + int(r.get("saldo") or 0)
     total_cash = per_jenis["operasional"] + per_jenis["tabungan"]
     net_cash = total_cash - per_jenis["pinjaman"]
     goals = [_rekening_out(r) for r in items if r["jenis"] == "tabungan" and r.get("target")]
-    transfer_terakhir = await list_transfer(user)
+    transfer_terakhir = await list_transfer(user, property_id)
     return {
         "total_cash": total_cash, "operasional": per_jenis["operasional"],
         "tabungan": per_jenis["tabungan"], "pinjaman": per_jenis["pinjaman"],
@@ -343,8 +354,9 @@ async def _rata_rata_harian_bersih(rekening_id: str, hari: int = 30) -> float:
 
 
 @api.get("/rekening/{rid}/forecast")
-async def forecast_rekening(rid: str, user: dict = Depends(require_owner)):
-    r = await db.rekening.find_one({"id": rid}, {"_id": 0})
+async def forecast_rekening(rid: str, user: dict = Depends(require_owner),
+                            property_id: str = Depends(get_active_property)):
+    r = await db.rekening.find_one(scoped({"id": rid}, property_id), {"_id": 0})
     if not r:
         raise HTTPException(404, "Rekening tidak ditemukan")
     rata_bulanan = await _rata_rata_harian_bersih(rid, 90) * 30
@@ -364,12 +376,12 @@ async def forecast_rekening(rid: str, user: dict = Depends(require_owner)):
 
 
 @api.get("/rekening/cash-risk")
-async def cash_risk(user: dict = Depends(require_owner)):
+async def cash_risk(user: dict = Depends(require_owner), property_id: str = Depends(get_active_property)):
     """Deteksi risiko kehabisan kas untuk tiap rekening operasional aktif, dari tren burn
     rate harian 30 hari terakhir. Ambang: <14 hari = Risiko Tinggi, <30 hari = Perlu
     Diperhatikan, selain itu = Aman. (Ambang angka bulat wajar, bisa disesuaikan nanti kalau
     user mau lebih ketat/longgar - belum ada permintaan spesifik soal ini.)"""
-    items = await db.rekening.find({"jenis": "operasional", "status": "aktif"}, {"_id": 0}).to_list(100)
+    items = await db.rekening.find(scoped({"jenis": "operasional", "status": "aktif"}, property_id), {"_id": 0}).to_list(100)
     out = []
     for r in items:
         rata_harian = await _rata_rata_harian_bersih(r["id"], 30)
@@ -401,7 +413,8 @@ async def cash_risk(user: dict = Depends(require_owner)):
 # ---- Smart Allocation Rules (V2) ----
 
 @api.post("/rekening/smart-rules")
-async def buat_smart_rule(body: SmartAllocationRuleCreate, user: dict = Depends(require_owner)):
+async def buat_smart_rule(body: SmartAllocationRuleCreate, user: dict = Depends(require_owner),
+                          property_id: str = Depends(get_active_property)):
     if body.trigger_tipe not in ("saldo_diatas", "tanggal_bulanan"):
         raise HTTPException(400, "trigger_tipe harus 'saldo_diatas' atau 'tanggal_bulanan'")
     if body.trigger_tipe == "saldo_diatas" and not body.ambang_saldo:
@@ -411,7 +424,7 @@ async def buat_smart_rule(body: SmartAllocationRuleCreate, user: dict = Depends(
     if body.rekening_asal_id == body.rekening_tujuan_id:
         raise HTTPException(400, "Rekening asal & tujuan tidak boleh sama")
     for rid in (body.rekening_asal_id, body.rekening_tujuan_id):
-        if not await db.rekening.find_one({"id": rid}):
+        if not await db.rekening.find_one(scoped({"id": rid}, property_id)):
             raise HTTPException(404, f"Rekening {rid} tidak ditemukan")
     doc = {
         "id": str(uuid.uuid4()), "nama": body.nama, "rekening_asal_id": body.rekening_asal_id,
@@ -419,6 +432,7 @@ async def buat_smart_rule(body: SmartAllocationRuleCreate, user: dict = Depends(
         "ambang_saldo": body.ambang_saldo, "tanggal_hari": body.tanggal_hari,
         "nominal_transfer": body.nominal_transfer, "aktif": body.aktif,
         "last_triggered_period": None, "created_at": now_iso(), "updated_at": now_iso(),
+        "property_id": property_id,
     }
     await db.rekening_smart_rule.insert_one(doc)
     await log_activity(user, "buat_smart_rule", f"Tambah Smart Allocation Rule '{body.nama}'")
@@ -427,9 +441,9 @@ async def buat_smart_rule(body: SmartAllocationRuleCreate, user: dict = Depends(
 
 
 @api.get("/rekening/smart-rules")
-async def list_smart_rules(user: dict = Depends(require_owner)):
-    items = await db.rekening_smart_rule.find({}, {"_id": 0}).sort("created_at", 1).to_list(100)
-    nama_map = {r["id"]: r["nama"] for r in await db.rekening.find({}, {"_id": 0, "id": 1, "nama": 1}).to_list(200)}
+async def list_smart_rules(user: dict = Depends(require_owner), property_id: str = Depends(get_active_property)):
+    items = await db.rekening_smart_rule.find(scoped({}, property_id), {"_id": 0}).sort("created_at", 1).to_list(100)
+    nama_map = {r["id"]: r["nama"] for r in await db.rekening.find(scoped({}, property_id), {"_id": 0, "id": 1, "nama": 1}).to_list(200)}
     for it in items:
         it["rekening_asal_nama"] = nama_map.get(it["rekening_asal_id"], "?")
         it["rekening_tujuan_nama"] = nama_map.get(it["rekening_tujuan_id"], "?")
@@ -437,8 +451,9 @@ async def list_smart_rules(user: dict = Depends(require_owner)):
 
 
 @api.put("/rekening/smart-rules/{ruleid}")
-async def update_smart_rule(ruleid: str, body: SmartAllocationRuleUpdate, user: dict = Depends(require_owner)):
-    rule = await db.rekening_smart_rule.find_one({"id": ruleid})
+async def update_smart_rule(ruleid: str, body: SmartAllocationRuleUpdate, user: dict = Depends(require_owner),
+                            property_id: str = Depends(get_active_property)):
+    rule = await db.rekening_smart_rule.find_one(scoped({"id": ruleid}, property_id))
     if not rule:
         raise HTTPException(404, "Rule tidak ditemukan")
     updates = {k: v for k, v in body.dict(exclude_unset=True).items() if v is not None}
@@ -453,8 +468,9 @@ async def update_smart_rule(ruleid: str, body: SmartAllocationRuleUpdate, user: 
 
 
 @api.delete("/rekening/smart-rules/{ruleid}")
-async def hapus_smart_rule(ruleid: str, user: dict = Depends(require_owner)):
-    rule = await db.rekening_smart_rule.find_one({"id": ruleid})
+async def hapus_smart_rule(ruleid: str, user: dict = Depends(require_owner),
+                           property_id: str = Depends(get_active_property)):
+    rule = await db.rekening_smart_rule.find_one(scoped({"id": ruleid}, property_id))
     if not rule:
         raise HTTPException(404, "Rule tidak ditemukan")
     await db.rekening_smart_rule.delete_one({"id": ruleid})
@@ -484,11 +500,12 @@ async def jalankan_smart_rules_tanggal_bulanan():
             logging.getLogger("rekening").info(f"Smart rule tanggal_bulanan '{rule['nama']}' dilewati - saldo tidak cukup")
             continue
         try:
+            rule_property_id = rule.get("property_id") or await get_default_property_id()
             await _catat_transaksi(rule["rekening_asal_id"], "transfer_keluar", nominal, "Smart Allocation",
-                                    f"Otomatis (aturan: {rule['nama']})", None, system_user,
+                                    f"Otomatis (aturan: {rule['nama']})", None, system_user, rule_property_id,
                                     source="smart_rule", rekening_pasangan_id=rule["rekening_tujuan_id"], cek_smart_rule=False)
             await _catat_transaksi(rule["rekening_tujuan_id"], "transfer_masuk", nominal, "Smart Allocation",
-                                    f"Otomatis (aturan: {rule['nama']})", None, system_user,
+                                    f"Otomatis (aturan: {rule['nama']})", None, system_user, rule_property_id,
                                     source="smart_rule", rekening_pasangan_id=rule["rekening_asal_id"], cek_smart_rule=False)
             await db.rekening_smart_rule.update_one({"id": rule["id"]}, {"$set": {"last_triggered_period": period, "updated_at": now_iso()}})
         except Exception as e:
@@ -524,14 +541,15 @@ def _tebak_tipe_csv(raw: str) -> Optional[str]:
 
 
 @api.post("/rekening/{rid}/rekonsiliasi-csv")
-async def rekonsiliasi_csv(rid: str, file: UploadFile = File(...), user: dict = Depends(require_owner)):
+async def rekonsiliasi_csv(rid: str, file: UploadFile = File(...), user: dict = Depends(require_owner),
+                           property_id: str = Depends(get_active_property)):
     """Format CSV yang didukung: kolom header `tanggal,keterangan,nominal,tipe` (tipe =
     masuk/keluar atau kredit/debit atau +/-). Setiap baris dicocokkan terhadap
     db.rekening_transaksi milik rekening ini yang BELUM `direkonsiliasi`, nominal PERSIS
     sama & tanggal dalam +-3 hari - kalau ketemu, ditandai direkonsiliasi=true. TIDAK PERNAH
     auto-membuat transaksi baru dari baris yang tidak cocok - cuma dilaporkan ke owner untuk
     ditinjau manual (sama seperti pola review PDF settlement OTA yang sudah ada)."""
-    r = await db.rekening.find_one({"id": rid})
+    r = await db.rekening.find_one(scoped({"id": rid}, property_id))
     if not r:
         raise HTTPException(404, "Rekening tidak ditemukan")
     raw = (await file.read()).decode("utf-8-sig", errors="ignore")
@@ -585,8 +603,9 @@ async def rekonsiliasi_csv(rid: str, file: UploadFile = File(...), user: dict = 
 # ke path literal seperti "/rekening/dashboard" akan salah kena sini duluan (rid="dashboard")
 # dan gagal 404 "Rekening tidak ditemukan" - insiden nyata ditemukan saat testing 2026-07-22.
 @api.get("/rekening/{rid}")
-async def get_rekening(rid: str, user: dict = Depends(require_owner)):
-    r = await db.rekening.find_one({"id": rid}, {"_id": 0})
+async def get_rekening(rid: str, user: dict = Depends(require_owner),
+                       property_id: str = Depends(get_active_property)):
+    r = await db.rekening.find_one(scoped({"id": rid}, property_id), {"_id": 0})
     if not r:
         raise HTTPException(404, "Rekening tidak ditemukan")
     riwayat = await db.rekening_transaksi.find({"rekening_id": rid}, {"_id": 0}).sort("tanggal", -1).to_list(100)

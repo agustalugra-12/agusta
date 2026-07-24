@@ -268,7 +268,8 @@ async def tripay_callback(request: Request):
                     # rekening operasional default, best-effort (lihat docstring auto_posting).
                     from routes.rekening import auto_posting
                     await auto_posting("pemasukan", int(total_amount or 0), "Booking Tamu (Tripay)",
-                                        f"Booking {gb['kode']} - {gb.get('nama_tamu', '-')}")
+                                        f"Booking {gb['kode']} - {gb.get('nama_tamu', '-')}",
+                                        gb.get("property_id") or await get_default_property_id())
                     await send_push(
                         "Pembayaran Diterima",
                         f"Booking {gb['kode']} - {gb.get('nama_tamu', '-')} - Kamar {gb.get('room_nomor', '-')} sudah dibayar",

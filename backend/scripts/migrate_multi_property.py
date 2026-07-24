@@ -25,6 +25,7 @@ CORE_COLLECTIONS = [
     "rooms", "bookings", "checkins", "guests", "staff_kerja", "staff_profil",
     "jadwal_kerja", "jadwal_shifts", "issues", "expenses", "payroll",
     "booking_requests", "products", "kasir", "rates", "services", "kasbon",
+    "rekening", "rekening_transaksi", "rekening_smart_rule",
 ]
 
 
