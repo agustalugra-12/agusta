@@ -28,13 +28,25 @@ from routes.ai_grow import background_daily_brief_loop
 app = FastAPI(title="Pelangi Homestay API")
 app.mount("/uploads", StaticFiles(directory=str(ROOT_DIR / "uploads")), name="uploads")
 
+async def _replace_unique_index(collection, old_name: str, new_keys, **kwargs):
+    """2026-07-24, multi-properti: beberapa index unique lama (nomor kamar/kode produk/dst)
+    perlu jadi compound dengan property_id supaya 2 properti boleh punya nilai sama (mis.
+    2 properti sama-sama punya "Kamar 1"). drop_index dibungkus try/except supaya idempotent
+    lintas restart (index lama cuma ada sekali, restart berikutnya sudah tidak ketemu lagi)."""
+    try:
+        await collection.drop_index(old_name)
+    except Exception:
+        pass
+    await collection.create_index(new_keys, unique=True, **kwargs)
+
 @app.on_event("startup")
 async def startup():
     # Indexes
     await db.users.create_index("username", unique=True)
     await db.users.create_index("email", unique=True, sparse=True)
-    await db.rooms.create_index("nomor", unique=True)
-    await db.products.create_index("kode", unique=True)
+    await db.properties.create_index("slug", unique=True)
+    await _replace_unique_index(db.rooms, "nomor_1", [("property_id", 1), ("nomor", 1)])
+    await _replace_unique_index(db.products, "kode_1", [("property_id", 1), ("kode", 1)])
     await db.checkins.create_index("jam_checkin")
     await db.kasir.create_index("timestamp")
     await db.expenses.create_index("tanggal")
@@ -48,7 +60,8 @@ async def startup():
     await db.bookings.create_index("ota_reservation_no", sparse=True)
     await db.bookings.create_index("modifikasi_status", sparse=True)
     await db.bookings.create_index("sync_status", sparse=True)
-    await db.rates.create_index([("room_type", 1), ("tanggal", 1)], unique=True)
+    await _replace_unique_index(db.rates, "room_type_1_tanggal_1",
+                                 [("property_id", 1), ("room_type", 1), ("tanggal", 1)])
     await db.availability_logs.create_index("room_id")
     await db.availability_logs.create_index("changed_at")
     await db.integrations.create_index("provider", unique=True)
@@ -61,7 +74,8 @@ async def startup():
     await db.push_subscriptions.create_index("user_id")
     await db.booking_requests.create_index("status")
     await db.booking_requests.create_index("created_at")
-    await db.jadwal_kerja.create_index([("year", 1), ("month", 1)], unique=True)
+    await _replace_unique_index(db.jadwal_kerja, "year_1_month_1",
+                                 [("property_id", 1), ("year", 1), ("month", 1)])
     await db.jadwal_shifts.create_index([("jadwal_id", 1), ("staff_id", 1), ("tanggal", 1)], unique=True)
     await db.kasbon.create_index("staff_id")
     await db.payroll.create_index([("staff_id", 1), ("periode", 1)], unique=True)

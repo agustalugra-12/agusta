@@ -82,12 +82,18 @@ async def create_user(body: UserCreate, user: dict = Depends(require_owner)):
         raise HTTPException(400, "Role tidak valid")
     if await db.users.find_one({"username": body.username.lower()}):
         raise HTTPException(400, "Username sudah dipakai")
+    if body.role == "resepsionis":
+        if not body.property_id:
+            raise HTTPException(400, "Resepsionis wajib ditugaskan ke 1 properti")
+        if not await db.properties.find_one({"id": body.property_id}):
+            raise HTTPException(400, "Properti tidak ditemukan")
     doc = {
         "id": str(uuid.uuid4()),
         "nama": body.nama,
         "username": body.username.lower(),
         "password_hash": hash_password(body.password),
         "role": body.role,
+        "property_id": body.property_id if body.role == "resepsionis" else None,
         "status": "aktif",
         "created_at": now_iso(),
     }
@@ -104,6 +110,10 @@ async def update_user(user_id: str, body: UserUpdate, user: dict = Depends(requi
     if body.nama is not None: updates["nama"] = body.nama
     if body.role is not None: updates["role"] = body.role
     if body.status is not None: updates["status"] = body.status
+    if body.property_id is not None:
+        if not await db.properties.find_one({"id": body.property_id}):
+            raise HTTPException(400, "Properti tidak ditemukan")
+        updates["property_id"] = body.property_id
     if body.password:
         updates["password_hash"] = hash_password(body.password)
     if updates:

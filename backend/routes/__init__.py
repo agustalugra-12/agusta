@@ -4,6 +4,7 @@ Importing this package will import every route module below, which in turn
 registers all endpoints on the shared `api` router (defined in core.py).
 """
 from . import auth  # noqa: F401
+from . import properties  # noqa: F401
 from . import rooms  # noqa: F401
 from . import checkins  # noqa: F401
 from . import inventory  # noqa: F401

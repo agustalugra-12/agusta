@@ -152,6 +152,35 @@ async def require_owner(user: dict = Depends(get_current_user)) -> dict:
         raise HTTPException(403, "Hanya Owner yang dapat melakukan aksi ini")
     return user
 
+async def get_active_property(request: Request, user: dict = Depends(get_current_user)) -> str:
+    """Multi-properti (2026-07-24) - resepsionis TERKUNCI ke property_id akunnya sendiri
+    (header diabaikan, tidak bisa dipilih-pilih). Owner boleh pilih properti mana pun lewat
+    header X-Property-Id, atau "all" untuk melihat gabungan semua properti (HANYA dipakai
+    endpoint agregat/laporan yang eksplisit mendukungnya - route lain WAJIB validasi sendiri
+    kalau menerima "all" dari sini, itu tandanya route itu belum boleh dipanggil owner dalam
+    mode "all")."""
+    if user.get("role") != "owner":
+        pid = user.get("property_id")
+        if not pid:
+            raise HTTPException(403, "Akun ini belum ditugaskan ke properti mana pun - hubungi Owner")
+        return pid
+    requested = request.headers.get("X-Property-Id", "all")
+    if requested != "all" and not await db.properties.find_one({"id": requested}):
+        raise HTTPException(400, "Properti tidak ditemukan")
+    return requested
+
+def scoped(query: Dict[str, Any], property_id: str) -> Dict[str, Any]:
+    """Selipkan property_id ke filter query MongoDB - dipakai di SETIAP query ke collection
+    yang di-scope per properti (rooms/bookings/checkins/guests/staff_kerja/staff_profil/
+    issues/expenses/payroll/booking_requests/jadwal_kerja/jadwal_shifts/products/kasir/rates),
+    supaya data antar properti tidak pernah bocor/tercampur. JANGAN PERNAH panggil dengan
+    property_id == "all" di route yang tidak eksplisit mendukung mode agregat (lihat
+    get_active_property) - filter dengan property_id="all" secara harfiah akan mencari
+    dokumen yang field property_id-nya BERNILAI string "all" (hasilnya kosong), bukan
+    "semua properti" - route agregat harus SKIP pemanggilan scoped() sama sekali, bukan
+    memanggilnya dengan "all"."""
+    return {**query, "property_id": property_id}
+
 async def log_activity(user: dict, action: str, detail: str = "", entity: str = ""):
     """AuditLogger — dipanggil di semua route yang mengubah data (stok kamar, reservasi,
     pengguna, dst). Tiap panggilan menulis satu dokumen `AuditLog` ke collection `audit_log`.
@@ -459,6 +488,7 @@ class UserCreate(BaseModel):
     username: str
     password: str
     role: str  # owner | resepsionis
+    property_id: Optional[str] = None  # wajib diisi kalau role=resepsionis (2026-07-24, multi-properti)
 
 class RegisterIn(BaseModel):
     """Pendaftaran akun mandiri (halaman Daftar Akun, Fase 3) — beda dari UserCreate
@@ -474,6 +504,7 @@ class UserUpdate(BaseModel):
     password: Optional[str] = None
     role: Optional[str] = None
     status: Optional[str] = None  # aktif | nonaktif
+    property_id: Optional[str] = None  # 2026-07-24, multi-properti - pindah tugas resepsionis
 
 class MeUpdate(BaseModel):
     """Update profil sendiri (halaman Profil) — beda dari UserUpdate (admin-only):
@@ -481,6 +512,17 @@ class MeUpdate(BaseModel):
     nama: Optional[str] = None
     password_lama: Optional[str] = None
     password_baru: Optional[str] = None
+
+class PropertyCreate(BaseModel):
+    nama: str
+    slug: str  # dipakai di URL Booking Engine publik (book.pelangihomestay.com/<slug>) - unik
+    alamat: Optional[str] = ""
+
+class PropertyUpdate(BaseModel):
+    nama: Optional[str] = None
+    slug: Optional[str] = None
+    alamat: Optional[str] = None
+    aktif: Optional[bool] = None
 
 class RoomCreate(BaseModel):
     nomor: str
