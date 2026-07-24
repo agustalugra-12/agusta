@@ -163,17 +163,18 @@ def _buat_jadwal_acak(staff_list: List[dict], tanggal_list: List[str]) -> Dict[s
 
 # ---- Staf ----
 @api.get("/staff-kerja")
-async def list_staff_kerja(user: dict = Depends(get_current_user)):
-    return await db.staff_kerja.find({}, {"_id": 0}).sort("nama", 1).to_list(200)
+async def list_staff_kerja(user: dict = Depends(get_current_user), property_id: str = Depends(get_active_property)):
+    return await db.staff_kerja.find(scoped({}, property_id), {"_id": 0}).sort("nama", 1).to_list(200)
 
 
 @api.post("/staff-kerja")
-async def create_staff_kerja(body: StaffKerjaCreate, user: dict = Depends(require_owner)):
+async def create_staff_kerja(body: StaffKerjaCreate, user: dict = Depends(require_owner),
+                             property_id: str = Depends(get_active_property)):
     invalid = set(body.shift_terlarang) - set(SHIFT_KERJA)
     if invalid:
         raise HTTPException(400, f"shift_terlarang tidak valid: {sorted(invalid)}")
     doc = {"id": str(uuid.uuid4()), "nama": body.nama, "shift_terlarang": body.shift_terlarang,
-           "aktif": body.aktif, "created_at": now_iso()}
+           "aktif": body.aktif, "created_at": now_iso(), "property_id": property_id}
     await db.staff_kerja.insert_one(doc)
     await log_activity(user, "create_staff_kerja", f"Tambah staf jadwal kerja: {body.nama}")
     doc.pop("_id", None)
@@ -181,8 +182,9 @@ async def create_staff_kerja(body: StaffKerjaCreate, user: dict = Depends(requir
 
 
 @api.put("/staff-kerja/{sid}")
-async def update_staff_kerja(sid: str, body: StaffKerjaUpdate, user: dict = Depends(require_owner)):
-    s = await db.staff_kerja.find_one({"id": sid})
+async def update_staff_kerja(sid: str, body: StaffKerjaUpdate, user: dict = Depends(require_owner),
+                             property_id: str = Depends(get_active_property)):
+    s = await db.staff_kerja.find_one(scoped({"id": sid}, property_id))
     if not s:
         raise HTTPException(404, "Staf tidak ditemukan")
     updates = {k: v for k, v in body.model_dump().items() if v is not None}
@@ -197,8 +199,9 @@ async def update_staff_kerja(sid: str, body: StaffKerjaUpdate, user: dict = Depe
 
 
 @api.delete("/staff-kerja/{sid}")
-async def delete_staff_kerja(sid: str, user: dict = Depends(require_owner)):
-    s = await db.staff_kerja.find_one({"id": sid})
+async def delete_staff_kerja(sid: str, user: dict = Depends(require_owner),
+                             property_id: str = Depends(get_active_property)):
+    s = await db.staff_kerja.find_one(scoped({"id": sid}, property_id))
     if not s:
         raise HTTPException(404, "Staf tidak ditemukan")
     await db.staff_kerja.delete_one({"id": sid})
@@ -223,10 +226,10 @@ def _statistik_staf(hari: Dict[str, str]) -> Dict[str, int]:
     return stat
 
 
-async def _detail_jadwal(jadwal: dict) -> dict:
+async def _detail_jadwal(jadwal: dict, property_id: str) -> dict:
     """Bentuk respons dipakai bareng oleh get/generate/edit/swap/publish supaya frontend
     selalu dapat state penuh (termasuk pelanggaran aturan) setelah aksi apa pun."""
-    staff_list = await db.staff_kerja.find({}, {"_id": 0}).sort("nama", 1).to_list(200)
+    staff_list = await db.staff_kerja.find(scoped({}, property_id), {"_id": 0}).sort("nama", 1).to_list(200)
     tanggal_list = _semua_tanggal(jadwal["year"], jadwal["month"])
     shift_map = await _shift_map_untuk_jadwal(jadwal["id"])
     staf_out = []
@@ -279,20 +282,23 @@ async def _detail_jadwal(jadwal: dict) -> dict:
 
 
 @api.get("/jadwal-kerja")
-async def get_jadwal_bulan(year: int, month: int, user: dict = Depends(get_current_user)):
-    jadwal = await db.jadwal_kerja.find_one({"year": year, "month": month})
+async def get_jadwal_bulan(year: int, month: int, user: dict = Depends(get_current_user),
+                           property_id: str = Depends(get_active_property)):
+    jadwal = await db.jadwal_kerja.find_one(scoped({"year": year, "month": month}, property_id))
     if not jadwal:
         return None
-    return await _detail_jadwal(jadwal)
+    return await _detail_jadwal(jadwal, property_id)
 
 
 @api.get("/jadwal-kerja/riwayat")
-async def list_riwayat_jadwal(user: dict = Depends(get_current_user)):
-    return await db.jadwal_kerja.find({}, {"_id": 0}).sort([("year", -1), ("month", -1)]).to_list(200)
+async def list_riwayat_jadwal(user: dict = Depends(get_current_user),
+                              property_id: str = Depends(get_active_property)):
+    return await db.jadwal_kerja.find(scoped({}, property_id), {"_id": 0}).sort([("year", -1), ("month", -1)]).to_list(200)
 
 
 @api.post("/jadwal-kerja/generate")
-async def generate_jadwal(body: JadwalGenerateBody, user: dict = Depends(require_owner)):
+async def generate_jadwal(body: JadwalGenerateBody, user: dict = Depends(require_owner),
+                          property_id: str = Depends(get_active_property)):
     """Generate jadwal (algoritmik, lihat `_buat_jadwal_acak`). Boleh dipanggil ulang untuk
     regenerasi TOTAL selama status masih draft (menimpa semua sel lama) — begitu published,
     tidak bisa digenerate ulang di sini (jaga hasil yang sudah dibagikan staf supaya tidak
@@ -310,11 +316,11 @@ async def generate_jadwal(body: JadwalGenerateBody, user: dict = Depends(require
     if not (1 <= body.month <= 12):
         raise HTTPException(400, "month harus 1-12")
     async with _generate_lock:
-        staff_list = await db.staff_kerja.find({"aktif": True}, {"_id": 0}).to_list(200)
+        staff_list = await db.staff_kerja.find(scoped({"aktif": True}, property_id), {"_id": 0}).to_list(200)
         if not staff_list:
             raise HTTPException(400, "Belum ada staf aktif — tambah staf dulu di pengaturan Jadwal Kerja")
 
-        existing = await db.jadwal_kerja.find_one({"year": body.year, "month": body.month})
+        existing = await db.jadwal_kerja.find_one(scoped({"year": body.year, "month": body.month}, property_id))
         if existing and existing.get("status") == "published":
             raise HTTPException(400, "Jadwal bulan ini sudah dipublish — tidak bisa digenerate ulang otomatis")
 
@@ -324,10 +330,10 @@ async def generate_jadwal(body: JadwalGenerateBody, user: dict = Depends(require
         now = now_iso()
         jadwal_id = existing["id"] if existing else str(uuid.uuid4())
         await db.jadwal_kerja.update_one(
-            {"year": body.year, "month": body.month},
+            {"year": body.year, "month": body.month, "property_id": property_id},
             {
                 "$set": {"id": jadwal_id, "status": "draft", "generated_at": now, "generated_by": user["nama"]},
-                "$setOnInsert": {"year": body.year, "month": body.month, "published_at": None, "published_by": None, "created_at": now},
+                "$setOnInsert": {"year": body.year, "month": body.month, "published_at": None, "published_by": None, "created_at": now, "property_id": property_id},
             },
             upsert=True,
         )
@@ -349,7 +355,7 @@ async def generate_jadwal(body: JadwalGenerateBody, user: dict = Depends(require
 
         await log_activity(user, "generate_jadwal_kerja", f"Generate jadwal kerja {body.month}/{body.year} ({len(staff_list)} staf aktif)")
         jadwal = await db.jadwal_kerja.find_one({"id": jadwal_id})
-        return await _detail_jadwal(jadwal)
+        return await _detail_jadwal(jadwal, property_id)
 
 
 async def _jumlah_shift_tanggal(jadwal_id: str, tanggal: str, shift: str, kecuali_staff_ids: Optional[List[str]] = None) -> int:
@@ -385,20 +391,21 @@ async def _validasi_shift_baru(jadwal_id: str, staf: dict, tanggal: str, shift: 
 
 
 @api.put("/jadwal-kerja/{jadwal_id}/shift")
-async def update_shift(jadwal_id: str, body: JadwalShiftUpdateBody, user: dict = Depends(require_owner)):
+async def update_shift(jadwal_id: str, body: JadwalShiftUpdateBody, user: dict = Depends(require_owner),
+                       property_id: str = Depends(get_active_property)):
     """Edit manual 1 sel. Validasi KERAS: shift_terlarang, batas jumlah per hari
     (off/night/morning), dan maks 1x libur/minggu — semua dicek lewat `_validasi_shift_baru`
     (dipakai juga swap_shift, satu sumber kebenaran). TIDAK auto-mengubah sel lain (bukan
     black-box) untuk aturan yang tidak bisa ditegakkan per-edit (jumlah PERSIS 4 hari
     off/bulan) — itu ditampilkan sebagai peringatan di response, diperbaiki manual."""
-    jadwal = await db.jadwal_kerja.find_one({"id": jadwal_id})
+    jadwal = await db.jadwal_kerja.find_one(scoped({"id": jadwal_id}, property_id))
     if not jadwal:
         raise HTTPException(404, "Jadwal tidak ditemukan")
     if jadwal.get("status") == "published":
         raise HTTPException(400, "Jadwal sudah dipublish — tidak bisa diedit langsung")
     if body.shift not in SHIFT_VALUES:
         raise HTTPException(400, "Shift tidak valid")
-    staf = await db.staff_kerja.find_one({"id": body.staff_id})
+    staf = await db.staff_kerja.find_one(scoped({"id": body.staff_id}, property_id))
     if not staf:
         raise HTTPException(404, "Staf tidak ditemukan")
     if body.tanggal not in _semua_tanggal(jadwal["year"], jadwal["month"]):
@@ -411,16 +418,17 @@ async def update_shift(jadwal_id: str, body: JadwalShiftUpdateBody, user: dict =
     )
     await log_activity(user, "edit_shift_jadwal_kerja", f"Ubah shift {staf['nama']} {body.tanggal} -> {SHIFT_LABEL.get(body.shift, body.shift)}")
     jadwal2 = await db.jadwal_kerja.find_one({"id": jadwal_id})
-    return await _detail_jadwal(jadwal2)
+    return await _detail_jadwal(jadwal2, property_id)
 
 
 @api.post("/jadwal-kerja/{jadwal_id}/swap")
-async def swap_shift(jadwal_id: str, body: JadwalSwapBody, user: dict = Depends(require_owner)):
+async def swap_shift(jadwal_id: str, body: JadwalSwapBody, user: dict = Depends(require_owner),
+                     property_id: str = Depends(get_active_property)):
     """Tukar Shift — validasi shift_terlarang kedua staf setelah tukar, dan TOLAK tukar
     yang melibatkan hari "off" antar staf BERBEDA (itu akan mengubah jumlah hari off salah
     satu staf dari wajib 4 tanpa admin sadar) — kalau memang perlu, admin edit manual per
     sel lewat endpoint shift di atas."""
-    jadwal = await db.jadwal_kerja.find_one({"id": jadwal_id})
+    jadwal = await db.jadwal_kerja.find_one(scoped({"id": jadwal_id}, property_id))
     if not jadwal:
         raise HTTPException(404, "Jadwal tidak ditemukan")
     if jadwal.get("status") == "published":
@@ -431,8 +439,8 @@ async def swap_shift(jadwal_id: str, body: JadwalSwapBody, user: dict = Depends(
     if not a or not b:
         raise HTTPException(404, "Sel jadwal tidak ditemukan (staf/tanggal tidak sesuai jadwal ini)")
 
-    staf_a = await db.staff_kerja.find_one({"id": body.staff_id_a})
-    staf_b = await db.staff_kerja.find_one({"id": body.staff_id_b})
+    staf_a = await db.staff_kerja.find_one(scoped({"id": body.staff_id_a}, property_id))
+    staf_b = await db.staff_kerja.find_one(scoped({"id": body.staff_id_b}, property_id))
     if not staf_a or not staf_b:
         raise HTTPException(404, "Staf tidak ditemukan")
 
@@ -450,17 +458,18 @@ async def swap_shift(jadwal_id: str, body: JadwalSwapBody, user: dict = Depends(
     await log_activity(user, "tukar_shift_jadwal_kerja",
                        f"Tukar shift {staf_a['nama']} {body.tanggal_a} <-> {staf_b['nama']} {body.tanggal_b}")
     jadwal2 = await db.jadwal_kerja.find_one({"id": jadwal_id})
-    return await _detail_jadwal(jadwal2)
+    return await _detail_jadwal(jadwal2, property_id)
 
 
 @api.post("/jadwal-kerja/{jadwal_id}/publish")
-async def publish_jadwal(jadwal_id: str, user: dict = Depends(require_owner)):
-    jadwal = await db.jadwal_kerja.find_one({"id": jadwal_id})
+async def publish_jadwal(jadwal_id: str, user: dict = Depends(require_owner),
+                         property_id: str = Depends(get_active_property)):
+    jadwal = await db.jadwal_kerja.find_one(scoped({"id": jadwal_id}, property_id))
     if not jadwal:
         raise HTTPException(404, "Jadwal tidak ditemukan")
     if jadwal.get("status") == "published":
         raise HTTPException(400, "Jadwal ini sudah dipublish")
-    detail = await _detail_jadwal(jadwal)
+    detail = await _detail_jadwal(jadwal, property_id)
     if not detail["valid"]:
         raise HTTPException(400, "Masih ada pelanggaran aturan (hari off/shift terlarang) — perbaiki dulu sebelum publish")
     now = now_iso()
@@ -469,6 +478,6 @@ async def publish_jadwal(jadwal_id: str, user: dict = Depends(require_owner)):
     }})
     await log_activity(user, "publish_jadwal_kerja", f"Publish jadwal kerja {jadwal['month']}/{jadwal['year']}")
     jadwal2 = await db.jadwal_kerja.find_one({"id": jadwal_id})
-    return await _detail_jadwal(jadwal2)
+    return await _detail_jadwal(jadwal2, property_id)
 
 
