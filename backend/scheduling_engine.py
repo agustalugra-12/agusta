@@ -25,7 +25,7 @@ BOOKING_AKTIF_STATUS = ["aktif", "booking_paid", "checked_in"]
 BOOKING_TERKONFIRMASI_STATUS = ["aktif", "booking_pending", "booking_paid", "checked_in"]
 
 
-async def estimasi_kamar_siap(room_id: str) -> Optional[datetime]:
+async def estimasi_kamar_siap(room_id: str, property_id: str) -> Optional[datetime]:
     """Kalau kamar sedang ditempati booking DAY USE yang aktif SEKARANG, kembalikan estimasi
     waktu siap dipakai lagi (jam_selesai booking tsb + buffer housekeeping). None kalau kamar
     tidak sedang ditempati Day Use saat ini - SENGAJA dibatasi hanya Day Use (dikonfirmasi
@@ -34,29 +34,29 @@ async def estimasi_kamar_siap(room_id: str) -> Optional[datetime]:
     yang penuh karena Menginap TIDAK PERNAH dikasih estimasi - harus dijawab "penuh" apa
     adanya, bukan janji palsu kapan kosong."""
     now = datetime.now(timezone.utc)
-    aktif = await db.bookings.find_one({
+    aktif = await db.bookings.find_one(scoped({
         "room_id": room_id, "tipe": "day_use", "status": {"$in": BOOKING_AKTIF_STATUS},
         "jam_mulai": {"$lte": now.isoformat()}, "jam_selesai": {"$gt": now.isoformat()},
-    }, sort=[("jam_selesai", 1)])
+    }, property_id), sort=[("jam_selesai", 1)])
     if not aktif or not aktif.get("jam_selesai"):
         return None
     return datetime.fromisoformat(aktif["jam_selesai"]) + timedelta(minutes=BUFFER_HOUSEKEEPING_MENIT)
 
 
-async def rekomendasi_slot_kosong(tipe_kamar: str) -> Optional[Dict[str, Any]]:
+async def rekomendasi_slot_kosong(tipe_kamar: str, property_id: str) -> Optional[Dict[str, Any]]:
     """Kalau semua kamar tipe ini penuh SEKARANG, cari kandidat kamar paling cepat siap +
     slot Day Use penuh (6 jam) yang tidak bentrok booking lain yang sudah terkonfirmasi.
     Dipakai AI WhatsApp untuk jawab "penuh, tapi kamar X siap jam Y". None kalau tidak ada
     kandidat yang bisa diestimasi."""
-    rooms = await db.rooms.find({"tipe": tipe_kamar}, {"_id": 0}).to_list(200)
+    rooms = await db.rooms.find(scoped({"tipe": tipe_kamar}, property_id), {"_id": 0}).to_list(200)
     kandidat = []
     for r in rooms:
-        siap = await estimasi_kamar_siap(r["id"])
+        siap = await estimasi_kamar_siap(r["id"], property_id)
         if not siap:
             continue
         usulan_selesai = siap + timedelta(hours=DAYUSE_DURASI_JAM)
         try:
-            await check_room_available(r["id"], siap, usulan_selesai)
+            await check_room_available(r["id"], siap, usulan_selesai, property_id)
         except HTTPException:
             continue  # slot ini bentrok booking lain yang sudah terkonfirmasi, lewati
         kandidat.append({"room_id": r["id"], "room_nomor": r["nomor"], "siap_pakai": siap, "usulan_selesai": usulan_selesai})
@@ -66,24 +66,24 @@ async def rekomendasi_slot_kosong(tipe_kamar: str) -> Optional[Dict[str, Any]]:
     return kandidat[0]
 
 
-async def booking_menginap_berikutnya(room_id: str, setelah: datetime) -> Optional[Dict[str, Any]]:
+async def booking_menginap_berikutnya(room_id: str, setelah: datetime, property_id: str) -> Optional[Dict[str, Any]]:
     """Booking MENGINAP terkonfirmasi berikutnya untuk kamar ini yang check-in setelah
     waktu tertentu — dipakai membatasi slot Day Use flexible (Rule 5 & Flexible Day Use)."""
-    return await db.bookings.find_one({
+    return await db.bookings.find_one(scoped({
         "room_id": room_id, "tipe": "menginap",
         "status": {"$in": BOOKING_TERKONFIRMASI_STATUS},
         "jam_mulai": {"$gt": setelah.isoformat()},
-    }, {"_id": 0}, sort=[("jam_mulai", 1)])
+    }, property_id), {"_id": 0}, sort=[("jam_mulai", 1)])
 
 
-async def slot_dayuse_aman(room_id: str, mulai: datetime, durasi_jam: int = DAYUSE_DURASI_JAM) -> Dict[str, Any]:
+async def slot_dayuse_aman(room_id: str, mulai: datetime, property_id: str, durasi_jam: int = DAYUSE_DURASI_JAM) -> Dict[str, Any]:
     """Hitung slot Day Use AMAN mulai dari `mulai` untuk kamar ini — durasi otomatis
     dipersingkat (Flexible Day Use) kalau ada booking Menginap terkonfirmasi yang akan
     check-in sebelum durasi penuh + buffer housekeeping selesai. Booking Menginap TIDAK
     PERNAH digeser/dibatalkan — yang menyesuaikan selalu Day Use (prioritas menginap lebih
     tinggi, sesuai urutan prioritas PRD #6)."""
     jam_selesai_ideal = mulai + timedelta(hours=durasi_jam)
-    menginap_berikutnya = await booking_menginap_berikutnya(room_id, mulai)
+    menginap_berikutnya = await booking_menginap_berikutnya(room_id, mulai, property_id)
     if not menginap_berikutnya:
         return {
             "jam_mulai": mulai, "jam_selesai_ideal": jam_selesai_ideal,
@@ -107,18 +107,18 @@ async def slot_dayuse_aman(room_id: str, mulai: datetime, durasi_jam: int = DAYU
     }
 
 
-async def cek_konflik_slot(room_id: str, tipe: str, mulai: datetime, selesai: datetime) -> Optional[Dict[str, Any]]:
+async def cek_konflik_slot(room_id: str, tipe: str, mulai: datetime, selesai: datetime, property_id: str) -> Optional[Dict[str, Any]]:
     """Peringatan ADVISORY (bukan blocking) sebelum staf submit booking — dipanggil live dari
     Dashboard Quick Book. Tidak menggantikan check_room_available, yang tetap jadi hard
     validator satu-satunya saat submit sungguhan (endpoint ini boleh bilang "aman" lalu
     submit tetap gagal kalau ada race condition — itu wajar & sudah ditangani error submit).
     Return None = tidak ada peringatan apa pun."""
     try:
-        await check_room_available(room_id, mulai, selesai)
+        await check_room_available(room_id, mulai, selesai, property_id)
     except HTTPException as e:
         return {"level": "blokir", "pesan": e.detail}
     if tipe == "day_use":
-        info = await slot_dayuse_aman(room_id, mulai)
+        info = await slot_dayuse_aman(room_id, mulai, property_id)
         if info["dipersingkat"] and info["jam_selesai_aman"] < selesai:
             return {
                 "level": "peringatan", "pesan": info["alasan"],

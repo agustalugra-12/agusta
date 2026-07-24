@@ -86,11 +86,12 @@ async def ai_bot_ketersediaan(
     scheduling_engine.py), disertakan `estimasi_kosong_lagi` sebagai perkiraan jujur; kalau
     penuh karena Menginap atau tanggal bukan hari ini, field itu TIDAK ADA sama sekali -
     AI wajib bilang penuh apa adanya, tidak boleh menawarkan estimasi kosong."""
+    property_id = await get_default_property_id()  # STOPGAP (2026-07-24) - lihat Phase 4 multi-properti (1 bot/nomor WA per properti, belum dikerjakan)
     tanggal = tanggal or datetime.now().strftime("%Y-%m-%d")
     hasil = await public_availability(tanggal=tanggal, tipe=tipe)
 
     q: Dict[str, Any] = {"tipe": tipe} if tipe else {}
-    semua_kamar = await db.rooms.find(q, {"_id": 0, "tipe": 1, "tarif": 1, "tarif_menginap": 1}).to_list(500)
+    semua_kamar = await db.rooms.find(scoped(q, property_id), {"_id": 0, "tipe": 1, "tarif": 1, "tarif_menginap": 1}).to_list(500)
     per_tipe: Dict[str, Dict[str, Any]] = {}
     for r in semua_kamar:
         per_tipe.setdefault(r["tipe"], {"tarif_day_use": r["tarif"], "tarif_menginap": r["tarif_menginap"], "kamar_tersedia": 0})
@@ -103,7 +104,7 @@ async def ai_bot_ketersediaan(
     for t, v in per_tipe.items():
         item = {"tipe": t, **v}
         if v["kamar_tersedia"] == 0 and is_today:
-            rekom = await rekomendasi_slot_kosong(t)
+            rekom = await rekomendasi_slot_kosong(t, property_id)
             if rekom:
                 item["estimasi_kosong_lagi"] = rekom["siap_pakai"].isoformat()
                 item["estimasi_kamar_nomor"] = rekom["room_nomor"]
@@ -130,16 +131,17 @@ async def ai_bot_buat_tiket(body: AiBotTiketIn, _: None = Depends(verifikasi_ai_
     via Simulator, tiket maintenance/service_request selalu punya room_nomor KOSONG walau
     tamu jelas menyebut nomor kamarnya, karena pencarian by no_hp gagal kalau nomor WA tamu
     tidak persis cocok dengan yang tercatat di checkin/booking aktif)."""
+    property_id = await get_default_property_id()  # STOPGAP, lihat ai_bot_ketersediaan
     room_id, room_nomor = None, ""
     if body.room_nomor:
         raw = body.room_nomor.strip()
-        r = await db.rooms.find_one({"nomor": raw})
+        r = await db.rooms.find_one(scoped({"nomor": raw}, property_id))
         if not r:
             # AI kadang kirim teks bebas ("kamar 12"/"room 12") bukan cuma angka murni
             # seperti tersimpan di db.rooms.nomor ("12") - coba ekstrak angkanya.
             m = re.search(r"\d+", raw)
             if m:
-                r = await db.rooms.find_one({"nomor": m.group(0)})
+                r = await db.rooms.find_one(scoped({"nomor": m.group(0)}, property_id))
         if r:
             room_id, room_nomor = r["id"], r["nomor"]
     if not room_id:
@@ -177,7 +179,8 @@ async def ai_bot_status_member(no_hp: str, _: None = Depends(verifikasi_ai_bot_k
     proaktif sebut diskon member di AWAL percakapan saat tamu tunjukkan niat booking, bukan
     cuma pas booking sudah dibuat) - reuse penuh hitung_diskon_member, satu-satunya sumber
     kebenaran, sama dipakai create_reservation/buat_booking_request."""
-    info = await hitung_diskon_member(no_hp)
+    property_id = await get_default_property_id()  # STOPGAP, lihat ai_bot_ketersediaan
+    info = await hitung_diskon_member(property_id, no_hp)
     return {"kedatangan_ke": info["kedatangan_ke"], "diskon_persen": info["diskon_persen"]}
 
 
@@ -187,6 +190,7 @@ async def ai_bot_booking_status(no_hp: str, _: None = Depends(verifikasi_ai_bot_
     penuh logika pengayaan `status_efektif`/`booking_ringkasan` yang sama dipakai halaman
     staf /booking-requests (lihat list_booking_requests), supaya AI menjawab status yang
     sama persis dengan yang staf lihat, bukan hitungan terpisah yang bisa menyimpang."""
+    property_id = await get_default_property_id()  # STOPGAP, lihat ai_bot_ketersediaan
     digits = re.sub(r"\D", "", no_hp or "")
     if not digits:
         return {"no_hp": no_hp, "permintaan": []}
@@ -197,7 +201,7 @@ async def ai_bot_booking_status(no_hp: str, _: None = Depends(verifikasi_ai_bot_
         variasi.add("62" + digits[1:])
 
     items = await db.booking_requests.find(
-        {"no_hp": {"$in": list(variasi)}}, {"_id": 0}
+        scoped({"no_hp": {"$in": list(variasi)}}, property_id), {"_id": 0}
     ).sort("created_at", -1).to_list(5)
 
     out = []
@@ -211,7 +215,7 @@ async def ai_bot_booking_status(no_hp: str, _: None = Depends(verifikasi_ai_bot_
             # jadi nawarin/muter balik ke booking yang sudah tuntas dibatalkan seolah masih
             # aktif (ditemukan 2026-07-21 dari laporan user).
             bks = await db.bookings.find(
-                {"id": {"$in": it["booking_ids"]}, "status": {"$ne": "cancelled"}}, {"_id": 0}
+                scoped({"id": {"$in": it["booking_ids"]}, "status": {"$ne": "cancelled"}}, property_id), {"_id": 0}
             ).to_list(20)
             if bks:
                 booking_ringkasan = [{
@@ -247,10 +251,10 @@ async def ai_bot_booking_status(no_hp: str, _: None = Depends(verifikasi_ai_bot_
     # murni di pencarian ini. Disatukan di sini supaya AI bisa temukan & bantu batalkan
     # booking dari channel manapun, bukan cuma yang dia buat sendiri.
     sudah_termasuk = {b["kode"] for it in out for b in (it.get("booking_ringkasan") or [])}
-    direct_bookings = await db.bookings.find({
+    direct_bookings = await db.bookings.find(scoped({
         "no_hp": {"$in": list(variasi)},
         "status": {"$in": ["aktif", "booking_pending", "booking_paid", "checked_in"]},
-    }, {"_id": 0}).sort("created_at", -1).to_list(5)
+    }, property_id), {"_id": 0}).sort("created_at", -1).to_list(5)
     for b in direct_bookings:
         if b["kode"] in sudah_termasuk:
             continue
@@ -310,7 +314,8 @@ async def ai_bot_preview_harga(body: AiBotPreviewHargaIn, _: None = Depends(veri
     buat_booking_request - angka di sini WAJIB konsisten dengan yang benar-benar terjadi
     kalau lanjut ke create_booking dengan data identik."""
     from routes.booking_requests import _hitung_diskon_gabungan
-    diskon_info, diskon_ai_persen, diskon_persen_efektif, preview_harga = await _hitung_diskon_gabungan(body.model_dump())
+    property_id = await get_default_property_id()  # STOPGAP, lihat ai_bot_ketersediaan
+    diskon_info, diskon_ai_persen, diskon_persen_efektif, preview_harga = await _hitung_diskon_gabungan(body.model_dump(), property_id)
     return {
         "kedatangan_ke": diskon_info["kedatangan_ke"],
         "diskon_member_persen": diskon_info["diskon_persen"],

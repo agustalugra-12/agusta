@@ -78,7 +78,7 @@ def _hitung_malam(data: Dict[str, Any]) -> int:
         return 1
 
 
-async def _hitung_preview_harga(data: Dict[str, Any], diskon_persen: int) -> Optional[Dict[str, Any]]:
+async def _hitung_preview_harga(data: Dict[str, Any], diskon_persen: int, property_id: str) -> Optional[Dict[str, Any]]:
     """Preview rincian harga (subtotal, diskon, service fee 3%, total) SEBELUM kamar
     spesifik dipilih/staf approve - pakai tarif TIPE kamar (sama untuk semua kamar tipe itu
     di db.rooms), supaya AI bisa jelaskan rincian ke tamu SAAT itu juga (2026-07-20,
@@ -87,7 +87,7 @@ async def _hitung_preview_harga(data: Dict[str, Any], diskon_persen: int) -> Opt
     lanjut tanpa rincian (fallback aman, bukan tool gagal total)."""
     if not data.get("room_tipe"):
         return None
-    room = await db.rooms.find_one({"tipe": data["room_tipe"]})
+    room = await db.rooms.find_one(scoped({"tipe": data["room_tipe"]}, property_id))
     if not room:
         return None
     jumlah_kamar = max(1, int(data.get("jumlah_kamar") or 1))
@@ -179,7 +179,7 @@ async def _coba_auto_approve_day_use(doc: Dict[str, Any]) -> None:
                     "jam_mulai": start, "jam_selesai": end,
                     "catatan": doc.get("catatan") or "", "created_by": "AI WhatsApp (otomatis)",
                     "tipe": "day_use", "dengan_sarapan": False,
-                }, source="whatsapp_auto", diskon_ai_persen=doc.get("diskon_ai_persen") or 0)
+                }, doc["property_id"], source="whatsapp_auto", diskon_ai_persen=doc.get("diskon_ai_persen") or 0)
                 room = kandidat_room
                 break
             except HTTPException as e:
@@ -228,7 +228,7 @@ async def _coba_auto_approve_day_use(doc: Dict[str, Any]) -> None:
         logging.getLogger("booking_requests").warning(f"Auto-approve day_use {doc.get('kode')} gagal: {e}")
 
 
-async def _hitung_diskon_gabungan(data: Dict[str, Any]):
+async def _hitung_diskon_gabungan(data: Dict[str, Any], property_id: str):
     """Diskon member (Program Loyalitas Kedatangan) digabung dengan diskon diskresi AI
     (2026-07-21, kebijakan bisnis user - HANYA dihitung kalau AI menandai tamu SENDIRI
     minta diskon via diskon_diminta_tamu, persentasenya SELALU dihitung server dari data
@@ -236,12 +236,12 @@ async def _hitung_diskon_gabungan(data: Dict[str, Any]):
     MAX (bukan dijumlah). Diekstrak dari buat_booking_request (sebelumnya cuma dipanggil di
     situ) supaya bisa dipakai juga oleh endpoint preview read-only (preview_harga_booking) -
     SATU-SATUNYA sumber kebenaran hitungan harga sebelum booking_request sungguhan dibuat."""
-    diskon_info = await hitung_diskon_member(data["no_hp"])
+    diskon_info = await hitung_diskon_member(property_id, data["no_hp"])
     diskon_ai_persen = 0
     if data.get("diskon_diminta_tamu"):
         diskon_ai_persen = hitung_diskon_ai_diskresi(_hitung_malam(data), int(data.get("jumlah_kamar") or 1))
     diskon_persen_efektif = max(diskon_info["diskon_persen"], diskon_ai_persen)
-    preview_harga = await _hitung_preview_harga(data, diskon_persen_efektif)
+    preview_harga = await _hitung_preview_harga(data, diskon_persen_efektif, property_id)
     return diskon_info, diskon_ai_persen, diskon_persen_efektif, preview_harga
 
 
@@ -267,10 +267,12 @@ async def buat_booking_request(data: Dict[str, Any]) -> Dict[str, Any]:
     if tanggal_checkin_date < datetime.now().date():
         raise HTTPException(400, "Tanggal check-in tidak boleh di masa lalu - tanya ulang tanggal yang benar ke tamu")
 
-    diskon_info, diskon_ai_persen, diskon_persen_efektif, preview_harga = await _hitung_diskon_gabungan(data)
+    property_id = await get_default_property_id()  # STOPGAP (2026-07-24) - lihat Phase 4 multi-properti, belum per-bot/per-properti
+    diskon_info, diskon_ai_persen, diskon_persen_efektif, preview_harga = await _hitung_diskon_gabungan(data, property_id)
 
     doc = {
         "id": str(uuid.uuid4()), "kode": _kode_request(),
+        "property_id": property_id,
         "nama_tamu": data["nama_tamu"], "no_hp": data["no_hp"],
         "tipe": data["tipe"], "room_tipe": data.get("room_tipe"),
         "jumlah_kamar": int(data.get("jumlah_kamar") or 1),
@@ -339,7 +341,8 @@ async def buat_booking_request(data: Dict[str, Any]) -> Dict[str, Any]:
 
 
 @api.get("/booking-requests")
-async def list_booking_requests(status: Optional[str] = None, user: dict = Depends(get_current_user)):
+async def list_booking_requests(status: Optional[str] = None, user: dict = Depends(get_current_user),
+                                 property_id: str = Depends(get_active_property)):
     """`status` mentah cuma tahu 3 nilai (waiting_approval/waiting_payment/rejected) —
     begitu di-approve, status TIDAK PERNAH otomatis lanjut lagi biar pun tamu sudah bayar
     (lihat approve_booking_request: satu-satunya penulis field ini). Supaya staf bisa lihat
@@ -353,13 +356,13 @@ async def list_booking_requests(status: Optional[str] = None, user: dict = Depen
         q["status"] = raw_status
     elif status == "lunas":
         q["status"] = "waiting_payment"
-    items = await db.booking_requests.find(q, {"_id": 0}).sort("created_at", -1).to_list(500)
+    items = await db.booking_requests.find(scoped(q, property_id), {"_id": 0}).sort("created_at", -1).to_list(500)
 
     for it in items:
         it["status_efektif"] = it["status"]
         it["booking_ringkasan"] = None
         if it.get("booking_ids"):
-            bks = await db.bookings.find({"id": {"$in": it["booking_ids"]}}, {"_id": 0}).to_list(20)
+            bks = await db.bookings.find(scoped({"id": {"$in": it["booking_ids"]}}, property_id), {"_id": 0}).to_list(20)
             if bks:
                 it["booking_ringkasan"] = [{
                     "kode": b["kode"], "room_nomor": b.get("room_nomor"), "room_tipe": b.get("room_tipe"),
@@ -379,15 +382,17 @@ async def list_booking_requests(status: Optional[str] = None, user: dict = Depen
 
 
 @api.get("/booking-requests/{rid}")
-async def get_booking_request(rid: str, user: dict = Depends(get_current_user)):
-    r = await db.booking_requests.find_one({"id": rid}, {"_id": 0})
+async def get_booking_request(rid: str, user: dict = Depends(get_current_user),
+                               property_id: str = Depends(get_active_property)):
+    r = await db.booking_requests.find_one(scoped({"id": rid}, property_id), {"_id": 0})
     if not r:
         raise HTTPException(404, "Permintaan booking tidak ditemukan")
     return r
 
 
 @api.post("/booking-requests/{rid}/approve")
-async def approve_booking_request(rid: str, body: BookingRequestApprove, user: dict = Depends(get_current_user)):
+async def approve_booking_request(rid: str, body: BookingRequestApprove, user: dict = Depends(get_current_user),
+                                   property_id: str = Depends(get_active_property)):
     """Setujui permintaan: staf sudah mengecek ketersediaan (termasuk RedDoorz, manual di
     luar sistem) & memilih kamar spesifik. Membuat booking SUNGGUHAN (status booking_pending,
     sama seperti alur publik) untuk tiap kamar via create_reservation (tetap lewat
@@ -399,7 +404,7 @@ async def approve_booking_request(rid: str, body: BookingRequestApprove, user: d
     # (bukan status basi dari sebelum yang pertama selesai) dan ditolak dengan bersih,
     # bukan sama-sama lolos dan membuat 2 booking asli dari 1 permintaan.
     async with _request_lock(rid):
-        req = await db.booking_requests.find_one({"id": rid})
+        req = await db.booking_requests.find_one(scoped({"id": rid}, property_id))
         if not req:
             raise HTTPException(404, "Permintaan booking tidak ditemukan")
         if req["status"] not in STATUS_TERBUKA:
@@ -441,7 +446,7 @@ async def approve_booking_request(rid: str, body: BookingRequestApprove, user: d
         created_bookings = []
         try:
             for room_id in room_ids:
-                r = await db.rooms.find_one({"id": room_id})
+                r = await db.rooms.find_one(scoped({"id": room_id}, property_id))
                 if not r:
                     raise HTTPException(404, f"Kamar tidak ditemukan (id {room_id})")
                 harga_override = None
@@ -458,7 +463,7 @@ async def approve_booking_request(rid: str, body: BookingRequestApprove, user: d
                     "catatan": req.get("catatan") or "", "created_by": user["nama"],
                     "tipe": tipe, "dengan_sarapan": False,
                 }
-                booking = await create_reservation(data, source="whatsapp_request", harga_override=harga_override)
+                booking = await create_reservation(data, property_id, source="whatsapp_request", harga_override=harga_override)
                 # Tahap 2 (PRD Modul Reservasi): booking Menginap dari Booking Request TIDAK langsung
                 # dianggap "Confirmed" — admin harus input manual ke PMS RedDoorz dulu, baru dianggap
                 # pasti setelah email konfirmasi RedDoorz cocok (lihat otomasi_email.py). Day Use tidak
@@ -511,15 +516,16 @@ async def approve_booking_request(rid: str, body: BookingRequestApprove, user: d
                 )
             raise
 
-    return await db.booking_requests.find_one({"id": rid}, {"_id": 0})
+    return await db.booking_requests.find_one(scoped({"id": rid}, property_id), {"_id": 0})
 
 
 @api.post("/booking-requests/{rid}/reject")
-async def reject_booking_request(rid: str, body: BookingRequestReject, user: dict = Depends(get_current_user)):
+async def reject_booking_request(rid: str, body: BookingRequestReject, user: dict = Depends(get_current_user),
+                                  property_id: str = Depends(get_active_property)):
     # Lock sama (_request_lock) dengan approve - satu rid tidak boleh di-approve & ditolak
     # bersamaan oleh 2 staf berbeda juga (2026-07-19, audit anti-race-condition lanjutan).
     async with _request_lock(rid):
-        req = await db.booking_requests.find_one({"id": rid})
+        req = await db.booking_requests.find_one(scoped({"id": rid}, property_id))
         if not req:
             raise HTTPException(404, "Permintaan booking tidak ditemukan")
         if req["status"] not in STATUS_TERBUKA:
@@ -541,4 +547,4 @@ async def reject_booking_request(rid: str, body: BookingRequestReject, user: dic
         except Exception as e:
             logging.getLogger("booking_requests").warning(f"Gagal kirim pesan tolak ke {req['no_hp']}: {e}")
 
-    return await db.booking_requests.find_one({"id": rid}, {"_id": 0})
+    return await db.booking_requests.find_one(scoped({"id": rid}, property_id), {"_id": 0})

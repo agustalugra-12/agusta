@@ -2,7 +2,8 @@ from core import *
 from routes.push import send_push
 
 @api.post("/checkins")
-async def create_checkin(body: CheckinCreate, user: dict = Depends(get_current_user)):
+async def create_checkin(body: CheckinCreate, user: dict = Depends(get_current_user),
+                         property_id: str = Depends(get_active_property)):
     """Check-in Day Use 1 kamar (alur lama, `room_id`) atau beberapa kamar sekaligus dalam
     1 grup (`room_ids`, mis. rombongan walk-in) — tarif_override berlaku sama untuk tiap
     kamar, 1 data tamu/guest record dipakai bersama, tapi tiap kamar tetap jadi dokumen
@@ -19,7 +20,7 @@ async def create_checkin(body: CheckinCreate, user: dict = Depends(get_current_u
 
     rooms = []
     for rid in room_ids:
-        r = await db.rooms.find_one({"id": rid})
+        r = await db.rooms.find_one(scoped({"id": rid}, property_id))
         if not r:
             raise HTTPException(404, f"Kamar tidak ditemukan (id {rid})")
         if r["status"] != "kosong":
@@ -28,7 +29,7 @@ async def create_checkin(body: CheckinCreate, user: dict = Depends(get_current_u
 
     # Save / upsert guest — 1 data tamu dipakai bersama untuk semua kamar dalam grup ini.
     room_nomor_gabung = ", ".join(r["nomor"] for r in rooms)
-    guest_id = await upsert_guest(body.nama_tamu, body.no_hp, body.no_identitas, body.kendaraan, room_nomor=room_nomor_gabung)
+    guest_id = await upsert_guest(body.nama_tamu, body.no_hp, body.no_identitas, body.kendaraan, property_id, room_nomor=room_nomor_gabung)
     # parse jam_checkin
     jam_ci_iso = now_iso()
     if body.jam_checkin:
@@ -71,6 +72,7 @@ async def create_checkin(body: CheckinCreate, user: dict = Depends(get_current_u
             "petugas_checkin": user["nama"],
             "petugas_checkin_id": user["id"],
             "created_at": now_iso(),
+            "property_id": property_id,
         }
         if group_id:
             doc["group_id"] = group_id
@@ -90,6 +92,7 @@ async def list_checkins(
     from_date: Optional[str] = None,
     to_date: Optional[str] = None,
     user: dict = Depends(get_current_user),
+    property_id: str = Depends(get_active_property),
 ):
     q: Dict[str, Any] = {}
     if status:
@@ -99,12 +102,13 @@ async def list_checkins(
         if from_date: rng["$gte"] = from_date
         if to_date: rng["$lte"] = to_date
         q["jam_checkin"] = rng
-    items = await db.checkins.find(q, {"_id": 0}).sort("jam_checkin", -1).to_list(1000)
+    items = await db.checkins.find(scoped(q, property_id), {"_id": 0}).sort("jam_checkin", -1).to_list(1000)
     return items
 
 @api.get("/checkins/{checkin_id}")
-async def get_checkin(checkin_id: str, user: dict = Depends(get_current_user)):
-    c = await db.checkins.find_one({"id": checkin_id}, {"_id": 0})
+async def get_checkin(checkin_id: str, user: dict = Depends(get_current_user),
+                      property_id: str = Depends(get_active_property)):
+    c = await db.checkins.find_one(scoped({"id": checkin_id}, property_id), {"_id": 0})
     if not c:
         raise HTTPException(404, "Check-in tidak ditemukan")
     if c["status"] == "aktif":
@@ -115,8 +119,9 @@ async def get_checkin(checkin_id: str, user: dict = Depends(get_current_user)):
     return c
 
 @api.post("/checkins/{checkin_id}/checkout")
-async def checkout(checkin_id: str, body: CheckoutIn, user: dict = Depends(get_current_user)):
-    c = await db.checkins.find_one({"id": checkin_id})
+async def checkout(checkin_id: str, body: CheckoutIn, user: dict = Depends(get_current_user),
+                   property_id: str = Depends(get_active_property)):
+    c = await db.checkins.find_one(scoped({"id": checkin_id}, property_id))
     if not c:
         raise HTTPException(404, "Check-in tidak ditemukan")
     if c["status"] != "aktif":
@@ -183,7 +188,8 @@ async def checkout(checkin_id: str, body: CheckoutIn, user: dict = Depends(get_c
 
 # ---- Guests ----
 @api.get("/guests")
-async def list_guests(q: Optional[str] = None, user: dict = Depends(get_current_user)):
+async def list_guests(q: Optional[str] = None, user: dict = Depends(get_current_user),
+                      property_id: str = Depends(get_active_property)):
     query: Dict[str, Any] = {}
     if q:
         query = {"$or": [
@@ -191,7 +197,7 @@ async def list_guests(q: Optional[str] = None, user: dict = Depends(get_current_
             {"no_hp": {"$regex": q, "$options": "i"}},
             {"no_identitas": {"$regex": q, "$options": "i"}},
         ]}
-    items = await db.guests.find(query, {"_id": 0}).to_list(500)
+    items = await db.guests.find(scoped(query, property_id), {"_id": 0}).to_list(500)
     for it in items:
         it.update(diskon_member_untuk_total_kunjungan(it.get("total_kunjungan", 0)))
     # sort di Python (case-insensitive) - default Mongo sort per byte (huruf besar/kecil/angka
@@ -200,18 +206,20 @@ async def list_guests(q: Optional[str] = None, user: dict = Depends(get_current_
     return items
 
 @api.post("/guests")
-async def create_guest(body: GuestCreate, user: dict = Depends(get_current_user)):
+async def create_guest(body: GuestCreate, user: dict = Depends(get_current_user),
+                       property_id: str = Depends(get_active_property)):
     """Tambah data tamu manual (bukan dari booking/check-in) - mis. tamu lama yang mau
     dicatat riwayatnya, atau kontak yang perlu didata sebelum booking pertama."""
     if not body.no_hp and not body.no_identitas:
         raise HTTPException(400, "Isi minimal salah satu: No HP atau No KTP")
-    existing = await cari_guest(body.no_hp, body.no_identitas)
+    existing = await cari_guest(property_id, body.no_hp, body.no_identitas)
     if existing:
         raise HTTPException(400, f"Tamu dengan No HP/KTP ini sudah ada: {existing['nama']}")
     doc = {
         "id": str(uuid.uuid4()), "nama": body.nama.strip(),
         "no_hp": body.no_hp.strip(), "no_identitas": body.no_identitas.strip(), "kendaraan": body.kendaraan.strip(),
         "total_kunjungan": 0, "total_transaksi": 0, "last_visit": None, "created_at": now_iso(),
+        "property_id": property_id,
     }
     await db.guests.insert_one(doc)
     await log_activity(user, "create_guest", f"Tambah data tamu {doc['nama']}")
@@ -220,15 +228,16 @@ async def create_guest(body: GuestCreate, user: dict = Depends(get_current_user)
     return doc
 
 @api.put("/guests/{guest_id}")
-async def update_guest(guest_id: str, body: GuestUpdate, user: dict = Depends(get_current_user)):
-    g = await db.guests.find_one({"id": guest_id})
+async def update_guest(guest_id: str, body: GuestUpdate, user: dict = Depends(get_current_user),
+                       property_id: str = Depends(get_active_property)):
+    g = await db.guests.find_one(scoped({"id": guest_id}, property_id))
     if not g:
         raise HTTPException(404, "Data tamu tidak ditemukan")
     updates = {k: v.strip() if isinstance(v, str) else v for k, v in body.model_dump().items() if v is not None}
     no_hp = updates.get("no_hp", g.get("no_hp"))
     no_identitas = updates.get("no_identitas", g.get("no_identitas"))
     if no_hp or no_identitas:
-        other = await cari_guest(no_hp, no_identitas)
+        other = await cari_guest(property_id, no_hp, no_identitas)
         if other and other["id"] != guest_id:
             raise HTTPException(400, f"No HP/KTP ini sudah dipakai tamu lain: {other['nama']}")
     if updates:
@@ -239,8 +248,9 @@ async def update_guest(guest_id: str, body: GuestUpdate, user: dict = Depends(ge
     return fresh
 
 @api.get("/guests/{guest_id}/history")
-async def guest_history(guest_id: str, user: dict = Depends(get_current_user)):
-    items = await db.checkins.find({"guest_id": guest_id}, {"_id": 0}).sort("jam_checkin", -1).to_list(500)
+async def guest_history(guest_id: str, user: dict = Depends(get_current_user),
+                        property_id: str = Depends(get_active_property)):
+    items = await db.checkins.find(scoped({"guest_id": guest_id}, property_id), {"_id": 0}).sort("jam_checkin", -1).to_list(500)
     return items
 
 
@@ -250,14 +260,15 @@ def _recompute_last_visit(riwayat: list) -> Optional[str]:
 
 
 @api.post("/guests/{guest_id}/kunjungan-manual")
-async def tambah_kunjungan_manual(guest_id: str, body: KunjunganManualIn, user: dict = Depends(require_owner)):
+async def tambah_kunjungan_manual(guest_id: str, body: KunjunganManualIn, user: dict = Depends(require_owner),
+                                  property_id: str = Depends(get_active_property)):
     """Migrasi riwayat kartu member kertas lama (2026-07-24, permintaan user - supaya tamu
     lama yang sudah punya riwayat di kartu kertas tidak dirugikan/dianggap "kedatangan ke-1"
     lagi begitu pindah ke sistem digital). Owner-only (data ini memengaruhi diskon member
     sungguhan, sama sensitifnya dengan Payroll). Entri ditandai `source: "manual"` supaya
     beda dari riwayat check-in sungguhan (`source: "checkin"`) - cuma entri manual yang
     boleh dihapus lagi kalau salah input."""
-    g = await db.guests.find_one({"id": guest_id})
+    g = await db.guests.find_one(scoped({"id": guest_id}, property_id))
     if not g:
         raise HTTPException(404, "Data tamu tidak ditemukan")
     try:
@@ -283,11 +294,12 @@ async def tambah_kunjungan_manual(guest_id: str, body: KunjunganManualIn, user: 
 
 
 @api.delete("/guests/{guest_id}/kunjungan-manual/{entry_id}")
-async def hapus_kunjungan_manual(guest_id: str, entry_id: str, user: dict = Depends(require_owner)):
+async def hapus_kunjungan_manual(guest_id: str, entry_id: str, user: dict = Depends(require_owner),
+                                 property_id: str = Depends(get_active_property)):
     """Cuma entri `source: "manual"` yang bisa dihapus - riwayat dari check-in sungguhan
     tidak boleh dihapus lewat sini (kalau memang salah, itu masalah data check-in aslinya,
     bukan sekadar hapus jejak kunjungan)."""
-    g = await db.guests.find_one({"id": guest_id})
+    g = await db.guests.find_one(scoped({"id": guest_id}, property_id))
     if not g:
         raise HTTPException(404, "Data tamu tidak ditemukan")
     riwayat = list(g.get("riwayat_kunjungan") or [])

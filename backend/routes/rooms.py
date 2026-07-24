@@ -7,15 +7,15 @@ _EXT_FOTO_DIIZINKAN = {"jpg", "jpeg", "png", "webp"}
 
 # ---- Rooms ----
 @api.get("/rooms")
-async def list_rooms(user: dict = Depends(get_current_user)):
-    rooms = await db.rooms.find({}, {"_id": 0}).to_list(500)
+async def list_rooms(user: dict = Depends(get_current_user), property_id: str = Depends(get_active_property)):
+    rooms = await db.rooms.find(scoped({}, property_id), {"_id": 0}).to_list(500)
     # Urut murni berdasarkan nomor kamar (1..18), tanpa dikelompokkan per tipe — nomor kamar tidak berurutan per tipe.
     rooms.sort(key=lambda r: int("".join(c for c in r.get("nomor", "0") if c.isdigit()) or 0))
     return rooms
 
 @api.post("/rooms")
-async def create_room(body: RoomCreate, user: dict = Depends(require_owner)):
-    if await db.rooms.find_one({"nomor": body.nomor}):
+async def create_room(body: RoomCreate, user: dict = Depends(require_owner), property_id: str = Depends(get_active_property)):
+    if await db.rooms.find_one(scoped({"nomor": body.nomor}, property_id)):
         raise HTTPException(400, "Nomor kamar sudah ada")
     doc = {
         "id": str(uuid.uuid4()),
@@ -28,6 +28,7 @@ async def create_room(body: RoomCreate, user: dict = Depends(require_owner)):
         "foto_urls": [],
         "foto_utama": "",
         "created_at": now_iso(),
+        "property_id": property_id,
     }
     await db.rooms.insert_one(doc)
     await log_activity(user, "create_room", f"Buat kamar {body.nomor}")
@@ -35,8 +36,9 @@ async def create_room(body: RoomCreate, user: dict = Depends(require_owner)):
     return doc
 
 @api.put("/rooms/{room_id}")
-async def update_room(room_id: str, body: RoomUpdate, user: dict = Depends(require_owner)):
-    r = await db.rooms.find_one({"id": room_id})
+async def update_room(room_id: str, body: RoomUpdate, user: dict = Depends(require_owner),
+                      property_id: str = Depends(get_active_property)):
+    r = await db.rooms.find_one(scoped({"id": room_id}, property_id))
     if not r:
         raise HTTPException(404, "Kamar tidak ditemukan")
     updates = {k: v for k, v in body.model_dump().items() if v is not None}
@@ -48,8 +50,9 @@ async def update_room(room_id: str, body: RoomUpdate, user: dict = Depends(requi
     return {"ok": True}
 
 @api.post("/rooms/{room_id}/foto")
-async def upload_room_foto(room_id: str, file: UploadFile = File(...), user: dict = Depends(require_owner)):
-    r = await db.rooms.find_one({"id": room_id})
+async def upload_room_foto(room_id: str, file: UploadFile = File(...), user: dict = Depends(require_owner),
+                           property_id: str = Depends(get_active_property)):
+    r = await db.rooms.find_one(scoped({"id": room_id}, property_id))
     if not r:
         raise HTTPException(404, "Kamar tidak ditemukan")
     ext = (file.filename.rsplit(".", 1)[-1].lower() if file.filename and "." in file.filename else "")
@@ -70,8 +73,9 @@ async def upload_room_foto(room_id: str, file: UploadFile = File(...), user: dic
     return {"foto_urls": foto_urls, "foto_utama": updates.get("foto_utama", r.get("foto_utama", ""))}
 
 @api.delete("/rooms/{room_id}/foto")
-async def delete_room_foto(room_id: str, url: str, user: dict = Depends(require_owner)):
-    r = await db.rooms.find_one({"id": room_id})
+async def delete_room_foto(room_id: str, url: str, user: dict = Depends(require_owner),
+                           property_id: str = Depends(get_active_property)):
+    r = await db.rooms.find_one(scoped({"id": room_id}, property_id))
     if not r:
         raise HTTPException(404, "Kamar tidak ditemukan")
     foto_urls = [u for u in (r.get("foto_urls") or []) if u != url]
@@ -86,8 +90,9 @@ async def delete_room_foto(room_id: str, url: str, user: dict = Depends(require_
     return {"foto_urls": foto_urls, "foto_utama": updates.get("foto_utama", r.get("foto_utama", ""))}
 
 @api.delete("/rooms/{room_id}")
-async def delete_room(room_id: str, user: dict = Depends(require_owner)):
-    r = await db.rooms.find_one({"id": room_id})
+async def delete_room(room_id: str, user: dict = Depends(require_owner),
+                      property_id: str = Depends(get_active_property)):
+    r = await db.rooms.find_one(scoped({"id": room_id}, property_id))
     if not r:
         raise HTTPException(404, "Kamar tidak ditemukan")
     if r["status"] != "kosong":
@@ -97,8 +102,9 @@ async def delete_room(room_id: str, user: dict = Depends(require_owner)):
     return {"ok": True}
 
 @api.put("/rooms/{room_id}/status")
-async def change_room_status(room_id: str, body: RoomStatusUpdate, user: dict = Depends(get_current_user)):
-    r = await db.rooms.find_one({"id": room_id})
+async def change_room_status(room_id: str, body: RoomStatusUpdate, user: dict = Depends(get_current_user),
+                             property_id: str = Depends(get_active_property)):
+    r = await db.rooms.find_one(scoped({"id": room_id}, property_id))
     if not r:
         raise HTTPException(404, "Kamar tidak ditemukan")
     valid = {"kosong", "day_use", "menginap", "perlu_dibersihkan", "maintenance"}
@@ -139,10 +145,11 @@ async def change_room_status(room_id: str, body: RoomStatusUpdate, user: dict = 
     return {"ok": True}
 
 @api.post("/rooms/{room_id}/housekeeping-mulai")
-async def housekeeping_mulai(room_id: str, user: dict = Depends(get_current_user)):
+async def housekeeping_mulai(room_id: str, user: dict = Depends(get_current_user),
+                             property_id: str = Depends(get_active_property)):
     """Tandai kamar mulai dibersihkan (jam_mulai + status Cleaning) — idempotent, tidak
     menimpa jam_mulai yang sudah tercatat kalau tombol Mulai dipencet lebih dari sekali."""
-    r = await db.rooms.find_one({"id": room_id})
+    r = await db.rooms.find_one(scoped({"id": room_id}, property_id))
     if not r:
         raise HTTPException(404, "Kamar tidak ditemukan")
     if r["status"] != "perlu_dibersihkan":
@@ -153,11 +160,12 @@ async def housekeeping_mulai(room_id: str, user: dict = Depends(get_current_user
     return {"ok": True}
 
 @api.post("/rooms/{room_id}/housekeeping-done")
-async def housekeeping_done(room_id: str, body: HousekeepingDone, user: dict = Depends(get_current_user)):
+async def housekeeping_done(room_id: str, body: HousekeepingDone, user: dict = Depends(get_current_user),
+                            property_id: str = Depends(get_active_property)):
     """Tandai kamar selesai dibersihkan — status jadi Clean (belum Inspected) & kamar kembali
     Kosong (siap dipakai lagi; Inspected sengaja tidak menahan ketersediaan kamar, cuma lapisan
     QC tambahan untuk supervisor/owner — lihat housekeeping_inspect)."""
-    r = await db.rooms.find_one({"id": room_id})
+    r = await db.rooms.find_one(scoped({"id": room_id}, property_id))
     if not r:
         raise HTTPException(404, "Kamar tidak ditemukan")
     if r["status"] != "perlu_dibersihkan":
@@ -178,11 +186,12 @@ async def housekeeping_done(room_id: str, body: HousekeepingDone, user: dict = D
     return {"ok": True}
 
 @api.post("/rooms/{room_id}/housekeeping-inspect")
-async def housekeeping_inspect(room_id: str, user: dict = Depends(get_current_user)):
+async def housekeeping_inspect(room_id: str, user: dict = Depends(get_current_user),
+                               property_id: str = Depends(get_active_property)):
     """Verifikasi kualitas (QC) kamar yang sudah Clean — status jadi Inspected. Tidak
     mempengaruhi ketersediaan kamar (kamar sudah Kosong/bookable sejak status Clean),
     murni pencatatan siapa & kapan kamar diperiksa ulang."""
-    r = await db.rooms.find_one({"id": room_id})
+    r = await db.rooms.find_one(scoped({"id": room_id}, property_id))
     if not r:
         raise HTTPException(404, "Kamar tidak ditemukan")
     log = await db.housekeeping_log.find_one({"room_id": room_id, "status": "clean"}, sort=[("tanggal", -1)])
@@ -196,7 +205,8 @@ async def housekeeping_inspect(room_id: str, user: dict = Depends(get_current_us
     return {"ok": True}
 
 @api.post("/rooms/{room_id}/move")
-async def move_room(room_id: str, body: MoveRoomBody, user: dict = Depends(get_current_user)):
+async def move_room(room_id: str, body: MoveRoomBody, user: dict = Depends(get_current_user),
+                    property_id: str = Depends(get_active_property)):
     """Pindahkan tamu/info dari kamar lama ke kamar baru.
     - day_use: update checkin aktif room_id + room_nomor + room_tipe (tarif_dasar tetap), pindah info.
     - menginap: pindah info dict ke kamar baru.
@@ -204,12 +214,12 @@ async def move_room(room_id: str, body: MoveRoomBody, user: dict = Depends(get_c
     """
     if body.new_room_id == room_id:
         raise HTTPException(400, "Kamar tujuan sama dengan kamar asal")
-    old = await db.rooms.find_one({"id": room_id})
+    old = await db.rooms.find_one(scoped({"id": room_id}, property_id))
     if not old:
         raise HTTPException(404, "Kamar asal tidak ditemukan")
     if old["status"] not in ("day_use", "menginap"):
         raise HTTPException(400, "Hanya kamar Day Use atau Menginap yang bisa dipindahkan")
-    new = await db.rooms.find_one({"id": body.new_room_id})
+    new = await db.rooms.find_one(scoped({"id": body.new_room_id}, property_id))
     if not new:
         raise HTTPException(404, "Kamar tujuan tidak ditemukan")
     if new["status"] != "kosong":
@@ -222,7 +232,7 @@ async def move_room(room_id: str, body: MoveRoomBody, user: dict = Depends(get_c
     await db.rooms.update_one({"id": old["id"]}, {"$set": {"status": "perlu_dibersihkan", "info": {}}})
     # update active checkin jika day_use
     if old["status"] == "day_use":
-        ci = await db.checkins.find_one({"room_id": old["id"], "status": "aktif"})
+        ci = await db.checkins.find_one(scoped({"room_id": old["id"], "status": "aktif"}, property_id))
         if ci:
             await db.checkins.update_one(
                 {"id": ci["id"]},

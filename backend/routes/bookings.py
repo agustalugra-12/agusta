@@ -3,7 +3,8 @@ from reservation_service import check_room_available, room_locks
 from email_service import generate_voucher_pdf, send_voucher_email, kirim_voucher_wa
 
 @api.post("/bookings")
-async def create_booking(body: BookingCreate, user: dict = Depends(get_current_user)):
+async def create_booking(body: BookingCreate, user: dict = Depends(get_current_user),
+                          property_id: str = Depends(get_active_property)):
     """Buat 1 booking (alur lama, `room_id`) atau beberapa kamar sekaligus dalam 1 grup
     (`room_ids`, mis. rombongan walk-in) — tipe/jam/tarif_override/dengan_sarapan berlaku
     sama untuk tiap kamar dalam grup, masing-masing tetap jadi dokumen booking terpisah
@@ -40,10 +41,10 @@ async def create_booking(body: BookingCreate, user: dict = Depends(get_current_u
     async with room_locks(*room_ids):
         rooms = []
         for rid in room_ids:
-            r = await db.rooms.find_one({"id": rid})
+            r = await db.rooms.find_one(scoped({"id": rid}, property_id))
             if not r:
                 raise HTTPException(404, f"Kamar tidak ditemukan (id {rid})")
-            await check_room_available(rid, start, end)
+            await check_room_available(rid, start, end, property_id)
             rooms.append(r)
 
         group_id = str(uuid.uuid4()) if len(rooms) > 1 else None
@@ -69,7 +70,7 @@ async def create_booking(body: BookingCreate, user: dict = Depends(get_current_u
             # Program Loyalitas Kedatangan (diskon member, dikonfirmasi user 2026-07-19) - reuse
             # fungsi yang sama dipakai create_reservation supaya diskonnya konsisten lintas
             # channel (Quick Book staf di sini vs public/AI WhatsApp lewat reservation_service.py).
-            diskon_info = await hitung_diskon_member(body.no_hp, body.no_identitas)
+            diskon_info = await hitung_diskon_member(property_id, body.no_hp, body.no_identitas)
             kedatangan_ke = diskon_info["kedatangan_ke"]
             diskon_persen = diskon_info["diskon_persen"]
             hasil_diskon = terapkan_diskon_member(subtotal, diskon_persen)
@@ -89,12 +90,13 @@ async def create_booking(body: BookingCreate, user: dict = Depends(get_current_u
                 "diskon_member_persen": diskon_persen, "diskon_member_rp": diskon_rp, "kedatangan_ke": kedatangan_ke,
                 "source": "walk_in",
                 "created_at": now_iso(), "created_by": user["nama"],
+                "property_id": property_id,
             }
             if group_id:
                 doc["group_id"] = group_id
             await db.bookings.insert_one(doc)
             await log_availability_change(r["id"], r["tipe"], -1, "booking_dibuat", booking_id=doc["id"])
-            await upsert_guest(body.nama_tamu, body.no_hp, body.no_identitas, body.kendaraan, count_kunjungan=False)
+            await upsert_guest(body.nama_tamu, body.no_hp, body.no_identitas, body.kendaraan, property_id, count_kunjungan=False)
             await log_activity(user, "create_booking", f"Booking {body.tipe} kamar {r['nomor']} untuk {body.nama_tamu}", entity=r["nomor"])
             doc.pop("_id", None)
             created.append(doc)
@@ -107,7 +109,8 @@ async def create_booking(body: BookingCreate, user: dict = Depends(get_current_u
 async def list_bookings(status: Optional[str] = None, tipe: Optional[str] = None,
                         search: Optional[str] = None, date: Optional[str] = None,
                         sync_status: Optional[str] = None,
-                        user: dict = Depends(get_current_user)):
+                        user: dict = Depends(get_current_user),
+                        property_id: str = Depends(get_active_property)):
     """Daftar reservasi. `search` mencocokkan nama tamu atau kode booking (case-insensitive).
     `date` (YYYY-MM-DD) memfilter booking yang overlap tanggal tersebut — dipakai Daftar Reservasi.
     `sync_status` (Tahap 2 Modul Reservasi) — dipakai halaman Booking Request untuk daftar
@@ -130,7 +133,7 @@ async def list_bookings(status: Optional[str] = None, tipe: Optional[str] = None
         day_end = day_start + timedelta(days=1)
         q["jam_mulai"] = {"$lt": day_end.isoformat()}
         q["jam_selesai"] = {"$gte": day_start.isoformat()}
-    items = await db.bookings.find(q, {"_id": 0}).sort("jam_mulai", 1).to_list(1000)
+    items = await db.bookings.find(scoped(q, property_id), {"_id": 0}).sort("jam_mulai", 1).to_list(1000)
     # status_bayar (belum_bayar/dp/lunas) + jumlah_dibayar/sisa_tagihan — sama seperti
     # GET /payments/bookings-status, supaya Dashboard & Reservasi tidak baca payment_status
     # mentah (yang tidak bedakan DP dari lunas) dan berujung salah label ke staf.
@@ -139,13 +142,14 @@ async def list_bookings(status: Optional[str] = None, tipe: Optional[str] = None
     return items
 
 @api.post("/bookings/{bid}/cancel-with-fee")
-async def cancel_with_fee(bid: str, body: CancelWithFeeBody, user: dict = Depends(get_current_user)):
+async def cancel_with_fee(bid: str, body: CancelWithFeeBody, user: dict = Depends(get_current_user),
+                          property_id: str = Depends(get_active_property)):
     """Cancel booking dengan biaya pembatalan 10% (online dan walk-in).
     - booking_paid: refund = paid - 10% fee. Fee diakui sebagai revenue.
     - booking_pending / aktif: no refund (belum ada uang masuk), 10% fee dicatat sebagai piutang/audit.
     Return: {refund_amount, fee, original_total, status}
     """
-    b = await db.bookings.find_one({"id": bid})
+    b = await db.bookings.find_one(scoped({"id": bid}, property_id))
     if not b:
         raise HTTPException(404, "Booking tidak ditemukan")
     if b.get("status") not in ("aktif", "booking_pending", "booking_paid"):
@@ -174,7 +178,8 @@ async def cancel_with_fee(bid: str, body: CancelWithFeeBody, user: dict = Depend
     }
 
 @api.post("/bookings/{bid}/collect-balance")
-async def collect_balance(bid: str, body: CollectBalanceBody, user: dict = Depends(get_current_user)):
+async def collect_balance(bid: str, body: CollectBalanceBody, user: dict = Depends(get_current_user),
+                          property_id: str = Depends(get_active_property)):
     """Collect sisa pelunasan (untuk DP 50% yang belum lunas).
     Tambah amount_due dengan nominal yang diterima, catat di payment_log.
     """
@@ -182,7 +187,7 @@ async def collect_balance(bid: str, body: CollectBalanceBody, user: dict = Depen
         raise HTTPException(400, "Nominal harus > 0")
     if body.metode not in ("cash", "qris"):
         raise HTTPException(400, "Metode harus cash atau qris")
-    b = await db.bookings.find_one({"id": bid})
+    b = await db.bookings.find_one(scoped({"id": bid}, property_id))
     if not b:
         raise HTTPException(404, "Booking tidak ditemukan")
     if b.get("status") not in ("booking_paid", "checked_in"):
@@ -214,7 +219,8 @@ async def collect_balance(bid: str, body: CollectBalanceBody, user: dict = Depen
     return {"ok": True, "amount_collected": body.nominal, "total_paid": new_paid, "remaining": max(0, total - new_paid), "booking_kode": b["kode"]}
 
 @api.post("/bookings/{bid}/checkin")
-async def checkin_from_booking(bid: str, body: CheckinFromBookingBody = CheckinFromBookingBody(), user: dict = Depends(get_current_user)):
+async def checkin_from_booking(bid: str, body: CheckinFromBookingBody = CheckinFromBookingBody(), user: dict = Depends(get_current_user),
+                               property_id: str = Depends(get_active_property)):
     """Check-in tamu dari booking (booking_paid ATAU aktif → checked_in). `aktif` ditambahkan
     2026-07-14 — sebelumnya cuma `booking_paid` (booking online tamu yang lunas via Tripay)
     yang bisa di-check-in, jadi booking OTA (RedDoorz, selalu status `aktif`) dan booking
@@ -237,12 +243,12 @@ async def checkin_from_booking(bid: str, body: CheckinFromBookingBody = CheckinF
     sama sekali tidak menyentuh `db.guests`, beda dari alur `/checkins` langsung — jadi tamu
     dari booking OTA/dashboard tidak pernah muncul di tab "Data Tamu" Reservasi).
     """
-    b = await db.bookings.find_one({"id": bid})
+    b = await db.bookings.find_one(scoped({"id": bid}, property_id))
     if not b:
         raise HTTPException(404, "Booking tidak ditemukan")
     if b.get("status") not in ("booking_paid", "aktif"):
         raise HTTPException(400, f"Booking ini tidak bisa di-check-in (status: {b.get('status')})")
-    r = await db.rooms.find_one({"id": b["room_id"]})
+    r = await db.rooms.find_one(scoped({"id": b["room_id"]}, property_id))
     if not r:
         raise HTTPException(404, "Kamar tidak ditemukan")
     if r["status"] != "kosong":
@@ -260,7 +266,7 @@ async def checkin_from_booking(bid: str, body: CheckinFromBookingBody = CheckinF
     sisa = max(0, total - paid)
     now = now_iso()
 
-    guest_id = await upsert_guest(b.get("nama_tamu", ""), no_hp, b.get("no_identitas", ""), b.get("kendaraan", ""), room_nomor=r["nomor"])
+    guest_id = await upsert_guest(b.get("nama_tamu", ""), no_hp, b.get("no_identitas", ""), b.get("kendaraan", ""), property_id, room_nomor=r["nomor"])
 
     if b.get("tipe") == "menginap":
         await db.rooms.update_one({"id": b["room_id"]}, {"$set": {
@@ -297,6 +303,7 @@ async def checkin_from_booking(bid: str, body: CheckinFromBookingBody = CheckinF
         "booking_paid": paid, "booking_remaining": sisa,
         "petugas_checkin": user["nama"], "petugas_checkin_id": user["id"],
         "created_at": now,
+        "property_id": property_id,
     }
     await db.checkins.insert_one(ci_doc)
     await db.rooms.update_one({"id": b["room_id"]}, {"$set": {
@@ -313,11 +320,12 @@ async def checkin_from_booking(bid: str, body: CheckinFromBookingBody = CheckinF
 
 
 @api.post("/bookings/{bid}/mark-paid-manual")
-async def mark_paid_manual(bid: str, body: ManualMarkPaidBody, user: dict = Depends(get_current_user)):
+async def mark_paid_manual(bid: str, body: ManualMarkPaidBody, user: dict = Depends(get_current_user),
+                           property_id: str = Depends(get_active_property)):
     """Staff verifikasi pembayaran manual (transfer rekening). Ubah booking_pending → booking_paid.
     Hanya untuk staff (auth required). Catat di audit + payment_log.
     """
-    b = await db.bookings.find_one({"id": bid})
+    b = await db.bookings.find_one(scoped({"id": bid}, property_id))
     if not b:
         raise HTTPException(404, "Booking tidak ditemukan")
     if b.get("status") != "booking_pending":
@@ -356,7 +364,8 @@ async def mark_paid_manual(bid: str, body: ManualMarkPaidBody, user: dict = Depe
     return {"ok": True, "booking_kode": b["kode"], "amount": nominal, "status": "booking_paid"}
 
 @api.post("/bookings/{bid}/konfirmasi-harga-ota")
-async def konfirmasi_harga_ota(bid: str, body: KonfirmasiHargaOtaBody, user: dict = Depends(get_current_user)):
+async def konfirmasi_harga_ota(bid: str, body: KonfirmasiHargaOtaBody, user: dict = Depends(get_current_user),
+                               property_id: str = Depends(get_active_property)):
     """Isi nominal settlement OTA yang SEBENARNYA (2026-07-19) - dipakai untuk booking RedDoorz
     "Prepaid" yang emailnya TIDAK mencantumkan nominal sama sekali, sehingga saat dibuat
     otomatis (`buat_reservasi_otomatis`, routes/otomasi_email.py) totalnya sempat memakai
@@ -367,7 +376,7 @@ async def konfirmasi_harga_ota(bid: str, body: KonfirmasiHargaOtaBody, user: dic
     invoice settlement resmi dari OTA diterima (mis. rekap bulanan RedDoorz). `total_nominal`
     dibagi rata ke SEMUA kamar dalam 1 reservasi OTA yang sama (`ota_reservation_no`), sama
     seperti cara estimasi awal dihitung."""
-    b = await db.bookings.find_one({"id": bid})
+    b = await db.bookings.find_one(scoped({"id": bid}, property_id))
     if not b:
         raise HTTPException(404, "Booking tidak ditemukan")
     if b.get("source") != "ota":
@@ -378,9 +387,9 @@ async def konfirmasi_harga_ota(bid: str, body: KonfirmasiHargaOtaBody, user: dic
         raise HTTPException(400, "Nominal harus lebih dari 0")
 
     grup = (
-        await db.bookings.find({
+        await db.bookings.find(scoped({
             "ota_reservation_no": b["ota_reservation_no"], "source": "ota",
-        }, {"_id": 0, "id": 1}).to_list(50)
+        }, property_id), {"_id": 0, "id": 1}).to_list(50)
         if b.get("ota_reservation_no") else [{"id": b["id"]}]
     )
     per_kamar = round(body.total_nominal / max(1, len(grup)))
@@ -396,15 +405,16 @@ async def konfirmasi_harga_ota(bid: str, body: KonfirmasiHargaOtaBody, user: dic
         f"Konfirmasi nominal settlement OTA {b.get('kode')} ({len(grup)} kamar): Rp{body.total_nominal:,}".replace(",", "."),
         entity=b.get("room_nomor", ""),
     )
-    return await db.bookings.find_one({"id": bid}, {"_id": 0})
+    return await db.bookings.find_one(scoped({"id": bid}, property_id), {"_id": 0})
 
 @api.post("/bookings/{bid}/reddoorz-input-selesai")
-async def reddoorz_input_selesai(bid: str, user: dict = Depends(get_current_user)):
+async def reddoorz_input_selesai(bid: str, user: dict = Depends(get_current_user),
+                                 property_id: str = Depends(get_active_property)):
     """Tahap 2 Modul Reservasi: staf menandai sudah input booking Menginap ini secara manual
     ke PMS RedDoorz — booking ini masih BELUM "Confirmed" sampai email konfirmasi RedDoorz
     diterima & dicocokkan otomatis (lihat `_cocokkan_booking_pending_reddoorz`,
     `backend/routes/otomasi_email.py`), status transisi ke `waiting_reddoorz_sync`."""
-    b = await db.bookings.find_one({"id": bid})
+    b = await db.bookings.find_one(scoped({"id": bid}, property_id))
     if not b:
         raise HTTPException(404, "Booking tidak ditemukan")
     if b.get("sync_status") != "waiting_reddoorz_input":
@@ -416,11 +426,12 @@ async def reddoorz_input_selesai(bid: str, user: dict = Depends(get_current_user
     return {"ok": True, "booking_kode": b["kode"], "sync_status": "waiting_reddoorz_sync"}
 
 @api.post("/bookings/{bid}/no-show")
-async def mark_no_show(bid: str, body: NoShowBody, user: dict = Depends(get_current_user)):
+async def mark_no_show(bid: str, body: NoShowBody, user: dict = Depends(get_current_user),
+                       property_id: str = Depends(get_active_property)):
     """Tandai booking sebagai NO-SHOW (tamu tidak datang).
     Hanya berlaku untuk booking_paid. DP/Full payment TIDAK direfund, tetap masuk pembukuan sebagai revenue.
     """
-    b = await db.bookings.find_one({"id": bid})
+    b = await db.bookings.find_one(scoped({"id": bid}, property_id))
     if not b:
         raise HTTPException(404, "Booking tidak ditemukan")
     if b.get("status") != "booking_paid":
@@ -440,12 +451,13 @@ async def mark_no_show(bid: str, body: NoShowBody, user: dict = Depends(get_curr
 
 @api.get("/bookings/availability")
 async def booking_availability(room_id: str, from_date: str, days: int = 14,
-                               user: dict = Depends(get_current_user)):
+                               user: dict = Depends(get_current_user),
+                               property_id: str = Depends(get_active_property)):
     """Cek ketersediaan kamar per hari (zona lokal +07:00 / WIB)
     untuk menampilkan saran tanggal alternatif jika kamar penuh.
     Returns: { from_date, room_id, slots: [{date, available, reason}] }
     """
-    r = await db.rooms.find_one({"id": room_id})
+    r = await db.rooms.find_one(scoped({"id": room_id}, property_id))
     if not r:
         raise HTTPException(404, "Kamar tidak ditemukan")
     days = max(1, min(days, 60))
@@ -457,12 +469,12 @@ async def booking_availability(room_id: str, from_date: str, days: int = 14,
         raise HTTPException(400, "from_date harus YYYY-MM-DD")
     # Ambil semua booking aktif untuk kamar ini dalam window from..from+days
     end_window = base + timedelta(days=days)
-    bks = await db.bookings.find({
+    bks = await db.bookings.find(scoped({
         "room_id": room_id,
         "status": {"$in": ["aktif", "booking_paid", "booking_pending"]},
         "jam_mulai": {"$lt": end_window.isoformat()},
         "jam_selesai": {"$gt": base.isoformat()},
-    }, {"_id": 0}).to_list(500)
+    }, property_id), {"_id": 0}).to_list(500)
     slots = []
     for i in range(days):
         d = base + timedelta(days=i)
@@ -483,26 +495,28 @@ async def booking_availability(room_id: str, from_date: str, days: int = 14,
     return {"room_id": room_id, "room_nomor": r["nomor"], "room_tipe": r["tipe"], "from_date": from_date, "days": days, "slots": slots}
 
 @api.get("/bookings/{bid}")
-async def get_booking(bid: str, user: dict = Depends(get_current_user)):
+async def get_booking(bid: str, user: dict = Depends(get_current_user),
+                      property_id: str = Depends(get_active_property)):
     """Detail satu reservasi (dipakai modal detail di halaman Daftar Reservasi).
     Didaftarkan setelah /bookings/availability agar tidak menutupi path literal itu.
     """
-    b = await db.bookings.find_one({"id": bid}, {"_id": 0})
+    b = await db.bookings.find_one(scoped({"id": bid}, property_id), {"_id": 0})
     if not b:
         raise HTTPException(404, "Booking tidak ditemukan")
     b.update(status_bayar_booking(b))
     return b
 
 @api.put("/bookings/{bid}")
-async def update_booking(bid: str, body: BookingCreate, user: dict = Depends(get_current_user)):
-    b = await db.bookings.find_one({"id": bid})
+async def update_booking(bid: str, body: BookingCreate, user: dict = Depends(get_current_user),
+                         property_id: str = Depends(get_active_property)):
+    b = await db.bookings.find_one(scoped({"id": bid}, property_id))
     if not b:
         raise HTTPException(404, "Booking tidak ditemukan")
     if b["status"] not in ("aktif", "booking_pending", "booking_paid"):
         raise HTTPException(400, "Hanya booking aktif/pending/paid yang dapat di-reschedule")
     if body.tipe not in ("day_use", "menginap"):
         raise HTTPException(400, "Tipe booking tidak valid")
-    r = await db.rooms.find_one({"id": body.room_id})
+    r = await db.rooms.find_one(scoped({"id": body.room_id}, property_id))
     if not r:
         raise HTTPException(404, "Kamar tidak ditemukan")
     start = parse_iso(body.jam_mulai, "jam_mulai")
@@ -524,16 +538,17 @@ async def update_booking(bid: str, body: BookingCreate, user: dict = Depends(get
     # Celah check-lalu-tulis dibungkus lock (2026-07-19, audit anti-race-condition) - lihat
     # catatan di reservation_service.py.
     async with room_locks(body.room_id):
-        await check_room_available(body.room_id, start, end, exclude_booking_id=bid)
+        await check_room_available(body.room_id, start, end, property_id, exclude_booking_id=bid)
         await db.bookings.update_one({"id": bid}, {"$set": update_fields})
-    await upsert_guest(body.nama_tamu, body.no_hp, body.no_identitas, body.kendaraan, count_kunjungan=False)
+    await upsert_guest(body.nama_tamu, body.no_hp, body.no_identitas, body.kendaraan, property_id, count_kunjungan=False)
     await log_activity(user, "update_booking", f"Edit booking {b['kode']} kamar {r['nomor']} untuk {body.nama_tamu}", entity=r["nomor"])
-    doc = await db.bookings.find_one({"id": bid}, {"_id": 0})
+    doc = await db.bookings.find_one(scoped({"id": bid}, property_id), {"_id": 0})
     return doc
 
 @api.delete("/bookings/{bid}")
-async def cancel_booking(bid: str, user: dict = Depends(get_current_user)):
-    b = await db.bookings.find_one({"id": bid})
+async def cancel_booking(bid: str, user: dict = Depends(get_current_user),
+                         property_id: str = Depends(get_active_property)):
+    b = await db.bookings.find_one(scoped({"id": bid}, property_id))
     if not b: raise HTTPException(404, "Booking tidak ditemukan")
     if b["status"] not in ("aktif", "booking_pending", "booking_paid"):
         raise HTTPException(400, "Booking sudah tidak dapat dibatalkan")

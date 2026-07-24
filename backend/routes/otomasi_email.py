@@ -303,6 +303,7 @@ async def buat_reservasi_otomatis(log_id: str, data: dict, sumber: str, subjek: 
     berikutnya (dicocokkan lewat nomor itu) ikut memproses semua kamar dalam grup ini, bukan
     cuma satu. Total harga di email (`harga`) mencakup SELURUH kamar, dibagi rata per kamar.
     """
+    property_id = await get_default_property_id()  # STOPGAP (2026-07-24) - 1 akun Gmail RedDoorz global untuk semua properti, belum ada mekanisme per-properti
     mapping = await db.room_mappings.find_one({"ota_nama": data.get("tipe_kamar"), "sumber": sumber})
     if not mapping:
         await db.email_logs.update_one({"id": log_id}, {"$set": {
@@ -345,13 +346,13 @@ async def buat_reservasi_otomatis(log_id: str, data: dict, sumber: str, subjek: 
         }})
         return
 
-    kandidat = await db.rooms.find({"tipe": mapping["pms_tipe"]}, {"_id": 0}).to_list(200)
+    kandidat = await db.rooms.find(scoped({"tipe": mapping["pms_tipe"]}, property_id), {"_id": 0}).to_list(200)
     dipilih = []
     for r in kandidat:
         if len(dipilih) >= jumlah_kamar:
             break
         try:
-            await check_room_available(r["id"], check_in, check_out)
+            await check_room_available(r["id"], check_in, check_out, property_id)
             dipilih.append(r)
         except HTTPException:
             continue
@@ -390,6 +391,7 @@ async def buat_reservasi_otomatis(log_id: str, data: dict, sumber: str, subjek: 
                 "created_by": "ai_email_parser",
                 "tipe": "menginap",
             },
+            property_id,
             source="ota",
             harga_override={"subtotal": total_per_kamar, "service_fee": 0, "total": total_per_kamar, "dp_min": 0},
         )
@@ -592,11 +594,12 @@ async def proses_modifikasi_otomatis(log_id: str, data: dict, sumber: str, subje
     # sebagian belum.
     # Celah check-lalu-tulis dibungkus lock (2026-07-19, audit anti-race-condition) - lihat
     # catatan di reservation_service.py.
+    property_id = await get_default_property_id()  # STOPGAP, lihat buat_reservasi_otomatis
     async with room_locks(*[b["room_id"] for b in bookings]):
         konflik = None
         for b in bookings:
             try:
-                await check_room_available(b["room_id"], new_start, new_end, exclude_booking_id=b["id"])
+                await check_room_available(b["room_id"], new_start, new_end, property_id, exclude_booking_id=b["id"])
             except HTTPException:
                 konflik = b
                 break
@@ -816,12 +819,13 @@ async def gmail_disconnect(user: dict = Depends(require_owner)):
 
 
 @api.get("/otomasi-email/modifikasi/perlu-review")
-async def list_modifikasi_perlu_review(user: dict = Depends(get_current_user)):
+async def list_modifikasi_perlu_review(user: dict = Depends(get_current_user),
+                                        property_id: str = Depends(get_active_property)):
     """Reservasi OTA yang punya email modifikasi menunggu keputusan staf — fallback dari
     proses_modifikasi_otomatis kalau AI tidak berhasil menentukan reschedule/batal otomatis.
     Disertakan riwayat email modifikasi terkait (bisa lebih dari satu kalau OTA kirim beberapa
     notifikasi susulan)."""
-    bookings = await db.bookings.find({"modifikasi_status": "menunggu_review"}, {"_id": 0}).sort("jam_mulai", 1).to_list(100)
+    bookings = await db.bookings.find(scoped({"modifikasi_status": "menunggu_review"}, property_id), {"_id": 0}).sort("jam_mulai", 1).to_list(100)
     out = []
     for b in bookings:
         logs = await db.email_logs.find(
@@ -832,10 +836,11 @@ async def list_modifikasi_perlu_review(user: dict = Depends(get_current_user)):
 
 
 @api.post("/otomasi-email/modifikasi/{booking_id}/batalkan")
-async def modifikasi_batalkan(booking_id: str, user: dict = Depends(get_current_user)):
+async def modifikasi_batalkan(booking_id: str, user: dict = Depends(get_current_user),
+                               property_id: str = Depends(get_active_property)):
     """Staf konfirmasi: email modifikasi OTA yang ditinjau ternyata pembatalan — batalkan
     reservasi PMS terkait (sama seperti batalkan_reservasi_otomatis, tapi dipicu staf)."""
-    b = await db.bookings.find_one({"id": booking_id})
+    b = await db.bookings.find_one(scoped({"id": booking_id}, property_id))
     if not b:
         raise HTTPException(404, "Booking tidak ditemukan")
     if b.get("modifikasi_status") != "menunggu_review":
@@ -858,12 +863,13 @@ async def modifikasi_batalkan(booking_id: str, user: dict = Depends(get_current_
 
 
 @api.post("/otomasi-email/modifikasi/{booking_id}/reschedule")
-async def modifikasi_reschedule(booking_id: str, body: ReschedulePMSBody, user: dict = Depends(get_current_user)):
+async def modifikasi_reschedule(booking_id: str, body: ReschedulePMSBody, user: dict = Depends(get_current_user),
+                                 property_id: str = Depends(get_active_property)):
     """Staf konfirmasi: email modifikasi OTA yang ditinjau ternyata ganti tanggal — pindahkan
     jadwal reservasi PMS ke jadwal baru (staf baca tanggal baru dari isi email RedDoorz asli).
     Harga TIDAK dihitung ulang, konsisten dengan konvensi reschedule staf yang sudah ada
     (`PUT /bookings/{id}`) — anti-overbooking tetap dicek untuk jadwal baru."""
-    b = await db.bookings.find_one({"id": booking_id})
+    b = await db.bookings.find_one(scoped({"id": booking_id}, property_id))
     if not b:
         raise HTTPException(404, "Booking tidak ditemukan")
     if b.get("modifikasi_status") != "menunggu_review":
@@ -878,7 +884,7 @@ async def modifikasi_reschedule(booking_id: str, body: ReschedulePMSBody, user: 
     # Celah check-lalu-tulis dibungkus lock (2026-07-19, audit anti-race-condition) - lihat
     # catatan di reservation_service.py.
     async with room_locks(b["room_id"]):
-        await check_room_available(b["room_id"], start, end, exclude_booking_id=booking_id)
+        await check_room_available(b["room_id"], start, end, property_id, exclude_booking_id=booking_id)
         await db.bookings.update_one({"id": booking_id}, {"$set": {
             "jam_mulai": start.isoformat(), "jam_selesai": end.isoformat(),
             "modifikasi_status": "direschedule", "modifikasi_reviewed_at": now, "modifikasi_reviewed_by": user["nama"],

@@ -50,18 +50,22 @@ async def room_locks(*room_ids: str):
 
 
 async def check_room_available(room_id: str, mulai: datetime, selesai: datetime,
-                                exclude_booking_id: Optional[str] = None) -> bool:
+                                property_id: str, exclude_booking_id: Optional[str] = None) -> bool:
     """Raise HTTPException(400) jika kamar sudah dibooking pada rentang [mulai, selesai).
     Booking yang dianggap konflik: status aktif/booking_pending/booking_paid.
     exclude_booking_id dipakai saat reschedule (update_booking) agar booking itu
     sendiri tidak dianggap konflik dengan dirinya sendiri.
+
+    property_id (2026-07-24, multi-properti) WAJIB - room_id sendiri sudah unik global
+    (uuid) jadi secara teknis query tanpa property_id tetap benar, tapi disertakan
+    tetap sebagai lapis pertahanan konsisten dengan scoped() di collection lain.
     """
-    query: Dict[str, Any] = {
+    query: Dict[str, Any] = scoped({
         "room_id": room_id,
         "status": {"$in": ["aktif", "booking_pending", "booking_paid"]},
         "jam_mulai": {"$lt": selesai.isoformat()},
         "jam_selesai": {"$gt": mulai.isoformat()},
-    }
+    }, property_id)
     if exclude_booking_id:
         query["id"] = {"$ne": exclude_booking_id}
     overlap = await db.bookings.find_one(query)
@@ -70,7 +74,7 @@ async def check_room_available(room_id: str, mulai: datetime, selesai: datetime,
     return True
 
 
-async def create_reservation(data: Dict[str, Any], source: str = "public",
+async def create_reservation(data: Dict[str, Any], property_id: str, source: str = "public",
                               harga_override: Optional[Dict[str, Any]] = None,
                               diskon_ai_persen: int = 0) -> Dict[str, Any]:
     """Buat reservasi/booking baru. Dipakai oleh public_create_booking (source="online");
@@ -82,8 +86,12 @@ async def create_reservation(data: Dict[str, Any], source: str = "public",
 
     harga_override, jika diisi, wajib berisi subtotal/service_fee/total/dp_min final
     (tidak dihitung ulang) — extra bed (kalau ada) harus sudah termasuk di subtotal.
+
+    property_id (2026-07-24) WAJIB - room_id di-scope ke properti ini supaya tidak bisa
+    booking kamar milik properti lain lewat room_id yang ditebak/bocor, dan booking yang
+    dibuat otomatis ikut property_id yang sama (scoped() di insert doc di bawah).
     """
-    r = await db.rooms.find_one({"id": data["room_id"]})
+    r = await db.rooms.find_one(scoped({"id": data["room_id"]}, property_id))
     if not r:
         raise HTTPException(404, "Kamar tidak ditemukan")
 
@@ -126,7 +134,7 @@ async def create_reservation(data: Dict[str, Any], source: str = "public",
     # kebenaran, konsisten di semua channel yang lewat create_reservation.
     diskon_persen, diskon_rp, kedatangan_ke = 0, 0, None
     if source != "ota":
-        diskon_info = await hitung_diskon_member(data.get("no_hp", ""), data.get("no_identitas", ""))
+        diskon_info = await hitung_diskon_member(property_id, data.get("no_hp", ""), data.get("no_identitas", ""))
         kedatangan_ke = diskon_info["kedatangan_ke"]
         # Diskon diskresi AI (permintaan tamu, hitung_diskon_ai_diskresi) digabung dengan
         # diskon member - AMBIL YANG TERBESAR, TIDAK dijumlah (kebijakan bisnis 2026-07-21,
@@ -158,15 +166,17 @@ async def create_reservation(data: Dict[str, Any], source: str = "public",
         "source": source,                      # online | walk_in
         "invoice_id": None, "payment_id": None,
         "created_at": now_iso(), "created_by": data["created_by"],
+        "property_id": property_id,
     }
     # Celah check_room_available -> insert_one dibungkus lock in-process per kamar supaya
     # 2 request nyaris bersamaan tidak bisa sama-sama lolos cek lalu sama-sama menulis
     # (race condition anti-double-booking, lihat catatan di kepala file).
     async with room_locks(data["room_id"]):
-        await check_room_available(data["room_id"], mulai, selesai)
+        await check_room_available(data["room_id"], mulai, selesai, property_id)
         await db.bookings.insert_one(doc)
     await log_availability_change(r["id"], r["tipe"], -1, "booking_dibuat", booking_id=doc["id"])
-    await upsert_guest(data["nama_tamu"], data["no_hp"], data["no_identitas"], data["kendaraan"], count_kunjungan=False)
+    await upsert_guest(data["nama_tamu"], data["no_hp"], data["no_identitas"], data["kendaraan"],
+                        property_id, count_kunjungan=False)
 
     if source == "online":
         action, username = "public_create_booking", "public"

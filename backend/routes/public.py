@@ -24,8 +24,12 @@ def _booking_date_range(start: datetime, end: datetime):
 async def public_rooms_catalog():
     """Katalog kamar untuk halaman publik. Mengelompokkan berdasarkan tipe.
     Tidak mengekspos field internal seperti info / status detail.
-    """
-    rooms = await db.rooms.find({}, {"_id": 0}).to_list(500)
+
+    property_id (2026-07-24) masih STOPGAP get_default_property_id() - halaman /book belum
+    punya slug per properti (Phase 5 multi-properti), jadi tetap 1 properti default persis
+    seperti sekarang sampai Phase 5 selesai."""
+    property_id = await get_default_property_id()
+    rooms = await db.rooms.find(scoped({}, property_id), {"_id": 0}).to_list(500)
     rooms.sort(key=lambda r: (0 if r["tipe"] == "Standard" else 1, int(r["nomor"]) if r["nomor"].isdigit() else 9999))
     # Foto & deskripsi per tipe kamar — statis (bukan dari DB) karena semua kamar
     # dalam 1 tipe memakai foto yang sama. File-nya ada di frontend/public/assets/.
@@ -93,6 +97,7 @@ async def public_availability(tanggal: str, tipe: Optional[str] = None, checkout
         d_end = d_start + timedelta(days=1)
     # Untuk hari INI, kamar yang sedang dipakai (day_use/menginap/perlu_dibersihkan) tidak tersedia.
     # Untuk hari LAIN (masa depan), hanya 'maintenance' yang dikecualikan.
+    property_id = await get_default_property_id()  # STOPGAP, lihat public_rooms_catalog
     today_local = datetime.now().strftime("%Y-%m-%d")
     is_today = tanggal == today_local
     q: Dict[str, Any] = {}
@@ -102,19 +107,19 @@ async def public_availability(tanggal: str, tipe: Optional[str] = None, checkout
         q["status"] = "kosong"
     else:
         q["status"] = {"$ne": "maintenance"}
-    rooms = await db.rooms.find(q, {"_id": 0}).to_list(500)
+    rooms = await db.rooms.find(scoped(q, property_id), {"_id": 0}).to_list(500)
     # Filter rooms yang punya booking overlap di tanggal tsb — [d_start, d_end) di sini
     # sudah berupa rentang TANGGAL (bukan cuma pre-filter kasar), jadi hari check-out booking
     # lain TIDAK dihitung menempati (lihat _booking_date_range).
     q_range_start, q_range_end = d_start.date(), d_end.date()
     out = []
     for r in rooms:
-        kandidat = await db.bookings.find({
+        kandidat = await db.bookings.find(scoped({
             "room_id": r["id"],
             "status": {"$in": ["aktif", "booking_paid", "booking_pending"]},
             "jam_mulai": {"$lt": d_end.isoformat()},
             "jam_selesai": {"$gt": d_start.isoformat()},
-        }, {"_id": 0, "jam_mulai": 1, "jam_selesai": 1}).to_list(50)
+        }, property_id), {"_id": 0, "jam_mulai": 1, "jam_selesai": 1}).to_list(50)
         bk = None
         for c in kandidat:
             b_start, b_end = _booking_date_range(parse_iso(c["jam_mulai"], "jam_mulai"), parse_iso(c["jam_selesai"], "jam_selesai"))
@@ -133,7 +138,8 @@ async def public_rekomendasi_dayuse(room_id: str, jam_mulai: str):
     yang sudah terkonfirmasi di kamar yang sama (Scheduling Engine, PRD Revisi #6). Murni
     informasi, TIDAK mengubah/membatasi apa yang bisa disubmit tamu."""
     mulai = parse_iso(jam_mulai, "jam_mulai")
-    info = await slot_dayuse_aman(room_id, mulai)
+    property_id = await get_default_property_id()  # STOPGAP, lihat public_rooms_catalog
+    info = await slot_dayuse_aman(room_id, mulai, property_id)
     return {
         "jam_selesai_ideal": info["jam_selesai_ideal"].isoformat(),
         "jam_selesai_aman": info["jam_selesai_aman"].isoformat(),
@@ -154,6 +160,7 @@ async def public_create_booking(body: PublicBookingCreate):
     Response tetap 1 dict datar (backward compatible) kalau cuma 1 kamar; jadi
     `{"group_id", "bookings": [...]}` kalau lebih dari 1.
     """
+    property_id = await get_default_property_id()  # STOPGAP, lihat public_rooms_catalog
     room_ids = body.room_ids if body.room_ids else ([body.room_id] if body.room_id else [])
     room_ids = list(dict.fromkeys(room_ids))
     if not room_ids:
@@ -199,10 +206,10 @@ async def public_create_booking(body: PublicBookingCreate):
     # jalan ter-booking kalau salah satu ternyata bentrok (sama seperti Quick Book staf).
     rooms = []
     for rid in room_ids:
-        r = await db.rooms.find_one({"id": rid})
+        r = await db.rooms.find_one(scoped({"id": rid}, property_id))
         if not r:
             raise HTTPException(404, f"Kamar tidak ditemukan (id {rid})")
-        await check_room_available(rid, start, end)
+        await check_room_available(rid, start, end, property_id)
         rooms.append(r)
 
     extra_bed_qty = max(0, min(EXTRA_BED_MAX, int(body.extra_bed_qty or 0)))
@@ -236,7 +243,7 @@ async def public_create_booking(body: PublicBookingCreate):
                 "tipe": body.tipe,
                 "dengan_sarapan": body.dengan_sarapan,
             }
-            booking = await create_reservation(data, source="online", harga_override=harga_override)
+            booking = await create_reservation(data, property_id, source="online", harga_override=harga_override)
             if group_id:
                 await db.bookings.update_one({"id": booking["id"]}, {"$set": {"group_id": group_id}})
                 booking["group_id"] = group_id
@@ -361,8 +368,9 @@ async def public_retry_bayar(bid: str, body: RetryBayarBody = RetryBayarBody(), 
     now = now_iso()
     # Celah check-lalu-tulis dibungkus lock (2026-07-19, audit anti-race-condition) - lihat
     # catatan di reservation_service.py.
+    property_id = await get_default_property_id()  # STOPGAP, lihat public_rooms_catalog
     async with room_locks(b["room_id"]):
-        await check_room_available(b["room_id"], mulai, selesai)
+        await check_room_available(b["room_id"], mulai, selesai, property_id)
         await db.bookings.update_one({"id": bid}, {
             "$set": {"status": "booking_pending", "payment_status": "pending", "updated_at": now},
             "$unset": {"cancelled_at": "", "cancel_reason": "", "cancel_fee": "", "refund_amount": ""},

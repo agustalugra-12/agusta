@@ -7,7 +7,8 @@ from scheduling_engine import cek_konflik_slot, slot_dayuse_aman
 
 @api.get("/scheduling/cek-slot")
 async def scheduling_cek_slot(room_id: str, tipe: str, jam_mulai: str, jam_selesai: str,
-                              user: dict = Depends(get_current_user)):
+                              user: dict = Depends(get_current_user),
+                              property_id: str = Depends(get_active_property)):
     """Cek advisory sebelum staf submit booking dari Quick Book — kasih peringatan real-time
     kalau kamar sudah dibooking (bakal ditolak saat submit) atau slot Day Use mepet booking
     Menginap berikutnya."""
@@ -15,17 +16,18 @@ async def scheduling_cek_slot(room_id: str, tipe: str, jam_mulai: str, jam_seles
     selesai = parse_iso(jam_selesai, "jam_selesai")
     if selesai <= mulai:
         raise HTTPException(400, "jam_selesai harus setelah jam_mulai")
-    hasil = await cek_konflik_slot(room_id, tipe, mulai, selesai)
+    hasil = await cek_konflik_slot(room_id, tipe, mulai, selesai, property_id)
     return {"konflik": hasil}
 
 
 @api.get("/scheduling/rekomendasi-dayuse")
 async def scheduling_rekomendasi_dayuse(room_id: str, jam_mulai: Optional[str] = None,
-                                        user: dict = Depends(get_current_user)):
+                                        user: dict = Depends(get_current_user),
+                                        property_id: str = Depends(get_active_property)):
     """Slot Day Use aman untuk kamar ini mulai dari jam_mulai (default sekarang) — dipakai
     Dashboard buat pre-fill/hint jam selesai yang aman (Flexible Day Use)."""
     mulai = parse_iso(jam_mulai, "jam_mulai") if jam_mulai else datetime.now(timezone.utc)
-    info = await slot_dayuse_aman(room_id, mulai)
+    info = await slot_dayuse_aman(room_id, mulai, property_id)
     return {
         "jam_mulai": info["jam_mulai"].isoformat(),
         "jam_selesai_ideal": info["jam_selesai_ideal"].isoformat(),

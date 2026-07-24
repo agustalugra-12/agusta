@@ -155,16 +155,26 @@ async def require_owner(user: dict = Depends(get_current_user)) -> dict:
 async def get_active_property(request: Request, user: dict = Depends(get_current_user)) -> str:
     """Multi-properti (2026-07-24) - resepsionis TERKUNCI ke property_id akunnya sendiri
     (header diabaikan, tidak bisa dipilih-pilih). Owner boleh pilih properti mana pun lewat
-    header X-Property-Id, atau "all" untuk melihat gabungan semua properti (HANYA dipakai
-    endpoint agregat/laporan yang eksplisit mendukungnya - route lain WAJIB validasi sendiri
-    kalau menerima "all" dari sini, itu tandanya route itu belum boleh dipanggil owner dalam
-    mode "all")."""
+    header X-Property-Id, atau eksplisit "all" untuk melihat gabungan semua properti (HANYA
+    dipakai endpoint agregat/laporan yang eksplisit mendukungnya - route lain WAJIB validasi
+    sendiri kalau menerima "all" dari sini, itu tandanya route itu belum boleh dipanggil owner
+    dalam mode "all").
+
+    PENTING: kalau header TIDAK dikirim sama sekali (frontend PMS saat ini, sebelum Phase 3
+    property-switcher selesai dibangun, memang belum pernah mengirim header ini), default
+    JATUH ke properti default (get_default_property_id()) - BUKAN "all". Ini supaya frontend
+    yang sudah ada (dan siapa pun yang panggil API tanpa header, mis. Swagger/curl manual)
+    tetap melihat data seperti sebelum multi-properti ada, bukan tiba-tiba melihat list kosong
+    di semua halaman. "all" HANYA aktif kalau owner secara eksplisit mengirim header itu -
+    tidak pernah jadi default diam-diam."""
     if user.get("role") != "owner":
         pid = user.get("property_id")
         if not pid:
             raise HTTPException(403, "Akun ini belum ditugaskan ke properti mana pun - hubungi Owner")
         return pid
-    requested = request.headers.get("X-Property-Id", "all")
+    requested = request.headers.get("X-Property-Id")
+    if requested is None:
+        return await get_default_property_id()
     if requested != "all" and not await db.properties.find_one({"id": requested}):
         raise HTTPException(400, "Properti tidak ditemukan")
     return requested
@@ -180,6 +190,29 @@ def scoped(query: Dict[str, Any], property_id: str) -> Dict[str, Any]:
     "semua properti" - route agregat harus SKIP pemanggilan scoped() sama sekali, bukan
     memanggilnya dengan "all"."""
     return {**query, "property_id": property_id}
+
+_default_property_id_cache: Optional[str] = None
+
+async def get_default_property_id() -> str:
+    """STOPGAP (2026-07-24, multi-properti Phase 2) - dipakai oleh integrasi yang BELUM
+    punya mekanisme resolusi properti sendiri (Booking Engine publik/`routes/public.py`
+    sebelum Phase 5 slug-per-properti, AI WhatsApp/`routes/booking_requests.py` &
+    `routes/integrasi_ai_bot.py` sebelum Phase 4 API-key-per-properti, dan sinkronisasi
+    email RedDoorz/`routes/otomasi_email.py` yang tetap 1 akun Gmail global untuk semua
+    properti). Selalu mengembalikan properti PERTAMA yang pernah dibuat (`created_at`
+    paling awal) - untuk instalasi yang baru migrasi, ini otomatis properti default hasil
+    `scripts/migrate_multi_property.py`, jadi PERILAKU HARI INI TIDAK BERUBAH SAMA SEKALI
+    (masih 1 properti implisit) sampai modul-modul di atas benar-benar diselesaikan.
+    JANGAN dipakai di route baru yang punya user login (pakai get_active_property) atau
+    yang sudah diberi mekanisme resolusi properti sendiri di fase berikutnya."""
+    global _default_property_id_cache
+    if _default_property_id_cache:
+        return _default_property_id_cache
+    p = await db.properties.find_one({}, sort=[("created_at", 1)])
+    if not p:
+        raise HTTPException(500, "Belum ada properti terdaftar - jalankan migrasi multi-properti dulu")
+    _default_property_id_cache = p["id"]
+    return _default_property_id_cache
 
 async def log_activity(user: dict, action: str, detail: str = "", entity: str = ""):
     """AuditLogger — dipanggil di semua route yang mengubah data (stok kamar, reservasi,
@@ -210,7 +243,7 @@ async def log_availability_change(room_id: str, room_tipe: str, stock_change: in
     })
     await push_sync_event("ketersediaan", f"Stok {room_tipe} berubah ({stock_change:+d}): {reason}")
 
-async def cari_guest(no_hp: str = "", no_identitas: str = "") -> Optional[Dict[str, Any]]:
+async def cari_guest(property_id: str, no_hp: str = "", no_identitas: str = "") -> Optional[Dict[str, Any]]:
     """Resolusi identitas tamu di `db.guests` - dicari lewat no_identitas dulu (lebih pasti
     unik per orang), fallback no_hp. Satu fungsi dipakai upsert_guest (tulis) DAN
     hitung_diskon_member (baca) supaya tidak ada logika pencarian ganda yang bisa
@@ -220,13 +253,17 @@ async def cari_guest(no_hp: str = "", no_identitas: str = "") -> Optional[Dict[s
     sama tercatat sebagai 2 data terpisah - AI WhatsApp selalu simpan format 62xxx dari nomor
     WA asli, sementara booking/checkin dari staf/walk-in kadang tersimpan format 0xxx, jadi
     exact-match sebelumnya menganggap keduanya orang berbeda - riwayat kunjungan & diskon
-    member pun ikut terpecah/salah hitung, bukan cuma soal tampilan)."""
+    member pun ikut terpecah/salah hitung, bukan cuma soal tampilan).
+
+    property_id (2026-07-24, multi-properti - riwayat tamu SENGAJA disilo per properti,
+    keputusan bisnis user): tamu yang sama yang pernah ke Properti A tidak dianggap tamu
+    lama di Properti B - kedatangan ke- dan diskon member dihitung ulang dari 0 per properti."""
     if no_identitas:
-        guest = await db.guests.find_one({"no_identitas": no_identitas})
+        guest = await db.guests.find_one(scoped({"no_identitas": no_identitas}, property_id))
         if guest:
             return guest
     if no_hp:
-        return await db.guests.find_one({"no_hp": {"$in": list(phone_variants(no_hp))}})
+        return await db.guests.find_one(scoped({"no_hp": {"$in": list(phone_variants(no_hp))}}, property_id))
     return None
 
 
@@ -248,11 +285,11 @@ def diskon_member_untuk_total_kunjungan(total_kunjungan: int) -> Dict[str, int]:
     return {"kedatangan_ke": kedatangan_ke, "diskon_persen": DISKON_MEMBER_TABLE[posisi]}
 
 
-async def hitung_diskon_member(no_hp: str = "", no_identitas: str = "") -> Dict[str, int]:
+async def hitung_diskon_member(property_id: str, no_hp: str = "", no_identitas: str = "") -> Dict[str, int]:
     """`kedatangan_ke` = total_kunjungan tercatat SAAT INI + 1 (kedatangan yang sedang
     dibuat booking-nya sekarang, karena total_kunjungan cuma naik saat check-in sungguhan
     terjadi - lihat upsert_guest). Tamu baru (belum pernah tercatat) = kedatangan ke-1."""
-    guest = await cari_guest(no_hp, no_identitas)
+    guest = await cari_guest(property_id, no_hp, no_identitas)
     return diskon_member_untuk_total_kunjungan((guest or {}).get("total_kunjungan", 0))
 
 
@@ -264,7 +301,7 @@ def terapkan_diskon_member(subtotal: int, diskon_persen: int) -> Dict[str, int]:
     return {"subtotal": subtotal - diskon_rp, "diskon_rp": diskon_rp}
 
 
-async def upsert_guest(nama: str, no_hp: str = "", no_identitas: str = "", kendaraan: str = "",
+async def upsert_guest(nama: str, no_hp: str, no_identitas: str, kendaraan: str, property_id: str,
                         count_kunjungan: bool = True, room_nomor: str = "") -> str:
     """Catat/perbarui 1 data tamu di `db.guests` — dipanggil dari SEMUA jalur yang menghasilkan
     booking (create/update booking staf, booking publik, booking OTA) maupun check-in sungguhan
@@ -291,7 +328,7 @@ async def upsert_guest(nama: str, no_hp: str = "", no_identitas: str = "", kenda
     ditambah saat `count_kunjungan=True` (kedatangan sungguhan, sinkron persis dengan kapan
     `total_kunjungan` naik - booking yang belum/tidak check-in TIDAK masuk daftar ini)."""
     nama = (nama or "").strip()
-    guest = await cari_guest(no_hp, no_identitas)
+    guest = await cari_guest(property_id, no_hp, no_identitas)
     if guest:
         varian = dict(guest.get("nama_varian") or {})
         if not varian and guest.get("nama"):
@@ -323,6 +360,7 @@ async def upsert_guest(nama: str, no_hp: str = "", no_identitas: str = "", kenda
         "riwayat_kunjungan": [{"id": str(uuid.uuid4()), "tanggal": now_iso(), "room_nomor": room_nomor, "source": "checkin"}] if count_kunjungan else [],
         "last_visit": now_iso(),
         "created_at": now_iso(),
+        "property_id": property_id,
     })
     return guest_id
 
