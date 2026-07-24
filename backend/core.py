@@ -236,7 +236,7 @@ def terapkan_diskon_member(subtotal: int, diskon_persen: int) -> Dict[str, int]:
 
 
 async def upsert_guest(nama: str, no_hp: str = "", no_identitas: str = "", kendaraan: str = "",
-                        count_kunjungan: bool = True) -> str:
+                        count_kunjungan: bool = True, room_nomor: str = "") -> str:
     """Catat/perbarui 1 data tamu di `db.guests` — dipanggil dari SEMUA jalur yang menghasilkan
     booking (create/update booking staf, booking publik, booking OTA) maupun check-in sungguhan
     (`/checkins`, `/bookings/{id}/checkin`), supaya tab "Data Tamu" di Reservasi mencerminkan
@@ -255,7 +255,12 @@ async def upsert_guest(nama: str, no_hp: str = "", no_identitas: str = "", kenda
     lama hilang, staf bisa bingung lihat nama "flip-flop"). Sekarang setiap nama yang pernah
     dipakai dihitung frekuensinya di `nama_varian` ({nama: jumlah_pemakaian}), field `nama`
     tampil = varian yang PALING SERING dipakai (bukan cuma yang terakhir) - staf tetap bisa
-    lihat semua variasi nama yang pernah dipakai tamu ini di `nama_varian`."""
+    lihat semua variasi nama yang pernah dipakai tamu ini di `nama_varian`.
+
+    `riwayat_kunjungan` (2026-07-24, permintaan user - staf mau lihat BUKAN cuma angka
+    "sudah datang 3x" tapi tanggal & kamar persisnya): list `{tanggal, room_nomor}`, HANYA
+    ditambah saat `count_kunjungan=True` (kedatangan sungguhan, sinkron persis dengan kapan
+    `total_kunjungan` naik - booking yang belum/tidak check-in TIDAK masuk daftar ini)."""
     nama = (nama or "").strip()
     guest = await cari_guest(no_hp, no_identitas)
     if guest:
@@ -274,6 +279,7 @@ async def upsert_guest(nama: str, no_hp: str = "", no_identitas: str = "", kenda
         }}
         if count_kunjungan:
             update["$inc"] = {"total_kunjungan": 1}
+            update["$push"] = {"riwayat_kunjungan": {"tanggal": now_iso(), "room_nomor": room_nomor}}
         await db.guests.update_one({"id": guest["id"]}, update)
         return guest["id"]
     guest_id = str(uuid.uuid4())
@@ -285,6 +291,7 @@ async def upsert_guest(nama: str, no_hp: str = "", no_identitas: str = "", kenda
         "no_identitas": no_identitas,
         "kendaraan": kendaraan,
         "total_kunjungan": 1 if count_kunjungan else 0,
+        "riwayat_kunjungan": [{"tanggal": now_iso(), "room_nomor": room_nomor}] if count_kunjungan else [],
         "last_visit": now_iso(),
         "created_at": now_iso(),
     })

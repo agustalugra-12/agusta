@@ -260,7 +260,7 @@ async def checkin_from_booking(bid: str, body: CheckinFromBookingBody = CheckinF
     sisa = max(0, total - paid)
     now = now_iso()
 
-    guest_id = await upsert_guest(b.get("nama_tamu", ""), no_hp, b.get("no_identitas", ""), b.get("kendaraan", ""))
+    guest_id = await upsert_guest(b.get("nama_tamu", ""), no_hp, b.get("no_identitas", ""), b.get("kendaraan", ""), room_nomor=r["nomor"])
 
     if b.get("tipe") == "menginap":
         await db.rooms.update_one({"id": b["room_id"]}, {"$set": {

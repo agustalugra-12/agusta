@@ -27,7 +27,8 @@ async def create_checkin(body: CheckinCreate, user: dict = Depends(get_current_u
         rooms.append(r)
 
     # Save / upsert guest — 1 data tamu dipakai bersama untuk semua kamar dalam grup ini.
-    guest_id = await upsert_guest(body.nama_tamu, body.no_hp, body.no_identitas, body.kendaraan)
+    room_nomor_gabung = ", ".join(r["nomor"] for r in rooms)
+    guest_id = await upsert_guest(body.nama_tamu, body.no_hp, body.no_identitas, body.kendaraan, room_nomor=room_nomor_gabung)
     # parse jam_checkin
     jam_ci_iso = now_iso()
     if body.jam_checkin:

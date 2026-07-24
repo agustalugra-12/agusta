@@ -401,18 +401,40 @@ function TamuTab() {
       <Dialog open={!!history} onOpenChange={(o) => !o && setHistory(null)}>
         <DialogContent className="max-w-2xl">
           <DialogHeader><DialogTitle>Riwayat {history?.guest?.nama}</DialogTitle></DialogHeader>
-          <div className="max-h-96 overflow-y-auto space-y-2">
-            {(history?.items || []).map(it => (
-              <div key={it.id} className="border border-slate-200 rounded-lg p-3 text-sm">
-                <div className="flex items-center justify-between">
-                  <span className="font-semibold">Kamar {it.room_nomor} ({it.room_tipe})</span>
-                  <span className={`text-xs px-2 py-0.5 rounded ${it.status === "selesai" ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-700"}`}>{it.status}</span>
-                </div>
-                <div className="text-xs text-slate-500 mt-1">{fmtDateTime(it.jam_checkin)} → {fmtDateTime(it.jam_checkout)}</div>
-                {it.status === "selesai" && <div className="text-sm font-semibold mt-1">{fmtRp(it.total)}</div>}
+          <div className="max-h-[28rem] overflow-y-auto space-y-4">
+            <div>
+              <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">
+                Riwayat Kedatangan ({history?.guest?.total_kunjungan || 0}×)
+              </p>
+              <div className="space-y-1.5">
+                {[...(history?.guest?.riwayat_kunjungan || [])].reverse().map((k, i) => (
+                  <div key={i} className="flex items-center justify-between text-sm border border-slate-200 rounded-lg px-3 py-2" data-testid={`riwayat-kunjungan-${i}`}>
+                    <span>{fmtDateTime(k.tanggal)}</span>
+                    {k.room_nomor && <span className="text-slate-500">Kamar {k.room_nomor}</span>}
+                  </div>
+                ))}
+                {(history?.guest?.riwayat_kunjungan || []).length === 0 && (
+                  <div className="text-slate-400 text-center py-3 text-sm">Belum pernah check-in sungguhan</div>
+                )}
               </div>
-            ))}
-            {(history?.items || []).length === 0 && <div className="text-slate-500 text-center py-6">Belum ada riwayat</div>}
+            </div>
+
+            <div>
+              <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">Detail Transaksi (Day Use)</p>
+              <div className="space-y-2">
+                {(history?.items || []).map(it => (
+                  <div key={it.id} className="border border-slate-200 rounded-lg p-3 text-sm">
+                    <div className="flex items-center justify-between">
+                      <span className="font-semibold">Kamar {it.room_nomor} ({it.room_tipe})</span>
+                      <span className={`text-xs px-2 py-0.5 rounded ${it.status === "selesai" ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-700"}`}>{it.status}</span>
+                    </div>
+                    <div className="text-xs text-slate-500 mt-1">{fmtDateTime(it.jam_checkin)} → {fmtDateTime(it.jam_checkout)}</div>
+                    {it.status === "selesai" && <div className="text-sm font-semibold mt-1">{fmtRp(it.total)}</div>}
+                  </div>
+                ))}
+                {(history?.items || []).length === 0 && <div className="text-slate-400 text-center py-3 text-sm">Tidak ada transaksi Day Use tercatat</div>}
+              </div>
+            </div>
           </div>
         </DialogContent>
       </Dialog>

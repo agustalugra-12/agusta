@@ -57,6 +57,9 @@ function PembatalanCard({ b, onChanged, compact }) {
               <span className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded-full ${STATUS_CLS[b.cancel_request_status]}`}>{STATUS_LABEL[b.cancel_request_status] || b.cancel_request_status}</span>
             </div>
             <div className="text-xs text-slate-500 mt-0.5">{b.kode} · Kamar {b.room_nomor} ({b.room_tipe}) · HP {b.no_hp}</div>
+            <div className="text-xs text-slate-500 mt-0.5">
+              Booking {b.tipe === "menginap" ? "Menginap" : "Day Use"}: {fmtDateTime(b.jam_mulai)} → {fmtDateTime(b.jam_selesai)}
+            </div>
             <div className="text-xs text-slate-500">{b.cancel_policy_label}</div>
             <div className="text-sm mt-1">
               Estimasi refund: <b>{fmtRp(b.refund_amount)}</b>
