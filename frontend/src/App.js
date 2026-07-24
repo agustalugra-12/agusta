@@ -57,6 +57,13 @@ function AppRoutes() {
       <Route path="/book" element={<PublicBook />} />
       <Route path="/book/sukses" element={<PublicBook successView />} />
       <Route path="/book/sukses/:bookingId" element={<PublicBook successView />} />
+      {/* Multi-properti Fase 5 (2026-07-25): /book/<slug-properti> - react-router v7
+          otomatis memberi skor lebih tinggi ke segment statis ("sukses") dibanding param
+          dinamis (:propertySlug), jadi /book/sukses* di atas tetap benar ke-match duluan
+          terlepas dari urutan pendaftaran di sini. */}
+      <Route path="/book/:propertySlug" element={<PublicBook />} />
+      <Route path="/book/:propertySlug/sukses" element={<PublicBook successView />} />
+      <Route path="/book/:propertySlug/sukses/:bookingId" element={<PublicBook successView />} />
       <Route element={<Protected><Layout /></Protected>}>
         <Route path="/" element={<Dashboard />} />
         <Route path="/ketersediaan" element={<Ketersediaan />} />

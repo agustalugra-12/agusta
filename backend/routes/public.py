@@ -7,6 +7,20 @@ import httpx
 import io
 from fastapi.responses import StreamingResponse
 
+async def _resolve_property(properti: Optional[str] = None) -> str:
+    """Multi-properti Fase 5 (2026-07-25) - resolve property_id dari slug URL publik
+    (`?properti=<slug>`, dikirim PublicBook.jsx dari path `/book/<slug>`). Slug kosong =
+    fallback ke get_default_property_id() (properti pertama) - backward compatible untuk
+    link lama/eksternal yang belum menyertakan slug, TIDAK PERNAH pecah link yang sudah
+    beredar (mis. CTA lama web-pelangi sebelum di-update ke domain per-properti)."""
+    if not properti:
+        return await get_default_property_id()
+    p = await db.properties.find_one({"slug": properti, "aktif": True})
+    if not p:
+        raise HTTPException(404, "Properti tidak ditemukan")
+    return p["id"]
+
+
 def _booking_date_range(start: datetime, end: datetime):
     """Rentang TANGGAL [start_date, end_date_exclusive) yang benar-benar ditempati booking —
     end_date_exclusive (hari check-out) TIDAK dihitung menempati, tamu sudah checkout sebelum
@@ -21,14 +35,12 @@ def _booking_date_range(start: datetime, end: datetime):
 
 
 @api.get("/public/rooms-catalog")
-async def public_rooms_catalog():
+async def public_rooms_catalog(properti: Optional[str] = None):
     """Katalog kamar untuk halaman publik. Mengelompokkan berdasarkan tipe.
     Tidak mengekspos field internal seperti info / status detail.
 
-    property_id (2026-07-24) masih STOPGAP get_default_property_id() - halaman /book belum
-    punya slug per properti (Phase 5 multi-properti), jadi tetap 1 properti default persis
-    seperti sekarang sampai Phase 5 selesai."""
-    property_id = await get_default_property_id()
+    `properti` (Fase 5) - slug properti dari URL `/book/<slug>`, lihat _resolve_property."""
+    property_id = await _resolve_property(properti)
     rooms = await db.rooms.find(scoped({}, property_id), {"_id": 0}).to_list(500)
     rooms.sort(key=lambda r: (0 if r["tipe"] == "Standard" else 1, int(r["nomor"]) if r["nomor"].isdigit() else 9999))
     # Foto & deskripsi per tipe kamar — statis (bukan dari DB) karena semua kamar
@@ -71,7 +83,7 @@ async def public_rooms_catalog():
 
 @api.get("/public/availability")
 async def public_availability(tanggal: str, tipe: Optional[str] = None, checkout: Optional[str] = None,
-                              property_id_override: Optional[str] = None):
+                              property_id_override: Optional[str] = None, properti: Optional[str] = None):
     """List kamar tersedia pada tanggal tertentu (halaman publik).
     Untuk tanggal MASA DEPAN, status realtime kamar (day_use/menginap/perlu_dibersihkan) TIDAK relevan
     karena akan kembali kosong sebelum tanggal tersebut. Hanya `maintenance` (long-term) yang di-exclude.
@@ -82,11 +94,11 @@ async def public_availability(tanggal: str, tipe: Optional[str] = None, checkout
     1 hari — supaya kamar yang sudah dibooking di salah satu malam dalam rentang itu
     tidak muncul sebagai tersedia.
 
-    `property_id_override` (2026-07-25, Fase 4) - dipakai pemanggil INTERNAL yang sudah
-    tahu properti yang benar dari konteksnya sendiri (mis. ai_bot_ketersediaan yang
-    resolve properti dari API key ai-chat-bot) supaya tidak ikut default ke
-    get_default_property_id() stopgap. Endpoint publik /book sendiri (lewat HTTP,
-    parameter ini tidak diisi) masih pakai stopgap sampai Fase 5 (slug per properti)."""
+    `property_id_override` (Fase 4) - dipakai pemanggil INTERNAL yang sudah tahu properti
+    yang benar dari konteksnya sendiri (mis. ai_bot_ketersediaan dari API key ai-chat-bot,
+    atau _coba_auto_approve_day_use dari property_id booking_request). `properti` (Fase 5) -
+    slug dari URL publik `/book/<slug>`, dipakai kalau override tidak diisi (override selalu
+    menang - pemanggil internal tidak pernah salah properti walau kebetulan ada slug di query)."""
     try:
         d = datetime.fromisoformat(tanggal)
     except Exception:
@@ -103,7 +115,7 @@ async def public_availability(tanggal: str, tipe: Optional[str] = None, checkout
         d_end = d_start + timedelta(days=1)
     # Untuk hari INI, kamar yang sedang dipakai (day_use/menginap/perlu_dibersihkan) tidak tersedia.
     # Untuk hari LAIN (masa depan), hanya 'maintenance' yang dikecualikan.
-    property_id = property_id_override or await get_default_property_id()  # STOPGAP kalau tidak di-override, lihat public_rooms_catalog
+    property_id = property_id_override or await _resolve_property(properti)
     today_local = datetime.now().strftime("%Y-%m-%d")
     is_today = tanggal == today_local
     q: Dict[str, Any] = {}
@@ -138,13 +150,13 @@ async def public_availability(tanggal: str, tipe: Optional[str] = None, checkout
     return {"tanggal": tanggal, "tipe": tipe, "rooms": out}
 
 @api.get("/public/scheduling/rekomendasi-dayuse")
-async def public_rekomendasi_dayuse(room_id: str, jam_mulai: str):
+async def public_rekomendasi_dayuse(room_id: str, jam_mulai: str, properti: Optional[str] = None):
     """Versi publik (tanpa login) dari /scheduling/rekomendasi-dayuse — dipakai halaman /book
     supaya tamu juga lihat peringatan kalau jam Day Use yang dipilih mepet booking Menginap
     yang sudah terkonfirmasi di kamar yang sama (Scheduling Engine, PRD Revisi #6). Murni
     informasi, TIDAK mengubah/membatasi apa yang bisa disubmit tamu."""
     mulai = parse_iso(jam_mulai, "jam_mulai")
-    property_id = await get_default_property_id()  # STOPGAP, lihat public_rooms_catalog
+    property_id = await _resolve_property(properti)
     info = await slot_dayuse_aman(room_id, mulai, property_id)
     return {
         "jam_selesai_ideal": info["jam_selesai_ideal"].isoformat(),
@@ -154,7 +166,7 @@ async def public_rekomendasi_dayuse(room_id: str, jam_mulai: str):
     }
 
 @api.post("/public/bookings")
-async def public_create_booking(body: PublicBookingCreate):
+async def public_create_booking(body: PublicBookingCreate, properti: Optional[str] = None):
     """Booking publik (tanpa login) — 1 kamar (`room_id`, alur lama) atau beberapa kamar
     sekaligus dalam 1 transaksi (`room_ids`, mis. rombongan) dengan tanggal/tipe/data tamu
     yang sama. Tiap kamar tetap dihitung harganya SENDIRI dari tarifnya masing-masing (bukan
@@ -166,7 +178,7 @@ async def public_create_booking(body: PublicBookingCreate):
     Response tetap 1 dict datar (backward compatible) kalau cuma 1 kamar; jadi
     `{"group_id", "bookings": [...]}` kalau lebih dari 1.
     """
-    property_id = await get_default_property_id()  # STOPGAP, lihat public_rooms_catalog
+    property_id = await _resolve_property(properti)
     room_ids = body.room_ids if body.room_ids else ([body.room_id] if body.room_id else [])
     room_ids = list(dict.fromkeys(room_ids))
     if not room_ids:
@@ -373,8 +385,10 @@ async def public_retry_bayar(bid: str, body: RetryBayarBody = RetryBayarBody(), 
     selesai = parse_iso(b["jam_selesai"], "jam_selesai")
     now = now_iso()
     # Celah check-lalu-tulis dibungkus lock (2026-07-19, audit anti-race-condition) - lihat
-    # catatan di reservation_service.py.
-    property_id = await get_default_property_id()  # STOPGAP, lihat public_rooms_catalog
+    # catatan di reservation_service.py. property_id diambil dari booking-nya sendiri
+    # (Fase 5, 2026-07-25) - lebih akurat daripada stopgap, booking ini sudah pasti tercatat
+    # dengan properti yang benar sejak dibuat, tidak perlu slug dari query lagi di sini.
+    property_id = b.get("property_id") or await get_default_property_id()
     async with room_locks(b["room_id"]):
         await check_room_available(b["room_id"], mulai, selesai, property_id)
         await db.bookings.update_one({"id": bid}, {

@@ -54,6 +54,11 @@ export default function PublicBook({ successView = false }) {
 }
 
 function BookingForm() {
+  // Multi-properti Fase 5 (2026-07-25): slug dari URL /book/<slug> - diteruskan sebagai
+  // param `properti` di SETIAP panggilan /api/public/* supaya backend tahu properti mana
+  // (lihat _resolve_property di routes/public.py). undefined (akses /book tanpa slug,
+  // link lama) = backend fallback ke properti default seperti sebelum Fase 5 ada.
+  const { propertySlug } = useParams();
   const [catalog, setCatalog] = useState([]);
   const [tanggal, setTanggal] = useState(todayStr());
   const [tipe, setTipe] = useState("");           // filter tipe kamar (kosong = semua)
@@ -80,11 +85,11 @@ function BookingForm() {
   const nav = useNavigate();
 
   useEffect(() => {
-    PUBLIC_API.get("/public/rooms-catalog").then(r => setCatalog(r.data)).catch(() => {});
+    PUBLIC_API.get("/public/rooms-catalog", { params: { properti: propertySlug } }).then(r => setCatalog(r.data)).catch(() => {});
     // daftar metode bayar Tripay dimuat sekali di awal (bukan tiap step 2) supaya siap saat
     // tamu sampai ke ringkasan — daftarnya jarang berubah, aman di-fetch lebih awal.
     PUBLIC_API.get("/payments/tripay/channels").then(r => setChannels(r.data)).catch(() => setChannels([]));
-  }, []);
+  }, [propertySlug]);
 
   // Kalau tanggal check-in digeser melewati check-out yang sudah dipilih, geser check-out juga
   useEffect(() => {
@@ -96,12 +101,12 @@ function BookingForm() {
 
   useEffect(() => {
     if (!tanggal) return;
-    const params = { tanggal, tipe: tipe || undefined };
+    const params = { tanggal, tipe: tipe || undefined, properti: propertySlug };
     if (bookingTipe === "menginap") params.checkout = checkoutDate;
     PUBLIC_API.get("/public/availability", { params })
       .then(r => setAvailability(r.data))
       .catch(() => setAvailability({ rooms: [] }));
-  }, [tanggal, tipe, bookingTipe, checkoutDate]);
+  }, [tanggal, tipe, bookingTipe, checkoutDate, propertySlug]);
 
   const nights = useMemo(() => {
     if (bookingTipe !== "menginap") return 1;
@@ -120,12 +125,12 @@ function BookingForm() {
     let batal = false;
     const jamIso = new Date(`${tanggal}T${form.jam_checkin}:00`).toISOString();
     Promise.all(selectedRooms.map((r) =>
-      PUBLIC_API.get("/public/scheduling/rekomendasi-dayuse", { params: { room_id: r.id, jam_mulai: jamIso } })
+      PUBLIC_API.get("/public/scheduling/rekomendasi-dayuse", { params: { room_id: r.id, jam_mulai: jamIso, properti: propertySlug } })
         .then(({ data }) => (data.dipersingkat ? { room_nomor: r.nomor, alasan: data.alasan } : null))
         .catch(() => null)
     )).then((hasil) => { if (!batal) setDayuseHints(hasil.filter(Boolean)); });
     return () => { batal = true; };
-  }, [bookingTipe, tanggal, form.jam_checkin, selectedRooms]);
+  }, [bookingTipe, tanggal, form.jam_checkin, selectedRooms, propertySlug]);
 
   // Ringkasan harga per kamar (extra bed & sarapan berlaku sama untuk tiap kamar yang
   // dipilih), dijumlah untuk grand total kalau tamu pilih >1 kamar sekaligus.
@@ -198,7 +203,7 @@ function BookingForm() {
         extra_bed_qty: extraBedQty,
         tipe: bookingTipe,
         ...(bookingTipe === "menginap" ? { tanggal_checkout: checkoutDate, dengan_sarapan: denganSarapan } : {}),
-      });
+      }, { params: { properti: propertySlug } });
       const primaryBooking = resp.bookings ? resp.bookings[0] : resp;
       localStorage.setItem(LAST_BOOKING_ID_KEY, primaryBooking.id);
       // 2. Buat transaksi Tripay untuk metode yang dipilih, lalu redirect ke halaman
