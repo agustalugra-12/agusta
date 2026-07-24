@@ -185,13 +185,19 @@ async def cari_guest(no_hp: str = "", no_identitas: str = "") -> Optional[Dict[s
     """Resolusi identitas tamu di `db.guests` - dicari lewat no_identitas dulu (lebih pasti
     unik per orang), fallback no_hp. Satu fungsi dipakai upsert_guest (tulis) DAN
     hitung_diskon_member (baca) supaya tidak ada logika pencarian ganda yang bisa
-    menyimpang."""
+    menyimpang.
+
+    Pencarian no_hp pakai `phone_variants` (2026-07-24, bug nyata ditemukan user: tamu yang
+    sama tercatat sebagai 2 data terpisah - AI WhatsApp selalu simpan format 62xxx dari nomor
+    WA asli, sementara booking/checkin dari staf/walk-in kadang tersimpan format 0xxx, jadi
+    exact-match sebelumnya menganggap keduanya orang berbeda - riwayat kunjungan & diskon
+    member pun ikut terpecah/salah hitung, bukan cuma soal tampilan)."""
     if no_identitas:
         guest = await db.guests.find_one({"no_identitas": no_identitas})
         if guest:
             return guest
     if no_hp:
-        return await db.guests.find_one({"no_hp": no_hp})
+        return await db.guests.find_one({"no_hp": {"$in": list(phone_variants(no_hp))}})
     return None
 
 
