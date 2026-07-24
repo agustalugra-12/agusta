@@ -46,6 +46,8 @@ async def verifikasi_ai_bot_key(request: Request) -> str:
     if not key:
         raise HTTPException(404, "Not Found")
     async for cfg in db.ai_bot_integration_config.find({"aktif": True, "api_key": {"$ne": None}}):
+        if not cfg.get("property_id"):
+            continue  # dokumen lama sebelum migrasi backfill sempat jalan - lewati, bukan crash
         if secrets.compare_digest(key, cfg["api_key"]):
             return cfg["property_id"]
     raise HTTPException(401, "API key tidak valid")

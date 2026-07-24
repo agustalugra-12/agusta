@@ -26,6 +26,9 @@ CORE_COLLECTIONS = [
     "jadwal_kerja", "jadwal_shifts", "issues", "expenses", "payroll",
     "booking_requests", "products", "kasir", "rates", "services", "kasbon",
     "rekening", "rekening_transaksi", "rekening_smart_rule",
+    "ai_bot_integration_config",  # 2026-07-25, Fase 4 - dokumen lama TANPA property_id
+    # akan bikin verifikasi_ai_bot_key() KeyError begitu kode baru live - WAJIB dijalankan
+    # SEBELUM/SESEGERA deploy Fase 4 landing, bukan opsional seperti collection lain.
 ]
 
 
