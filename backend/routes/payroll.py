@@ -31,11 +31,12 @@ PAYROLL_STATUS = ["draft", "dibayar"]
 # ---- Staff Profil ----
 
 @api.get("/staff-profil")
-async def list_staff_profil(aktif: Optional[bool] = None, user: dict = Depends(require_owner)):
+async def list_staff_profil(aktif: Optional[bool] = None, user: dict = Depends(require_owner),
+                            property_id: str = Depends(get_active_property)):
     q: Dict[str, Any] = {}
     if aktif is not None:
         q["aktif"] = aktif
-    staff = await db.staff_profil.find(q, {"_id": 0}).sort("nama", 1).to_list(500)
+    staff = await db.staff_profil.find(scoped(q, property_id), {"_id": 0}).sort("nama", 1).to_list(500)
     # Lampirkan total kasbon aktif per staf (informasional, memudahkan owner lihat sekilas
     # tanpa buka tab Kasbon terpisah).
     for s in staff:
@@ -44,7 +45,8 @@ async def list_staff_profil(aktif: Optional[bool] = None, user: dict = Depends(r
 
 
 @api.post("/staff-profil")
-async def create_staff_profil(body: StaffProfilCreate, user: dict = Depends(require_owner)):
+async def create_staff_profil(body: StaffProfilCreate, user: dict = Depends(require_owner),
+                              property_id: str = Depends(get_active_property)):
     now = now_iso()
     doc = {
         "id": str(uuid.uuid4()), "nama": body.nama.strip(), "posisi": body.posisi.strip(),
@@ -52,6 +54,7 @@ async def create_staff_profil(body: StaffProfilCreate, user: dict = Depends(requ
         "gaji_pokok": max(0, int(body.gaji_pokok or 0)), "aktif": body.aktif,
         "catatan": body.catatan.strip(), "created_at": now, "updated_at": now,
         "created_by": user["nama"],
+        "property_id": property_id,
     }
     await db.staff_profil.insert_one(doc)
     await log_activity(user, "create_staff_profil", f"Tambah staf payroll: {doc['nama']}")
@@ -60,8 +63,9 @@ async def create_staff_profil(body: StaffProfilCreate, user: dict = Depends(requ
 
 
 @api.put("/staff-profil/{sid}")
-async def update_staff_profil(sid: str, body: StaffProfilUpdate, user: dict = Depends(require_owner)):
-    s = await db.staff_profil.find_one({"id": sid})
+async def update_staff_profil(sid: str, body: StaffProfilUpdate, user: dict = Depends(require_owner),
+                              property_id: str = Depends(get_active_property)):
+    s = await db.staff_profil.find_one(scoped({"id": sid}, property_id))
     if not s:
         raise HTTPException(404, "Staf tidak ditemukan")
     upd = {k: v for k, v in body.model_dump().items() if v is not None}
@@ -82,8 +86,9 @@ async def update_staff_profil(sid: str, body: StaffProfilUpdate, user: dict = De
 
 
 @api.delete("/staff-profil/{sid}")
-async def delete_staff_profil(sid: str, user: dict = Depends(require_owner)):
-    s = await db.staff_profil.find_one({"id": sid})
+async def delete_staff_profil(sid: str, user: dict = Depends(require_owner),
+                              property_id: str = Depends(get_active_property)):
+    s = await db.staff_profil.find_one(scoped({"id": sid}, property_id))
     if not s:
         raise HTTPException(404, "Staf tidak ditemukan")
     if await db.payroll.count_documents({"staff_id": sid}):
@@ -126,18 +131,20 @@ async def _potong_kasbon_fifo(staff_id: str, jumlah: int) -> int:
 
 
 @api.get("/kasbon")
-async def list_kasbon(staff_id: Optional[str] = None, hanya_aktif: bool = False, user: dict = Depends(require_owner)):
+async def list_kasbon(staff_id: Optional[str] = None, hanya_aktif: bool = False, user: dict = Depends(require_owner),
+                      property_id: str = Depends(get_active_property)):
     q: Dict[str, Any] = {}
     if staff_id:
         q["staff_id"] = staff_id
     if hanya_aktif:
         q["sisa"] = {"$gt": 0}
-    return await db.kasbon.find(q, {"_id": 0}).sort("tanggal", -1).to_list(1000)
+    return await db.kasbon.find(scoped(q, property_id), {"_id": 0}).sort("tanggal", -1).to_list(1000)
 
 
 @api.post("/kasbon")
-async def create_kasbon(body: KasbonCreate, user: dict = Depends(require_owner)):
-    s = await db.staff_profil.find_one({"id": body.staff_id})
+async def create_kasbon(body: KasbonCreate, user: dict = Depends(require_owner),
+                        property_id: str = Depends(get_active_property)):
+    s = await db.staff_profil.find_one(scoped({"id": body.staff_id}, property_id))
     if not s:
         raise HTTPException(404, "Staf tidak ditemukan")
     if body.nominal <= 0:
@@ -148,6 +155,7 @@ async def create_kasbon(body: KasbonCreate, user: dict = Depends(require_owner))
         "nominal": int(body.nominal), "sisa": int(body.nominal), "lunas": False,
         "tanggal": body.tanggal, "alasan": body.alasan.strip(),
         "created_at": now, "updated_at": now, "created_by": user["nama"],
+        "property_id": property_id,
     }
     await db.kasbon.insert_one(doc)
     await log_activity(user, "create_kasbon", f"Catat kasbon {s['nama']}: Rp{body.nominal:,}".replace(",", "."))
@@ -156,8 +164,9 @@ async def create_kasbon(body: KasbonCreate, user: dict = Depends(require_owner))
 
 
 @api.put("/kasbon/{kid}")
-async def update_kasbon(kid: str, body: KasbonUpdate, user: dict = Depends(require_owner)):
-    k = await db.kasbon.find_one({"id": kid})
+async def update_kasbon(kid: str, body: KasbonUpdate, user: dict = Depends(require_owner),
+                        property_id: str = Depends(get_active_property)):
+    k = await db.kasbon.find_one(scoped({"id": kid}, property_id))
     if not k:
         raise HTTPException(404, "Kasbon tidak ditemukan")
     upd = {kk: v for kk, v in body.model_dump().items() if v is not None}
@@ -173,8 +182,9 @@ async def update_kasbon(kid: str, body: KasbonUpdate, user: dict = Depends(requi
 
 
 @api.delete("/kasbon/{kid}")
-async def delete_kasbon(kid: str, user: dict = Depends(require_owner)):
-    k = await db.kasbon.find_one({"id": kid})
+async def delete_kasbon(kid: str, user: dict = Depends(require_owner),
+                        property_id: str = Depends(get_active_property)):
+    k = await db.kasbon.find_one(scoped({"id": kid}, property_id))
     if not k:
         raise HTTPException(404, "Kasbon tidak ditemukan")
     await db.kasbon.delete_one({"id": kid})
@@ -192,21 +202,23 @@ def _hitung_total(p: Dict[str, Any]) -> int:
 
 
 @api.get("/payroll")
-async def list_payroll(periode: Optional[str] = None, staff_id: Optional[str] = None, user: dict = Depends(require_owner)):
+async def list_payroll(periode: Optional[str] = None, staff_id: Optional[str] = None, user: dict = Depends(require_owner),
+                       property_id: str = Depends(get_active_property)):
     q: Dict[str, Any] = {}
     if periode:
         q["periode"] = periode
     if staff_id:
         q["staff_id"] = staff_id
-    return await db.payroll.find(q, {"_id": 0}).sort([("periode", -1), ("staff_nama", 1)]).to_list(1000)
+    return await db.payroll.find(scoped(q, property_id), {"_id": 0}).sort([("periode", -1), ("staff_nama", 1)]).to_list(1000)
 
 
 @api.post("/payroll")
-async def create_payroll(body: PayrollCreate, user: dict = Depends(require_owner)):
-    s = await db.staff_profil.find_one({"id": body.staff_id})
+async def create_payroll(body: PayrollCreate, user: dict = Depends(require_owner),
+                         property_id: str = Depends(get_active_property)):
+    s = await db.staff_profil.find_one(scoped({"id": body.staff_id}, property_id))
     if not s:
         raise HTTPException(404, "Staf tidak ditemukan")
-    if await db.payroll.find_one({"staff_id": body.staff_id, "periode": body.periode}):
+    if await db.payroll.find_one(scoped({"staff_id": body.staff_id, "periode": body.periode}, property_id)):
         raise HTTPException(400, f"Payroll {s['nama']} untuk periode {body.periode} sudah ada - edit yang sudah ada, jangan buat duplikat")
 
     gaji_pokok = body.gaji_pokok if body.gaji_pokok is not None else int(s.get("gaji_pokok") or 0)
@@ -226,6 +238,7 @@ async def create_payroll(body: PayrollCreate, user: dict = Depends(require_owner
         "potongan_lain": int(body.potongan_lain), "catatan": body.catatan.strip(),
         "created_at": now, "updated_at": now, "created_by": user["nama"],
         "dibayar_at": None, "dibayar_by": None,
+        "property_id": property_id,
     }
     doc["total_diterima"] = _hitung_total(doc)
     await db.payroll.insert_one(doc)
@@ -235,8 +248,9 @@ async def create_payroll(body: PayrollCreate, user: dict = Depends(require_owner
 
 
 @api.put("/payroll/{pid}")
-async def update_payroll(pid: str, body: PayrollUpdate, user: dict = Depends(require_owner)):
-    p = await db.payroll.find_one({"id": pid})
+async def update_payroll(pid: str, body: PayrollUpdate, user: dict = Depends(require_owner),
+                         property_id: str = Depends(get_active_property)):
+    p = await db.payroll.find_one(scoped({"id": pid}, property_id))
     if not p:
         raise HTTPException(404, "Payroll tidak ditemukan")
     if p["status"] == "dibayar":
@@ -271,7 +285,8 @@ def _tanggal_expense_payroll(periode: str) -> str:
 
 
 @api.post("/payroll/{pid}/tandai-dibayar")
-async def bayar_payroll(pid: str, user: dict = Depends(require_owner)):
+async def bayar_payroll(pid: str, user: dict = Depends(require_owner),
+                        property_id: str = Depends(get_active_property)):
     """Finalisasi: potongan_kasbon di dokumen ini BENAR-BENAR dipotong dari saldo kasbon
     aktif staf (FIFO) di titik ini - draft sebelumnya tidak pernah menyentuh saldo kasbon,
     supaya aman diedit/dihapus tanpa efek samping sebelum benar-benar dibayar.
@@ -282,7 +297,7 @@ async def bayar_payroll(pid: str, user: dict = Depends(require_owner)):
     `_tanggal_expense_payroll`) - gaji periode Juli yang baru difinalisasi 8 Agustus
     tetap masuk laporan Juli, konsisten dengan cara laporan OTA prepaid membaca
     `paid_at` bukan tanggal konfirmasi, tanpa pernah menaruh tanggal masa depan."""
-    p = await db.payroll.find_one({"id": pid})
+    p = await db.payroll.find_one(scoped({"id": pid}, property_id))
     if not p:
         raise HTTPException(404, "Payroll tidak ditemukan")
     if p["status"] == "dibayar":
@@ -307,6 +322,7 @@ async def bayar_payroll(pid: str, user: dict = Depends(require_owner)):
         "created_at": now,
         "source": "payroll",
         "payroll_id": pid,
+        "property_id": property_id,
     })
     await log_activity(
         user, "bayar_payroll",
@@ -319,8 +335,9 @@ async def bayar_payroll(pid: str, user: dict = Depends(require_owner)):
 
 
 @api.delete("/payroll/{pid}")
-async def delete_payroll(pid: str, user: dict = Depends(require_owner)):
-    p = await db.payroll.find_one({"id": pid})
+async def delete_payroll(pid: str, user: dict = Depends(require_owner),
+                         property_id: str = Depends(get_active_property)):
+    p = await db.payroll.find_one(scoped({"id": pid}, property_id))
     if not p:
         raise HTTPException(404, "Payroll tidak ditemukan")
     if p["status"] == "dibayar":
@@ -402,14 +419,15 @@ def generate_slip_gaji_pdf(p: Dict[str, Any], staff: Dict[str, Any]) -> bytes:
 
 
 @api.post("/payroll/{pid}/kirim-wa")
-async def kirim_slip_gaji_wa(pid: str, user: dict = Depends(require_owner)):
+async def kirim_slip_gaji_wa(pid: str, user: dict = Depends(require_owner),
+                             property_id: str = Depends(get_active_property)):
     """Generate slip gaji PDF & kirim langsung ke WhatsApp staf yang bersangkutan (butuh
     no_hp terisi di staff_profil, dan koneksi WhatsApp/webhook aktif - sama seperti jalur
     _kirim_via_provider yang sudah dipakai notifikasi booking/pembatalan)."""
-    p = await db.payroll.find_one({"id": pid}, {"_id": 0})
+    p = await db.payroll.find_one(scoped({"id": pid}, property_id), {"_id": 0})
     if not p:
         raise HTTPException(404, "Payroll tidak ditemukan")
-    s = await db.staff_profil.find_one({"id": p["staff_id"]}, {"_id": 0})
+    s = await db.staff_profil.find_one(scoped({"id": p["staff_id"]}, property_id), {"_id": 0})
     if not s:
         raise HTTPException(404, "Data staf tidak ditemukan")
     if not s.get("no_hp"):

@@ -329,13 +329,14 @@ async def _catat_pengeluaran_items(user_doc: dict, items: list, foto_url: str = 
     """Satu-satunya jalur insert ke db.expenses dari bot Telegram (owner & staff) — sengaja
     TIDAK PERNAH menyentuh db.bookings/kasir/payment_log, jadi struktural tidak mungkin
     'pemasukan' tercatat lewat sini apa pun yang diminta/dikirim user."""
+    property_id = await get_default_property_id()  # STOPGAP (2026-07-24) - Telegram bot belum tahu properti mana (bot tunggal, belum per-properti)
     baris, total = [], 0
     for it in items:
         doc = {
             "id": str(uuid.uuid4()), "tanggal": now_iso(), "kategori": "Operasional",
             "deskripsi": it["deskripsi"], "nominal": it["nominal"], "foto_url": foto_url or "",
             "user": user_doc["nama"], "user_id": user_doc["id"], "created_at": now_iso(),
-            "source": "telegram",
+            "source": "telegram", "property_id": property_id,
         }
         await db.expenses.insert_one(doc)
         await log_activity(user_doc, "expense", f"Pengeluaran (Telegram) Operasional Rp{it['nominal']:,}".replace(",", "."))

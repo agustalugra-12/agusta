@@ -13,7 +13,7 @@ ISSUE_TIPE_LABEL = {"complaint": "Komplain", "maintenance": "Maintenance", "serv
 ISSUE_STATUS = {"open", "in_progress", "resolved"}
 ISSUE_PRIORITAS = {"rendah", "normal", "tinggi"}
 
-async def buat_issue(tipe: str, deskripsi: str, user: dict, room_id: Optional[str] = None,
+async def buat_issue(tipe: str, deskripsi: str, user: dict, property_id: str, room_id: Optional[str] = None,
                      room_nomor: str = "", nama_tamu: str = "", prioritas: str = "normal",
                      teknisi: str = "", estimasi_selesai: Optional[str] = None) -> Dict[str, Any]:
     """Logika insert bersama — dipakai endpoint POST /issues (staf manual) DAN klasifikasi
@@ -27,7 +27,7 @@ async def buat_issue(tipe: str, deskripsi: str, user: dict, room_id: Optional[st
     if prioritas not in ISSUE_PRIORITAS:
         raise HTTPException(400, f"Prioritas harus salah satu dari: {', '.join(sorted(ISSUE_PRIORITAS))}")
     if room_id:
-        r = await db.rooms.find_one({"id": room_id})
+        r = await db.rooms.find_one(scoped({"id": room_id}, property_id))
         if not r:
             raise HTTPException(404, "Kamar tidak ditemukan")
         room_nomor = r["nomor"]
@@ -48,6 +48,7 @@ async def buat_issue(tipe: str, deskripsi: str, user: dict, room_id: Optional[st
         "created_at": now_iso(),
         "resolved_by": None,
         "resolved_at": None,
+        "property_id": property_id,
     }
     await db.issues.insert_one(doc)
     label = ISSUE_TIPE_LABEL[tipe]
@@ -59,27 +60,30 @@ async def buat_issue(tipe: str, deskripsi: str, user: dict, room_id: Optional[st
 
 
 @api.post("/issues")
-async def create_issue(body: IssueCreate, user: dict = Depends(get_current_user)):
+async def create_issue(body: IssueCreate, user: dict = Depends(get_current_user),
+                       property_id: str = Depends(get_active_property)):
     return await buat_issue(
-        body.tipe, body.deskripsi, user, room_id=body.room_id, room_nomor=body.room_nomor or "",
+        body.tipe, body.deskripsi, user, property_id, room_id=body.room_id, room_nomor=body.room_nomor or "",
         nama_tamu=body.nama_tamu or "", prioritas=body.prioritas or "normal",
         teknisi=body.teknisi or "", estimasi_selesai=body.estimasi_selesai,
     )
 
 @api.get("/issues")
 async def list_issues(tipe: Optional[str] = None, status: Optional[str] = None,
-                      user: dict = Depends(get_current_user)):
+                      user: dict = Depends(get_current_user),
+                      property_id: str = Depends(get_active_property)):
     q: Dict[str, Any] = {}
     if tipe: q["tipe"] = tipe
     if status: q["status"] = status
-    items = await db.issues.find(q, {"_id": 0}).sort("created_at", -1).to_list(1000)
+    items = await db.issues.find(scoped(q, property_id), {"_id": 0}).sort("created_at", -1).to_list(1000)
     return items
 
 @api.put("/issues/{issue_id}/status")
-async def update_issue_status(issue_id: str, body: IssueStatusUpdate, user: dict = Depends(get_current_user)):
+async def update_issue_status(issue_id: str, body: IssueStatusUpdate, user: dict = Depends(get_current_user),
+                              property_id: str = Depends(get_active_property)):
     if body.status not in ISSUE_STATUS:
         raise HTTPException(400, f"Status harus salah satu dari: {', '.join(sorted(ISSUE_STATUS))}")
-    it = await db.issues.find_one({"id": issue_id})
+    it = await db.issues.find_one(scoped({"id": issue_id}, property_id))
     if not it:
         raise HTTPException(404, "Data tidak ditemukan")
     updates: Dict[str, Any] = {"status": body.status, "catatan_penyelesaian": body.catatan_penyelesaian or it.get("catatan_penyelesaian", "")}
@@ -102,8 +106,9 @@ async def update_issue_status(issue_id: str, body: IssueStatusUpdate, user: dict
     return {"ok": True}
 
 @api.delete("/issues/{issue_id}")
-async def delete_issue(issue_id: str, user: dict = Depends(require_owner)):
-    it = await db.issues.find_one({"id": issue_id})
+async def delete_issue(issue_id: str, user: dict = Depends(require_owner),
+                       property_id: str = Depends(get_active_property)):
+    it = await db.issues.find_one(scoped({"id": issue_id}, property_id))
     if not it:
         raise HTTPException(404, "Data tidak ditemukan")
     await db.issues.delete_one({"id": issue_id})

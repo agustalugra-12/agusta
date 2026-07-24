@@ -149,7 +149,7 @@ async def ai_bot_buat_tiket(body: AiBotTiketIn, _: None = Depends(verifikasi_ai_
     if not room_id and body.room_nomor:
         room_nomor = body.room_nomor.strip()  # tidak match db.rooms persis, tetap tampilkan apa adanya
     tiket = await buat_issue(
-        body.tipe, body.deskripsi, {"id": "ai-chat-bot", "nama": "AI Chat Bot", "role": "owner"},
+        body.tipe, body.deskripsi, {"id": "ai-chat-bot", "nama": "AI Chat Bot", "role": "owner"}, property_id,
         room_id=room_id, room_nomor=room_nomor, nama_tamu=body.nama_tamu,
     )
     return {"ok": True, "tiket": tiket}
