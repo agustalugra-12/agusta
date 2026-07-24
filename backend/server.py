@@ -182,8 +182,19 @@ app.include_router(api)
 app.add_middleware(
     CORSMiddleware,
     allow_credentials=True,
-    allow_origins=["*"],
-    allow_origin_regex=".*",
+    # 2026-07-24, diperbaiki saat audit kesiapan produksi - sebelumnya wildcard ("*" +
+    # allow_origin_regex=".*") dikombinasikan dengan allow_credentials=True & cookie sesi,
+    # kombinasi yang tidak dianjurkan (browser modern otomatis meng-echo origin asli begitu
+    # credentials=True dipakai bareng wildcard, jadi efeknya SEMUA origin diizinkan bawa
+    # cookie). Risikonya sudah agak diredam oleh cookie httponly+samesite=lax yang sudah
+    # ada, tapi tetap dibatasi ke domain yang benar-benar melayani frontend PMS -
+    # book.pelangihomestay.com cuma redirect 301 (tidak pernah jadi origin browser
+    # sungguhan), bot./web pelangi tidak pernah panggil API ini langsung dari browser
+    # (selalu server-to-server), jadi TIDAK perlu masuk daftar ini.
+    allow_origins=[
+        "https://pms.pelangihomestay.com",
+        "https://pmspelangi.my.id",
+    ],
     allow_methods=["*"],
     allow_headers=["*"],
 )
