@@ -12,6 +12,12 @@ const api = axios.create({
 api.interceptors.request.use((config) => {
   const token = localStorage.getItem("ph_token");
   if (token) config.headers.Authorization = `Bearer ${token}`;
+  // Multi-properti (Fase 3) - properti aktif yang dipilih owner lewat switcher (lihat
+  // AuthContext.js). Kalau kosong (belum pernah pilih, atau akun resepsionis), header
+  // sengaja tidak dikirim sama sekali - backend default ke properti pertama dalam kasus
+  // itu (get_active_property, core.py), sama seperti perilaku sebelum multi-properti ada.
+  const propertyId = localStorage.getItem("ph_active_property_id");
+  if (propertyId) config.headers["X-Property-Id"] = propertyId;
   return config;
 });
 

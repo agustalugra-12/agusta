@@ -2,9 +2,10 @@ import { Link, NavLink, Outlet, useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import { useAuth } from "@/context/AuthContext";
 import { Button } from "@/components/ui/button";
+import { Label } from "@/components/ui/label";
 import {
   LayoutDashboard, BedDouble, ShoppingCart, Boxes,
-  Wallet, Sparkles, BarChart3, UserCog, ShieldCheck, LogOut, Menu, HandCoins, DoorOpen, ListChecks, Mail, RefreshCw, CreditCard, MessageSquare, Shuffle, Send, Wand2, Tag, AlertTriangle, Wrench, Inbox, CalendarClock, Gavel, Bell, Ban, BadgeDollarSign, Landmark,
+  Wallet, Sparkles, BarChart3, UserCog, ShieldCheck, LogOut, Menu, HandCoins, DoorOpen, ListChecks, Mail, RefreshCw, CreditCard, MessageSquare, Shuffle, Send, Wand2, Tag, AlertTriangle, Wrench, Inbox, CalendarClock, Gavel, Bell, Ban, BadgeDollarSign, Landmark, Building2,
 } from "lucide-react";
 import { useState, useEffect } from "react";
 import { playAlertSound, unlockAlertSound } from "@/lib/alertSound";
@@ -50,6 +51,7 @@ const navSections = [
   { label: "Admin", items: [
     { to: "/business-rules", label: "Business Rules", icon: Gavel, ownerOnly: true },
     { to: "/pengguna", label: "Pengguna", icon: UserCog, ownerOnly: true },
+    { to: "/properti", label: "Properti", icon: Building2, ownerOnly: true },
     { to: "/audit", label: "Audit Log", icon: ShieldCheck, ownerOnly: true },
   ]},
 ];
@@ -59,6 +61,32 @@ const navItems = navSections.flatMap((s) => s.items);
 // urutan array, bukan pilihan sadar, sampai-sampai Booking Request yang paling sensitif
 // waktu tidak masuk quick-bar) - dipilih eksplisit berdasar alur kerja harian staf.
 const mobileNavPaths = ["/", "/booking-requests", "/kasir", "/ketersediaan", "/housekeeping"];
+
+function PropertySwitcher({ className = "" }) {
+  const { user, properties, activePropertyId, setActivePropertyId } = useAuth();
+  // Cuma tampil untuk owner dengan >1 properti - resepsionis terkunci ke propertinya
+  // sendiri (tidak ada yang bisa dipilih), dan owner dengan 1 properti tidak perlu
+  // switcher (belum ada gunanya, cuma menambah elemen di layar).
+  if (user?.role !== "owner" || properties.length < 2) return null;
+  return (
+    <div className={className}>
+      <Label className="text-[10px] font-bold tracking-[0.12em] uppercase text-slate-400 mb-1 block">Properti Aktif</Label>
+      <div className="relative">
+        <Building2 className="w-4 h-4 absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
+        <select
+          data-testid="property-switcher"
+          value={activePropertyId || ""}
+          onChange={(e) => setActivePropertyId(e.target.value)}
+          className="w-full h-9 rounded-lg border border-slate-200 pl-8 pr-2 text-sm font-medium bg-white"
+        >
+          {properties.map((p) => (
+            <option key={p.id} value={p.id}>{p.nama}</option>
+          ))}
+        </select>
+      </div>
+    </div>
+  );
+}
 
 export default function Layout() {
   const { user, logout } = useAuth();
@@ -116,6 +144,7 @@ export default function Layout() {
             <h2 className="text-base font-bold leading-tight font-display">Homestay</h2>
           </div>
         </div>
+        <PropertySwitcher className="px-4 pt-4" />
         <nav className="flex-1 px-3 py-4 space-y-4 overflow-y-auto">
           {sections.map((s) => (
             <div key={s.label}>
@@ -184,6 +213,7 @@ export default function Layout() {
               <div className="text-sm font-semibold">{user?.nama}</div>
               <div className="text-xs text-slate-500 capitalize">{user?.role}</div>
             </Link>
+            <PropertySwitcher className="px-4 pt-3" />
             <nav className="flex-1 px-3 py-3 space-y-4 overflow-y-auto">
               {sections.map((s) => (
                 <div key={s.label}>
