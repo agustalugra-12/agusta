@@ -279,7 +279,7 @@ async def upsert_guest(nama: str, no_hp: str = "", no_identitas: str = "", kenda
         }}
         if count_kunjungan:
             update["$inc"] = {"total_kunjungan": 1}
-            update["$push"] = {"riwayat_kunjungan": {"tanggal": now_iso(), "room_nomor": room_nomor}}
+            update["$push"] = {"riwayat_kunjungan": {"id": str(uuid.uuid4()), "tanggal": now_iso(), "room_nomor": room_nomor, "source": "checkin"}}
         await db.guests.update_one({"id": guest["id"]}, update)
         return guest["id"]
     guest_id = str(uuid.uuid4())
@@ -291,7 +291,7 @@ async def upsert_guest(nama: str, no_hp: str = "", no_identitas: str = "", kenda
         "no_identitas": no_identitas,
         "kendaraan": kendaraan,
         "total_kunjungan": 1 if count_kunjungan else 0,
-        "riwayat_kunjungan": [{"tanggal": now_iso(), "room_nomor": room_nomor}] if count_kunjungan else [],
+        "riwayat_kunjungan": [{"id": str(uuid.uuid4()), "tanggal": now_iso(), "room_nomor": room_nomor, "source": "checkin"}] if count_kunjungan else [],
         "last_visit": now_iso(),
         "created_at": now_iso(),
     })
@@ -511,6 +511,13 @@ class GuestUpdate(BaseModel):
     no_hp: Optional[str] = None
     no_identitas: Optional[str] = None
     kendaraan: Optional[str] = None
+
+class KunjunganManualIn(BaseModel):
+    """2026-07-24, permintaan user - migrasi riwayat kartu member kertas lama supaya tamu
+    lama tidak dirugikan (kehilangan riwayat kedatangan) saat pindah ke sistem digital."""
+    tanggal: str  # YYYY-MM-DD, tanggal kedatangan yang dicatat manual (boleh tanggal lampau)
+    room_nomor: str = ""
+    catatan: str = ""
 
 class CheckinCreate(BaseModel):
     nama_tamu: str

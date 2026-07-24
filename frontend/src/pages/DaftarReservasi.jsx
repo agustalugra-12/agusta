@@ -8,7 +8,7 @@ import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Search, X, Ban, CreditCard, MessageCircle, Phone, History, Sparkles, Plus, PencilLine } from "lucide-react";
+import { Search, X, Ban, CreditCard, MessageCircle, Phone, History, Sparkles, Plus, PencilLine, Trash2 } from "lucide-react";
 
 const toLocalInput = (iso) => { const d = new Date(iso); d.setMinutes(d.getMinutes() - d.getTimezoneOffset()); return d.toISOString().slice(0, 16); };
 
@@ -303,6 +303,8 @@ function ReservasiTab() {
 
 const emptyGuestForm = { nama: "", no_hp: "", no_identitas: "", kendaraan: "" };
 
+const emptyKunjunganManual = { tanggal: new Date().toISOString().slice(0, 10), room_nomor: "", catatan: "" };
+
 function TamuTab() {
   const [q, setQ] = useState("");
   const [guests, setGuests] = useState([]);
@@ -311,6 +313,9 @@ function TamuTab() {
   const [editingGuest, setEditingGuest] = useState(null);
   const [guestForm, setGuestForm] = useState(emptyGuestForm);
   const [saving, setSaving] = useState(false);
+  const [kunjunganManualOpen, setKunjunganManualOpen] = useState(false);
+  const [kunjunganManualForm, setKunjunganManualForm] = useState(emptyKunjunganManual);
+  const [savingKunjungan, setSavingKunjungan] = useState(false);
 
   const load = async () => {
     const { data } = await api.get("/guests", { params: q ? { q } : {} });
@@ -322,6 +327,32 @@ function TamuTab() {
   const showHistory = async (g) => {
     const { data } = await api.get(`/guests/${g.id}/history`);
     setHistory({ guest: g, items: data });
+    setKunjunganManualOpen(false);
+    setKunjunganManualForm(emptyKunjunganManual);
+  };
+
+  const tambahKunjunganManual = async () => {
+    if (!kunjunganManualForm.tanggal) { toast.error("Tanggal wajib diisi"); return; }
+    setSavingKunjungan(true);
+    try {
+      const { data: updatedGuest } = await api.post(`/guests/${history.guest.id}/kunjungan-manual`, kunjunganManualForm);
+      setHistory((h) => ({ ...h, guest: updatedGuest }));
+      setKunjunganManualOpen(false);
+      setKunjunganManualForm(emptyKunjunganManual);
+      toast.success("Kunjungan manual ditambahkan");
+      load();
+    } catch (e) { toast.error(e?.response?.data?.detail || "Gagal menambahkan"); }
+    finally { setSavingKunjungan(false); }
+  };
+
+  const hapusKunjunganManual = async (entryId) => {
+    if (!window.confirm("Hapus catatan kunjungan manual ini?")) return;
+    try {
+      const { data: updatedGuest } = await api.delete(`/guests/${history.guest.id}/kunjungan-manual/${entryId}`);
+      setHistory((h) => ({ ...h, guest: updatedGuest }));
+      toast.success("Dihapus");
+      load();
+    } catch (e) { toast.error(e?.response?.data?.detail || "Gagal menghapus"); }
   };
 
   const openAddGuest = () => { setEditingGuest(null); setGuestForm(emptyGuestForm); setFormOpen(true); };
@@ -403,14 +434,55 @@ function TamuTab() {
           <DialogHeader><DialogTitle>Riwayat {history?.guest?.nama}</DialogTitle></DialogHeader>
           <div className="max-h-[28rem] overflow-y-auto space-y-4">
             <div>
-              <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">
-                Riwayat Kedatangan ({history?.guest?.total_kunjungan || 0}×)
-              </p>
+              <div className="flex items-center justify-between mb-2">
+                <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">
+                  Riwayat Kedatangan ({history?.guest?.total_kunjungan || 0}×)
+                </p>
+                <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => setKunjunganManualOpen((v) => !v)} data-testid="kunjungan-manual-toggle">
+                  <Plus className="w-3 h-3 mr-1" /> Kunjungan Manual
+                </Button>
+              </div>
+
+              {kunjunganManualOpen && (
+                <div className="border border-slate-200 rounded-lg p-3 mb-3 bg-slate-50 space-y-2" data-testid="kunjungan-manual-form">
+                  <p className="text-xs text-slate-500">Untuk migrasi riwayat dari kartu member kertas lama, atau koreksi data.</p>
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <Label className="text-xs">Tanggal Kedatangan</Label>
+                      <Input type="date" className="h-9 mt-1 text-sm" value={kunjunganManualForm.tanggal}
+                        onChange={(e) => setKunjunganManualForm((f) => ({ ...f, tanggal: e.target.value }))} data-testid="kunjungan-manual-tanggal" />
+                    </div>
+                    <div>
+                      <Label className="text-xs">Kamar (opsional)</Label>
+                      <Input className="h-9 mt-1 text-sm" placeholder="mis. 5" value={kunjunganManualForm.room_nomor}
+                        onChange={(e) => setKunjunganManualForm((f) => ({ ...f, room_nomor: e.target.value }))} data-testid="kunjungan-manual-kamar" />
+                    </div>
+                  </div>
+                  <div>
+                    <Label className="text-xs">Catatan (opsional)</Label>
+                    <Input className="h-9 mt-1 text-sm" placeholder="mis. dari kartu member kertas" value={kunjunganManualForm.catatan}
+                      onChange={(e) => setKunjunganManualForm((f) => ({ ...f, catatan: e.target.value }))} data-testid="kunjungan-manual-catatan" />
+                  </div>
+                  <Button size="sm" className="w-full bg-blue-700 hover:bg-blue-800" disabled={savingKunjungan} onClick={tambahKunjunganManual} data-testid="kunjungan-manual-simpan">
+                    {savingKunjungan ? "Menyimpan…" : "Simpan Kunjungan"}
+                  </Button>
+                </div>
+              )}
+
               <div className="space-y-1.5">
                 {[...(history?.guest?.riwayat_kunjungan || [])].reverse().map((k, i) => (
-                  <div key={i} className="flex items-center justify-between text-sm border border-slate-200 rounded-lg px-3 py-2" data-testid={`riwayat-kunjungan-${i}`}>
-                    <span>{fmtDateTime(k.tanggal)}</span>
-                    {k.room_nomor && <span className="text-slate-500">Kamar {k.room_nomor}</span>}
+                  <div key={k.id || i} className="flex items-center justify-between text-sm border border-slate-200 rounded-lg px-3 py-2" data-testid={`riwayat-kunjungan-${i}`}>
+                    <div className="flex items-center gap-2">
+                      <span>{fmtDateTime(k.tanggal)}</span>
+                      {k.room_nomor && <span className="text-slate-500">Kamar {k.room_nomor}</span>}
+                      {k.source === "manual" && <span className="text-[10px] font-semibold uppercase px-1.5 py-0.5 rounded bg-amber-100 text-amber-700">Manual</span>}
+                      {k.catatan && <span className="text-slate-400 text-xs">· {k.catatan}</span>}
+                    </div>
+                    {k.source === "manual" && k.id && (
+                      <button onClick={() => hapusKunjunganManual(k.id)} className="text-red-500 hover:text-red-700 shrink-0" data-testid={`kunjungan-manual-hapus-${i}`}>
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    )}
                   </div>
                 ))}
                 {(history?.guest?.riwayat_kunjungan || []).length === 0 && (

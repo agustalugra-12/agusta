@@ -243,3 +243,66 @@ async def guest_history(guest_id: str, user: dict = Depends(get_current_user)):
     items = await db.checkins.find({"guest_id": guest_id}, {"_id": 0}).sort("jam_checkin", -1).to_list(500)
     return items
 
+
+def _recompute_last_visit(riwayat: list) -> Optional[str]:
+    tanggal_list = [k["tanggal"] for k in riwayat if k.get("tanggal")]
+    return max(tanggal_list) if tanggal_list else None
+
+
+@api.post("/guests/{guest_id}/kunjungan-manual")
+async def tambah_kunjungan_manual(guest_id: str, body: KunjunganManualIn, user: dict = Depends(require_owner)):
+    """Migrasi riwayat kartu member kertas lama (2026-07-24, permintaan user - supaya tamu
+    lama yang sudah punya riwayat di kartu kertas tidak dirugikan/dianggap "kedatangan ke-1"
+    lagi begitu pindah ke sistem digital). Owner-only (data ini memengaruhi diskon member
+    sungguhan, sama sensitifnya dengan Payroll). Entri ditandai `source: "manual"` supaya
+    beda dari riwayat check-in sungguhan (`source: "checkin"`) - cuma entri manual yang
+    boleh dihapus lagi kalau salah input."""
+    g = await db.guests.find_one({"id": guest_id})
+    if not g:
+        raise HTTPException(404, "Data tamu tidak ditemukan")
+    try:
+        datetime.fromisoformat(body.tanggal)
+    except Exception:
+        raise HTTPException(400, "Format tanggal harus YYYY-MM-DD")
+    entry = {
+        "id": str(uuid.uuid4()), "tanggal": body.tanggal, "room_nomor": body.room_nomor,
+        "catatan": body.catatan, "source": "manual",
+        "dicatat_oleh": user["nama"], "dicatat_at": now_iso(),
+    }
+    riwayat = list(g.get("riwayat_kunjungan") or [])
+    riwayat.append(entry)
+    await db.guests.update_one({"id": guest_id}, {
+        "$push": {"riwayat_kunjungan": entry},
+        "$inc": {"total_kunjungan": 1},
+        "$set": {"last_visit": _recompute_last_visit(riwayat)},
+    })
+    await log_activity(user, "kunjungan_manual", f"Tambah kunjungan manual {g['nama']} - {body.tanggal} (migrasi kartu member lama)")
+    fresh = await db.guests.find_one({"id": guest_id}, {"_id": 0})
+    fresh.update(diskon_member_untuk_total_kunjungan(fresh.get("total_kunjungan", 0)))
+    return fresh
+
+
+@api.delete("/guests/{guest_id}/kunjungan-manual/{entry_id}")
+async def hapus_kunjungan_manual(guest_id: str, entry_id: str, user: dict = Depends(require_owner)):
+    """Cuma entri `source: "manual"` yang bisa dihapus - riwayat dari check-in sungguhan
+    tidak boleh dihapus lewat sini (kalau memang salah, itu masalah data check-in aslinya,
+    bukan sekadar hapus jejak kunjungan)."""
+    g = await db.guests.find_one({"id": guest_id})
+    if not g:
+        raise HTTPException(404, "Data tamu tidak ditemukan")
+    riwayat = list(g.get("riwayat_kunjungan") or [])
+    target = next((k for k in riwayat if k.get("id") == entry_id), None)
+    if not target:
+        raise HTTPException(404, "Entri kunjungan tidak ditemukan")
+    if target.get("source") != "manual":
+        raise HTTPException(400, "Cuma entri kunjungan manual yang bisa dihapus")
+    riwayat = [k for k in riwayat if k.get("id") != entry_id]
+    await db.guests.update_one({"id": guest_id}, {
+        "$set": {"riwayat_kunjungan": riwayat, "last_visit": _recompute_last_visit(riwayat)},
+        "$inc": {"total_kunjungan": -1},
+    })
+    await log_activity(user, "hapus_kunjungan_manual", f"Hapus kunjungan manual {g['nama']} - {target['tanggal']}")
+    fresh = await db.guests.find_one({"id": guest_id}, {"_id": 0})
+    fresh.update(diskon_member_untuk_total_kunjungan(fresh.get("total_kunjungan", 0)))
+    return fresh
+
