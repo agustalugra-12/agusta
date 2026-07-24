@@ -70,7 +70,8 @@ async def public_rooms_catalog():
     return list(grouped.values())
 
 @api.get("/public/availability")
-async def public_availability(tanggal: str, tipe: Optional[str] = None, checkout: Optional[str] = None):
+async def public_availability(tanggal: str, tipe: Optional[str] = None, checkout: Optional[str] = None,
+                              property_id_override: Optional[str] = None):
     """List kamar tersedia pada tanggal tertentu (halaman publik).
     Untuk tanggal MASA DEPAN, status realtime kamar (day_use/menginap/perlu_dibersihkan) TIDAK relevan
     karena akan kembali kosong sebelum tanggal tersebut. Hanya `maintenance` (long-term) yang di-exclude.
@@ -80,7 +81,12 @@ async def public_availability(tanggal: str, tipe: Optional[str] = None, checkout
     window overlap yang dicek adalah seluruh rentang [tanggal, checkout), bukan cuma
     1 hari — supaya kamar yang sudah dibooking di salah satu malam dalam rentang itu
     tidak muncul sebagai tersedia.
-    """
+
+    `property_id_override` (2026-07-25, Fase 4) - dipakai pemanggil INTERNAL yang sudah
+    tahu properti yang benar dari konteksnya sendiri (mis. ai_bot_ketersediaan yang
+    resolve properti dari API key ai-chat-bot) supaya tidak ikut default ke
+    get_default_property_id() stopgap. Endpoint publik /book sendiri (lewat HTTP,
+    parameter ini tidak diisi) masih pakai stopgap sampai Fase 5 (slug per properti)."""
     try:
         d = datetime.fromisoformat(tanggal)
     except Exception:
@@ -97,7 +103,7 @@ async def public_availability(tanggal: str, tipe: Optional[str] = None, checkout
         d_end = d_start + timedelta(days=1)
     # Untuk hari INI, kamar yang sedang dipakai (day_use/menginap/perlu_dibersihkan) tidak tersedia.
     # Untuk hari LAIN (masa depan), hanya 'maintenance' yang dikecualikan.
-    property_id = await get_default_property_id()  # STOPGAP, lihat public_rooms_catalog
+    property_id = property_id_override or await get_default_property_id()  # STOPGAP kalau tidak di-override, lihat public_rooms_catalog
     today_local = datetime.now().strftime("%Y-%m-%d")
     is_today = tanggal == today_local
     q: Dict[str, Any] = {}

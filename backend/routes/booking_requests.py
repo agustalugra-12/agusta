@@ -150,7 +150,7 @@ async def _coba_auto_approve_day_use(doc: Dict[str, Any]) -> None:
             return  # grup >1 kamar tetap lewat review staf (auto-pilih banyak kamar sekaligus lebih berisiko)
 
         from routes.public import public_availability
-        avail = await public_availability(doc["tanggal_checkin"], tipe=doc.get("room_tipe"))
+        avail = await public_availability(doc["tanggal_checkin"], tipe=doc.get("room_tipe"), property_id_override=doc["property_id"])
         if not avail["rooms"]:
             await _auto_reject_penuh(doc)
             return
@@ -245,14 +245,19 @@ async def _hitung_diskon_gabungan(data: Dict[str, Any], property_id: str):
     return diskon_info, diskon_ai_persen, diskon_persen_efektif, preview_harga
 
 
-async def buat_booking_request(data: Dict[str, Any]) -> Dict[str, Any]:
+async def buat_booking_request(data: Dict[str, Any], property_id: Optional[str] = None) -> Dict[str, Any]:
     """Dipanggil dari alur pengumpulan data AI WhatsApp (pesan_whatsapp.py) setelah field
     wajib lengkap & tamu konfirmasi — sengaja BUKAN endpoint HTTP publik (tidak menambah
     permukaan serangan baru untuk membuat data). `data` wajib berisi: nama_tamu, no_hp,
     tipe (day_use|menginap), room_tipe, tanggal_checkin; boleh berisi jumlah_kamar,
     jumlah_tamu, jam_checkin (day_use), tanggal_checkout (menginap), catatan,
     payment_option (dp50|full — preferensi tamu KALAU disebutkan sendiri di chat, lihat
-    BOOKING_FLOW_SYSTEM_PROMPT; None kalau belum disebut — staf yang putuskan saat approve)."""
+    BOOKING_FLOW_SYSTEM_PROMPT; None kalau belum disebut — staf yang putuskan saat approve).
+
+    `property_id` (2026-07-25, Fase 4) - diisi pemanggil yang sudah tahu propertinya
+    sendiri (ai_bot_buat_booking_request, resolve dari API key ai-chat-bot). Kalau None
+    (belum ada pemanggil lain yang kasih ini), fallback ke get_default_property_id()
+    stopgap - jaga kompatibilitas kalau ada pemanggil lama."""
     payment_option = data.get("payment_option")
 
     # Guard tanggal masa lalu (2026-07-19, audit reliabilitas AI booking flow) - AI WhatsApp
@@ -267,7 +272,7 @@ async def buat_booking_request(data: Dict[str, Any]) -> Dict[str, Any]:
     if tanggal_checkin_date < datetime.now().date():
         raise HTTPException(400, "Tanggal check-in tidak boleh di masa lalu - tanya ulang tanggal yang benar ke tamu")
 
-    property_id = await get_default_property_id()  # STOPGAP (2026-07-24) - lihat Phase 4 multi-properti, belum per-bot/per-properti
+    property_id = property_id or await get_default_property_id()
     diskon_info, diskon_ai_persen, diskon_persen_efektif, preview_harga = await _hitung_diskon_gabungan(data, property_id)
 
     doc = {

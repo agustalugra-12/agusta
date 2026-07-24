@@ -28,51 +28,67 @@ from scheduling_engine import rekomendasi_slot_kosong
 DEFAULT_AI_BOT_CONFIG = {"aktif": False, "api_key": None, "updated_at": None}
 
 
-async def verifikasi_ai_bot_key(request: Request) -> None:
-    cfg = await db.ai_bot_integration_config.find_one({}, {"_id": 0})
-    if not cfg or not cfg.get("aktif") or not cfg.get("api_key"):
-        raise HTTPException(404, "Not Found")
+async def verifikasi_ai_bot_key(request: Request) -> str:
+    """Multi-properti (Fase 4, 2026-07-25): `ai_bot_integration_config` bukan lagi
+    singleton - 1 dokumen per properti, masing-masing punya API key sendiri (1 nomor
+    WhatsApp/bot ai-chat-bot = 1 properti). Auth di sini TIDAK bisa lagi filter by
+    property_id dari header (pemanggilnya ai-chat-bot, bukan user login PMS yang tahu
+    konteks properti) - satu-satunya cara tahu properti mana adalah dari API KEY mana
+    yang cocok. Return property_id yang cocok, supaya semua endpoint di file ini
+    (Depends(verifikasi_ai_bot_key)) otomatis tahu harus scope ke properti mana.
+
+    Loop bandingkan tiap kandidat key satu-satu (bukan query by api_key langsung) supaya
+    tetap pakai secrets.compare_digest (constant-time) - jumlah properti kecil (2-5),
+    jadi variasi waktu antar kandidat diabaikan (ini API key server-to-server milik
+    sistem sendiri, bukan permukaan auth publik yang jadi target timing attack nyata)."""
     auth = request.headers.get("Authorization", "")
     key = auth[7:] if auth.startswith("Bearer ") else ""
-    if not key or not secrets.compare_digest(key, cfg["api_key"]):
-        raise HTTPException(401, "API key tidak valid")
+    if not key:
+        raise HTTPException(404, "Not Found")
+    async for cfg in db.ai_bot_integration_config.find({"aktif": True, "api_key": {"$ne": None}}):
+        if secrets.compare_digest(key, cfg["api_key"]):
+            return cfg["property_id"]
+    raise HTTPException(401, "API key tidak valid")
 
 
 @api.get("/konfigurasi-integrasi-ai-bot")
-async def get_ai_bot_config(user: dict = Depends(require_owner)):
+async def get_ai_bot_config(user: dict = Depends(require_owner), property_id: str = Depends(get_active_property)):
     """`api_key` dibuat sekali otomatis kalau belum ada, supaya owner selalu punya key
     untuk ditempel ke konfigurasi ai-chat-bot sejak GET pertama (pola sama seperti
-    `webhook_token` di konfigurasi_webhook.py)."""
-    cfg = await db.ai_bot_integration_config.find_one({}, {"_id": 0})
-    cfg = {**DEFAULT_AI_BOT_CONFIG, **(cfg or {})}
+    `webhook_token` di konfigurasi_webhook.py). 1 dokumen per properti - owner kelola
+    key propertinya masing-masing lewat switcher, bukan 1 key global untuk semua."""
+    cfg = await db.ai_bot_integration_config.find_one(scoped({}, property_id), {"_id": 0})
+    cfg = {**DEFAULT_AI_BOT_CONFIG, **(cfg or {}), "property_id": property_id}
     if not cfg.get("api_key"):
         cfg["api_key"] = secrets.token_hex(24)
-        await db.ai_bot_integration_config.update_one({}, {"$set": cfg}, upsert=True)
+        await db.ai_bot_integration_config.update_one(scoped({}, property_id), {"$set": cfg}, upsert=True)
     return cfg
 
 
 @api.put("/konfigurasi-integrasi-ai-bot")
-async def update_ai_bot_config(body: Dict[str, Any], user: dict = Depends(require_owner)):
+async def update_ai_bot_config(body: Dict[str, Any], user: dict = Depends(require_owner),
+                               property_id: str = Depends(get_active_property)):
     updates = {"aktif": bool(body.get("aktif"))} if "aktif" in body else {}
     updates["updated_at"] = now_iso()
-    await db.ai_bot_integration_config.update_one({}, {"$set": updates}, upsert=True)
+    updates["property_id"] = property_id
+    await db.ai_bot_integration_config.update_one(scoped({}, property_id), {"$set": updates}, upsert=True)
     await log_activity(user, "update_ai_bot_config", "Update status integrasi AI Chat Bot eksternal")
-    return await db.ai_bot_integration_config.find_one({}, {"_id": 0}) or DEFAULT_AI_BOT_CONFIG
+    return await db.ai_bot_integration_config.find_one(scoped({}, property_id), {"_id": 0}) or DEFAULT_AI_BOT_CONFIG
 
 
 @api.post("/konfigurasi-integrasi-ai-bot/regenerate-key")
-async def regenerate_ai_bot_key(user: dict = Depends(require_owner)):
+async def regenerate_ai_bot_key(user: dict = Depends(require_owner), property_id: str = Depends(get_active_property)):
     new_key = secrets.token_hex(24)
     await db.ai_bot_integration_config.update_one(
-        {}, {"$set": {"api_key": new_key, "updated_at": now_iso()}}, upsert=True
+        scoped({}, property_id), {"$set": {"api_key": new_key, "updated_at": now_iso(), "property_id": property_id}}, upsert=True
     )
     await log_activity(user, "regenerate_ai_bot_key", "Generate ulang API key integrasi AI Chat Bot")
-    return await db.ai_bot_integration_config.find_one({}, {"_id": 0})
+    return await db.ai_bot_integration_config.find_one(scoped({}, property_id), {"_id": 0})
 
 
 @api.get("/integrasi-ai-bot/ketersediaan")
 async def ai_bot_ketersediaan(
-    tanggal: Optional[str] = None, tipe: Optional[str] = None, _: None = Depends(verifikasi_ai_bot_key)
+    tanggal: Optional[str] = None, tipe: Optional[str] = None, property_id: str = Depends(verifikasi_ai_bot_key)
 ):
     """Ketersediaan & tarif kamar live per tanggal — logika sama dengan halaman publik
     `/book` (`public_availability`, termasuk fix hari checkout tidak dianggap booked),
@@ -86,9 +102,8 @@ async def ai_bot_ketersediaan(
     scheduling_engine.py), disertakan `estimasi_kosong_lagi` sebagai perkiraan jujur; kalau
     penuh karena Menginap atau tanggal bukan hari ini, field itu TIDAK ADA sama sekali -
     AI wajib bilang penuh apa adanya, tidak boleh menawarkan estimasi kosong."""
-    property_id = await get_default_property_id()  # STOPGAP (2026-07-24) - lihat Phase 4 multi-properti (1 bot/nomor WA per properti, belum dikerjakan)
     tanggal = tanggal or datetime.now().strftime("%Y-%m-%d")
-    hasil = await public_availability(tanggal=tanggal, tipe=tipe)
+    hasil = await public_availability(tanggal=tanggal, tipe=tipe, property_id_override=property_id)
 
     q: Dict[str, Any] = {"tipe": tipe} if tipe else {}
     semua_kamar = await db.rooms.find(scoped(q, property_id), {"_id": 0, "tipe": 1, "tarif": 1, "tarif_menginap": 1}).to_list(500)
@@ -121,7 +136,7 @@ class AiBotTiketIn(BaseModel):
 
 
 @api.post("/integrasi-ai-bot/tiket")
-async def ai_bot_buat_tiket(body: AiBotTiketIn, _: None = Depends(verifikasi_ai_bot_key)):
+async def ai_bot_buat_tiket(body: AiBotTiketIn, property_id: str = Depends(verifikasi_ai_bot_key)):
     """Sama seperti `_klasifikasi_dan_buat_tiket` di pesan_whatsapp.py — tapi klasifikasinya
     sudah dilakukan ai-chat-bot sendiri, di sini cuma menulis tiketnya.
 
@@ -131,7 +146,6 @@ async def ai_bot_buat_tiket(body: AiBotTiketIn, _: None = Depends(verifikasi_ai_
     via Simulator, tiket maintenance/service_request selalu punya room_nomor KOSONG walau
     tamu jelas menyebut nomor kamarnya, karena pencarian by no_hp gagal kalau nomor WA tamu
     tidak persis cocok dengan yang tercatat di checkin/booking aktif)."""
-    property_id = await get_default_property_id()  # STOPGAP, lihat ai_bot_ketersediaan
     room_id, room_nomor = None, ""
     if body.room_nomor:
         raw = body.room_nomor.strip()
@@ -156,7 +170,7 @@ async def ai_bot_buat_tiket(body: AiBotTiketIn, _: None = Depends(verifikasi_ai_
 
 
 @api.get("/integrasi-ai-bot/rules")
-async def ai_bot_rules(category: Optional[str] = None, _: None = Depends(verifikasi_ai_bot_key)):
+async def ai_bot_rules(category: Optional[str] = None, _: str = Depends(verifikasi_ai_bot_key)):
     """Business Rules (DP/cancellation/checkin/checkout/promo/dll) — PMS jadi satu-satunya
     sumber kebenaran (lihat routes/business_rules.py), ai-chat-bot menarik ini untuk
     dijadikan konteks AI menjawab tamu, bukan menyimpan salinan kebijakan sendiri yang bisa
@@ -174,23 +188,21 @@ async def ai_bot_rules(category: Optional[str] = None, _: None = Depends(verifik
 
 
 @api.get("/integrasi-ai-bot/status-member")
-async def ai_bot_status_member(no_hp: str, _: None = Depends(verifikasi_ai_bot_key)):
+async def ai_bot_status_member(no_hp: str, property_id: str = Depends(verifikasi_ai_bot_key)):
     """Status Program Loyalitas Kedatangan tamu (2026-07-21, permintaan user: AI harus bisa
     proaktif sebut diskon member di AWAL percakapan saat tamu tunjukkan niat booking, bukan
     cuma pas booking sudah dibuat) - reuse penuh hitung_diskon_member, satu-satunya sumber
     kebenaran, sama dipakai create_reservation/buat_booking_request."""
-    property_id = await get_default_property_id()  # STOPGAP, lihat ai_bot_ketersediaan
     info = await hitung_diskon_member(property_id, no_hp)
     return {"kedatangan_ke": info["kedatangan_ke"], "diskon_persen": info["diskon_persen"]}
 
 
 @api.get("/integrasi-ai-bot/booking-status")
-async def ai_bot_booking_status(no_hp: str, _: None = Depends(verifikasi_ai_bot_key)):
+async def ai_bot_booking_status(no_hp: str, property_id: str = Depends(verifikasi_ai_bot_key)):
     """Status booking request tamu (dicari dari no_hp, 5 permintaan terbaru) — reuse
     penuh logika pengayaan `status_efektif`/`booking_ringkasan` yang sama dipakai halaman
     staf /booking-requests (lihat list_booking_requests), supaya AI menjawab status yang
     sama persis dengan yang staf lihat, bukan hitungan terpisah yang bisa menyimpang."""
-    property_id = await get_default_property_id()  # STOPGAP, lihat ai_bot_ketersediaan
     digits = re.sub(r"\D", "", no_hp or "")
     if not digits:
         return {"no_hp": no_hp, "permintaan": []}
@@ -306,7 +318,7 @@ class AiBotPreviewHargaIn(BaseModel):
 
 
 @api.post("/integrasi-ai-bot/preview-harga")
-async def ai_bot_preview_harga(body: AiBotPreviewHargaIn, _: None = Depends(verifikasi_ai_bot_key)):
+async def ai_bot_preview_harga(body: AiBotPreviewHargaIn, property_id: str = Depends(verifikasi_ai_bot_key)):
     """Preview rincian harga (termasuk diskon member & diskresi) SEBELUM booking_request
     sungguhan dibuat - read-only, TIDAK menulis apapun ke DB (2026-07-21, permintaan user:
     AI harus ringkas & konfirmasi data+harga ke tamu SEBELUM benar-benar diajukan, bukan
@@ -314,7 +326,6 @@ async def ai_bot_preview_harga(body: AiBotPreviewHargaIn, _: None = Depends(veri
     buat_booking_request - angka di sini WAJIB konsisten dengan yang benar-benar terjadi
     kalau lanjut ke create_booking dengan data identik."""
     from routes.booking_requests import _hitung_diskon_gabungan
-    property_id = await get_default_property_id()  # STOPGAP, lihat ai_bot_ketersediaan
     diskon_info, diskon_ai_persen, diskon_persen_efektif, preview_harga = await _hitung_diskon_gabungan(body.model_dump(), property_id)
     return {
         "kedatangan_ke": diskon_info["kedatangan_ke"],
@@ -325,13 +336,13 @@ async def ai_bot_preview_harga(body: AiBotPreviewHargaIn, _: None = Depends(veri
 
 
 @api.post("/integrasi-ai-bot/booking-request")
-async def ai_bot_buat_booking_request(body: AiBotBookingRequestIn, _: None = Depends(verifikasi_ai_bot_key)):
+async def ai_bot_buat_booking_request(body: AiBotBookingRequestIn, property_id: str = Depends(verifikasi_ai_bot_key)):
     """Non-binding, persis alur booking AI WhatsApp internal (`_proses_giliran_booking` di
     pesan_whatsapp.py) — staf tetap yang Terima/Tolak manual di /booking-requests, endpoint
     ini TIDAK PERNAH membuat booking sungguhan langsung."""
     if body.tipe not in ("day_use", "menginap"):
         raise HTTPException(400, "tipe harus 'day_use' atau 'menginap'")
-    hasil = await buat_booking_request(body.model_dump())
+    hasil = await buat_booking_request(body.model_dump(), property_id)
     return {"ok": True, "booking_request": hasil}
 
 
@@ -342,7 +353,7 @@ class AiBotCancelRequestIn(BaseModel):
 
 
 @api.post("/integrasi-ai-bot/cancel-request")
-async def ai_bot_ajukan_pembatalan(body: AiBotCancelRequestIn, _: None = Depends(verifikasi_ai_bot_key)):
+async def ai_bot_ajukan_pembatalan(body: AiBotCancelRequestIn, property_id: str = Depends(verifikasi_ai_bot_key)):
     """Non-binding — sama seperti booking-request, endpoint ini TIDAK PERNAH mengeksekusi
     pembatalan sungguhan langsung (lihat routes/pembatalan.py). AI cuma menyampaikan info
     (kode booking, nomor tamu, alasan) ke PMS; PMS mencatat & staf yang approve/reject
@@ -351,7 +362,7 @@ async def ai_bot_ajukan_pembatalan(body: AiBotCancelRequestIn, _: None = Depends
     # tamu punya >1 booking aktif, field "kandidat" perlu tetap sampai ke ai-chat-bot
     # supaya AI bisa tanya tamu mana yang dimaksud (2026-07-21, HTTPException(400, str)
     # sebelumnya MEMBUANG field kandidat, cuma pesan errornya yang sampai).
-    return await ajukan_pembatalan_ai(body.kode, body.no_hp, body.alasan or "")
+    return await ajukan_pembatalan_ai(body.kode, body.no_hp, property_id, body.alasan or "")
 
 
 class AiBotAlertIn(BaseModel):
@@ -359,7 +370,7 @@ class AiBotAlertIn(BaseModel):
 
 
 @api.post("/integrasi-ai-bot/alert-owner")
-async def ai_bot_alert_owner(body: AiBotAlertIn, _: None = Depends(verifikasi_ai_bot_key)):
+async def ai_bot_alert_owner(body: AiBotAlertIn, _: str = Depends(verifikasi_ai_bot_key)):
     """Relay alert Telegram ke owner (2026-07-20) - dipakai ai-chat-bot untuk lapor masalah
     infrastrukturnya sendiri (mis. koneksi WhatsApp/WAHA terputus) lewat channel yang SUDAH
     ada & sudah terhubung ke HP owner (Telegram bot PMS), bukan bikin integrasi Telegram

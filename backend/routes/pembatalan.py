@@ -19,7 +19,7 @@ from core import *
 CANCEL_STATUS_AKTIF = ["requested", "pending"]
 
 
-async def ajukan_pembatalan_ai(kode: str, no_hp: str, alasan: str = "") -> Dict[str, Any]:
+async def ajukan_pembatalan_ai(kode: str, no_hp: str, property_id: str, alasan: str = "") -> Dict[str, Any]:
     """Dipanggil dari routes/integrasi_ai_bot.py (tool cancel_booking di ai-chat-bot) —
     non-binding, TIDAK PERNAH langsung mengubah status booking, cuma menandai
     cancel_request_status supaya staf lihat & approve/reject manual di Dashboard.
@@ -31,24 +31,28 @@ async def ajukan_pembatalan_ai(kode: str, no_hp: str, alasan: str = "") -> Dict[
     dibatalkan tanpa benar-benar memanggil cancel_booking. Sekarang kalau `kode` kosong,
     fungsi ini SENDIRI yang mencari booking aktif tamu dari no_hp - AI cukup 1x panggil
     tool ini langsung begitu tamu konfirmasi, tidak perlu lookup_booking dulu utk kasus
-    umum (tamu cuma punya 1 booking aktif)."""
+    umum (tamu cuma punya 1 booking aktif).
+
+    `property_id` (2026-07-25, Fase 4) - dari API key ai-chat-bot yang dipakai, supaya
+    tamu di properti A tidak bisa (sengaja/kebetulan nomor HP mirip) mengenai booking di
+    properti B."""
     digits = re.sub(r"\D", "", no_hp or "")
     if not digits:
         return {"ok": False, "error": "Nomor WhatsApp tidak valid"}
 
     if kode:
-        b = await db.bookings.find_one({"kode": kode})
+        b = await db.bookings.find_one(scoped({"kode": kode}, property_id))
         if not b:
             return {"ok": False, "error": f"Booking dengan kode {kode} tidak ditemukan"}
         if digits not in phone_variants(b.get("no_hp")):
             return {"ok": False, "error": "Nomor WhatsApp tidak cocok dengan pemilik booking"}
     else:
         variasi = list(phone_variants(no_hp))
-        kandidat = await db.bookings.find({
+        kandidat = await db.bookings.find(scoped({
             "no_hp": {"$in": variasi},
             "status": {"$in": ["aktif", "booking_pending", "booking_paid"]},
             "cancel_request_status": {"$nin": CANCEL_STATUS_AKTIF},
-        }).sort("created_at", -1).to_list(10)
+        }, property_id)).sort("created_at", -1).to_list(10)
         if not kandidat:
             return {"ok": False, "error": "Tidak ada booking aktif ditemukan untuk nomor ini yang bisa diajukan pembatalan"}
         if len(kandidat) > 1:
@@ -93,21 +97,23 @@ async def ajukan_pembatalan_ai(kode: str, no_hp: str, alasan: str = "") -> Dict[
 
 
 @api.get("/cancellation-requests")
-async def list_cancellation_requests(status: Optional[str] = None, user: dict = Depends(get_current_user)):
+async def list_cancellation_requests(status: Optional[str] = None, user: dict = Depends(get_current_user),
+                                     property_id: str = Depends(get_active_property)):
     """status kosong/None -> aktif (requested+pending, dipakai Dashboard/daftar utama).
     status='riwayat' -> semua yang pernah punya permintaan pembatalan (termasuk refund_sent)."""
     q = {"cancel_request_status": {"$ne": None}} if status == "riwayat" else {"cancel_request_status": {"$in": CANCEL_STATUS_AKTIF}}
-    items = await db.bookings.find(q, {"_id": 0}).sort("cancel_requested_at", -1).to_list(200)
+    items = await db.bookings.find(scoped(q, property_id), {"_id": 0}).sort("cancel_requested_at", -1).to_list(200)
     return items
 
 
 @api.post("/cancellation-requests/{booking_id}/approve")
-async def approve_cancellation_request(booking_id: str, user: dict = Depends(get_current_user)):
+async def approve_cancellation_request(booking_id: str, user: dict = Depends(get_current_user),
+                                       property_id: str = Depends(get_active_property)):
     """Setujui: eksekusi pembatalan sungguhan (booking.status -> cancelled), kebijakan
     dihitung ULANG di saat approval (bukan dipakai angka saat request) supaya staf ambil
     keputusan dari sisa waktu paling akurat — sama pola dengan pembatalan mandiri
     (public.py). Status jadi 'pending' (menunggu staf transfer refund manual)."""
-    b = await db.bookings.find_one({"id": booking_id})
+    b = await db.bookings.find_one(scoped({"id": booking_id}, property_id))
     if not b:
         raise HTTPException(404, "Booking tidak ditemukan")
     if b.get("cancel_request_status") != "requested":
@@ -157,8 +163,9 @@ async def approve_cancellation_request(booking_id: str, user: dict = Depends(get
 
 
 @api.post("/cancellation-requests/{booking_id}/reject")
-async def reject_cancellation_request(booking_id: str, body: CancelWithFeeBody = CancelWithFeeBody(), user: dict = Depends(get_current_user)):
-    b = await db.bookings.find_one({"id": booking_id})
+async def reject_cancellation_request(booking_id: str, body: CancelWithFeeBody = CancelWithFeeBody(), user: dict = Depends(get_current_user),
+                                      property_id: str = Depends(get_active_property)):
+    b = await db.bookings.find_one(scoped({"id": booking_id}, property_id))
     if not b:
         raise HTTPException(404, "Booking tidak ditemukan")
     if b.get("cancel_request_status") != "requested":
@@ -180,12 +187,13 @@ async def reject_cancellation_request(booking_id: str, body: CancelWithFeeBody =
 
 
 @api.post("/cancellation-requests/{booking_id}/refund-sent")
-async def mark_refund_sent(booking_id: str, user: dict = Depends(get_current_user)):
+async def mark_refund_sent(booking_id: str, user: dict = Depends(get_current_user),
+                           property_id: str = Depends(get_active_property)):
     """Tombol "Sudah Dikirim" — refund uangnya tetap ditransfer manual staf DI LUAR sistem
     (belum ada integrasi payout otomatis), tombol ini cuma menandai selesai + otomatis
     kirim WA konfirmasi ke tamu. Begitu ditandai, item ini otomatis tidak lagi muncul di
     daftar aktif/Dashboard (lihat CANCEL_STATUS_AKTIF), tapi tetap ada di riwayat."""
-    b = await db.bookings.find_one({"id": booking_id})
+    b = await db.bookings.find_one(scoped({"id": booking_id}, property_id))
     if not b:
         raise HTTPException(404, "Booking tidak ditemukan")
     if b.get("cancel_request_status") != "pending":
