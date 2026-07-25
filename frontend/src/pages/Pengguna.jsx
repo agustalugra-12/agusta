@@ -10,22 +10,29 @@ import { useAuth } from "@/context/AuthContext";
 import { Plus, Pencil, Trash2 } from "lucide-react";
 
 export default function Pengguna() {
-  const { user: me } = useAuth();
+  const { user: me, properties } = useAuth();
   const [users, setUsers] = useState([]);
   const [edit, setEdit] = useState(null);
-  const [form, setForm] = useState({ nama: "", username: "", password: "", role: "resepsionis" });
+  const [form, setForm] = useState({ nama: "", username: "", password: "", role: "resepsionis", property_id: "" });
 
   const load = async () => { const { data } = await api.get("/users"); setUsers(data); };
   useEffect(() => { load(); }, []);
 
-  const openNew = () => { setForm({ nama: "", username: "", password: "", role: "resepsionis" }); setEdit("new"); };
-  const openEdit = (u) => { setForm({ nama: u.nama, username: u.username, password: "", role: u.role, status: u.status }); setEdit(u); };
+  const openNew = () => { setForm({ nama: "", username: "", password: "", role: "resepsionis", property_id: properties[0]?.id || "" }); setEdit("new"); };
+  const openEdit = (u) => { setForm({ nama: u.nama, username: u.username, password: "", role: u.role, status: u.status, property_id: u.property_id || "" }); setEdit(u); };
+
+  const namaProperti = (id) => properties.find((p) => p.id === id)?.nama || "-";
 
   const save = async () => {
     try {
-      if (edit === "new") await api.post("/users", form);
+      if (form.role === "resepsionis" && !form.property_id) {
+        toast.error("Resepsionis wajib ditugaskan ke 1 properti");
+        return;
+      }
+      const propertiPayload = form.role === "resepsionis" ? { property_id: form.property_id } : {};
+      if (edit === "new") await api.post("/users", { ...form, ...propertiPayload });
       else {
-        const payload = { nama: form.nama, role: form.role, status: form.status };
+        const payload = { nama: form.nama, role: form.role, status: form.status, ...propertiPayload };
         if (form.password) payload.password = form.password;
         await api.put(`/users/${edit.id}`, payload);
       }
@@ -55,7 +62,7 @@ export default function Pengguna() {
           <table className="w-full text-sm">
             <thead className="bg-slate-50 text-slate-600 text-xs uppercase tracking-wider"><tr>
               <th className="text-left p-3">Nama</th><th className="text-left p-3">Username</th>
-              <th className="text-left p-3">Role</th><th className="text-left p-3">Status</th>
+              <th className="text-left p-3">Role</th><th className="text-left p-3">Properti</th><th className="text-left p-3">Status</th>
               <th className="text-right p-3">Aksi</th>
             </tr></thead>
             <tbody>
@@ -64,6 +71,7 @@ export default function Pengguna() {
                   <td className="p-3 font-semibold">{u.nama}</td>
                   <td className="p-3 font-mono text-xs">{u.username}</td>
                   <td className="p-3 capitalize">{u.role}</td>
+                  <td className="p-3">{u.role === "resepsionis" ? namaProperti(u.property_id) : <span className="text-slate-400">Semua</span>}</td>
                   <td className="p-3"><span className={`text-xs px-2 py-0.5 rounded ${u.status === "aktif" ? "bg-emerald-100 text-emerald-700" : u.status === "pending" ? "bg-amber-100 text-amber-700" : "bg-slate-100 text-slate-600"}`}>{u.status === "pending" ? "menunggu aktivasi" : u.status}</span></td>
                   <td className="p-3 text-right">
                     <Button size="sm" variant="ghost" onClick={() => openEdit(u)}><Pencil className="w-4 h-4" /></Button>
@@ -90,6 +98,15 @@ export default function Pengguna() {
                 <option value="owner">Owner</option>
               </select>
             </div>
+            {form.role === "resepsionis" && (
+              <div>
+                <Label>Properti</Label>
+                <select data-testid="user-property" value={form.property_id} onChange={(e) => setForm(f => ({ ...f, property_id: e.target.value }))} className="w-full h-10 rounded-md border border-slate-300 px-3 bg-white">
+                  <option value="">Pilih properti...</option>
+                  {properties.map((p) => <option key={p.id} value={p.id}>{p.nama}</option>)}
+                </select>
+              </div>
+            )}
             {edit !== "new" && (
               <div>
                 <Label>Status</Label>
