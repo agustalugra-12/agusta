@@ -29,6 +29,8 @@ CORE_COLLECTIONS = [
     "ai_bot_integration_config",  # 2026-07-25, Fase 4 - dokumen lama TANPA property_id
     # akan bikin verifikasi_ai_bot_key() KeyError begitu kode baru live - WAJIB dijalankan
     # SEBELUM/SESEGERA deploy Fase 4 landing, bukan opsional seperti collection lain.
+    "payment_log", "housekeeping_log",  # 2026-07-25, gap kecil yang tersisa - ditutup
+    # belakangan karena tidak langsung bikin crash/leak seserius Fase 4 di atas.
 ]
 
 

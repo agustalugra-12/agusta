@@ -161,6 +161,7 @@ async def checkout(checkin_id: str, body: CheckoutIn, user: dict = Depends(get_c
     # housekeeping log
     await db.housekeeping_log.insert_one({
         "id": str(uuid.uuid4()),
+        "property_id": property_id,
         "room_id": c["room_id"],
         "room_nomor": c["room_nomor"],
         "tanggal": now.isoformat(),

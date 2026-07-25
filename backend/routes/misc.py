@@ -7,8 +7,8 @@ async def list_audit(limit: int = 200, user: dict = Depends(get_current_user)):
 
 # ---- Housekeeping ----
 @api.get("/housekeeping")
-async def list_housekeeping(user: dict = Depends(get_current_user)):
-    items = await db.housekeeping_log.find({}, {"_id": 0}).sort("tanggal", -1).to_list(500)
+async def list_housekeeping(user: dict = Depends(get_current_user), property_id: str = Depends(get_active_property)):
+    items = await db.housekeeping_log.find(scoped({}, property_id), {"_id": 0}).sort("tanggal", -1).to_list(500)
     return items
 
 @api.get("/")

@@ -12,14 +12,15 @@ VALID_PAYMENT_STATUSES = {"settlement", "pending", "expire", "deny", "cancel", "
 
 @api.put("/payments/log/{log_id}/status")
 async def update_payment_status_manual(log_id: str, body: PaymentStatusUpdateBody,
-                                        user: dict = Depends(require_owner)):
+                                        user: dict = Depends(require_owner),
+                                        property_id: str = Depends(get_active_property)):
     """Ubah status transaksi payment_log secara manual — KHUSUS owner (keputusan bisnis:
     resepsionis hanya boleh lihat/export laporan keuangan, tidak mengubahnya).
     Beda dari webhook gateway (otomatis, signature-verified): ini aksi manual staf,
     jadi status booking terkait ikut disesuaikan dengan pemetaan yang sama dipakai webhook."""
     if body.status not in VALID_PAYMENT_STATUSES:
         raise HTTPException(400, f"Status harus salah satu dari: {', '.join(sorted(VALID_PAYMENT_STATUSES))}")
-    log = await db.payment_log.find_one({"id": log_id})
+    log = await db.payment_log.find_one(scoped({"id": log_id}, property_id))
     if not log:
         raise HTTPException(404, "Transaksi tidak ditemukan")
     if log.get("transaction_status") == body.status:
@@ -69,11 +70,12 @@ async def update_payment_status_manual(log_id: str, body: PaymentStatusUpdateBod
 
 @api.get("/payments/log")
 async def list_payment_log(search: Optional[str] = None, status: Optional[str] = None,
-                            user: dict = Depends(get_current_user)):
+                            user: dict = Depends(get_current_user),
+                            property_id: str = Depends(get_active_property)):
     """Daftar semua transaksi payment_log (Midtrans & Tripay, vocab transaction_status
     sudah dinormalisasi ke gaya Midtrans lowercase) untuk tabel utama halaman Pembayaran.
     nama_tamu di-join dari booking terkait karena payment_log sendiri tidak menyimpannya."""
-    pipeline: List[Dict[str, Any]] = []
+    pipeline: List[Dict[str, Any]] = [{"$match": scoped({}, property_id)}]
     if status:
         pipeline.append({"$match": {"transaction_status": status}})
     pipeline += [
@@ -94,25 +96,27 @@ async def list_payment_log(search: Optional[str] = None, status: Optional[str] =
     return items
 
 @api.get("/payments/log/by-booking/{booking_kode}")
-async def get_payment_log_by_booking(booking_kode: str, user: dict = Depends(get_current_user)):
+async def get_payment_log_by_booking(booking_kode: str, user: dict = Depends(get_current_user),
+                                      property_id: str = Depends(get_active_property)):
     """Riwayat semua percobaan pembayaran (payment_log) untuk satu reservasi — dipakai
     panel 'Riwayat Pembayaran' di halaman Pembayaran (mis. DP dulu baru pelunasan, atau
     sempat expired lalu dibuatkan tagihan baru)."""
     logs = await db.payment_log.find(
-        {"booking_kode": booking_kode},
+        scoped({"booking_kode": booking_kode}, property_id),
         {"_id": 0, "midtrans_response": 0, "notification_payload": 0},
     ).sort("created_at", 1).to_list(200)
     return logs
 
 @api.get("/payments/bookings-status")
 async def list_bookings_status_bayar(status_bayar: Optional[str] = None, search: Optional[str] = None,
-                                      user: dict = Depends(get_current_user)):
+                                      user: dict = Depends(get_current_user),
+                                      property_id: str = Depends(get_active_property)):
     """Daftar reservasi dengan status bayar terderivasi (Belum Bayar/DP/Lunas) — dipakai
     fitur 'Status Bayar' halaman Pembayaran. `status_bayar` filter: belum_bayar|dp|lunas.
     """
     if status_bayar and status_bayar not in ("belum_bayar", "dp", "lunas"):
         raise HTTPException(400, "status_bayar harus belum_bayar, dp, atau lunas")
-    q: Dict[str, Any] = {}
+    q: Dict[str, Any] = scoped({}, property_id)
     if search:
         q["$or"] = [
             {"nama_tamu": {"$regex": search, "$options": "i"}},

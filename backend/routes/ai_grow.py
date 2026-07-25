@@ -31,11 +31,20 @@ logger = logging.getLogger("ai_grow")
 # LAYER 1 — READ
 # =====================================================================================
 
-async def _baca_semua_data() -> Dict[str, Any]:
+async def _baca_semua_data(property_id: str) -> Dict[str, Any]:
     """Satu titik baca untuk seluruh data yang dibutuhkan layer di atasnya - dipanggil
-    SEKALI per generate brief/score, hasilnya dipakai bersama supaya tidak query berulang."""
+    SEKALI per generate brief/score, hasilnya dipakai bersama supaya tidak query berulang.
+
+    Multi-properti (2026-07-25) - `property_id` WAJIB diisi eksplisit: fungsi ini
+    memanggil report_summary/dashboard_rekening/cash_risk langsung sebagai fungsi Python
+    (bukan lewat HTTP), jadi parameter `Depends(get_active_property)` mereka TIDAK
+    otomatis terisi - kalau tidak dioper manual, nilainya jadi objek Depends mentah dan
+    query MongoDB error (`InvalidDocument`). Ini bug nyata yang sempat membuat Daily
+    Brief & Telegram briefing otomatis jam 07:30 WIB gagal total sejak reports.py/
+    rekening.py di-scope per-properti - ditemukan & diperbaiki lewat pengujian multi-
+    properti, bukan laporan user."""
     from routes.reports import report_summary
-    summary = await report_summary({"id": "ai-grow", "nama": "AI Grow", "role": "owner"})
+    summary = await report_summary({"id": "ai-grow", "nama": "AI Grow", "role": "owner"}, property_id)
 
     now = datetime.now(timezone.utc)
     month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
@@ -48,8 +57,8 @@ async def _baca_semua_data() -> Dict[str, Any]:
     bulan_lalu_start = (month_start - timedelta(days=1)).replace(day=1)
     bulan_lalu_end = bulan_lalu_start + timedelta(days=hari_berjalan)
 
-    exp_bulan_ini = await db.expenses.find({"tanggal": {"$gte": month_start.isoformat()}}, {"_id": 0, "kategori": 1, "nominal": 1}).to_list(2000)
-    exp_bulan_lalu = await db.expenses.find({"tanggal": {"$gte": bulan_lalu_start.isoformat(), "$lt": bulan_lalu_end.isoformat()}}, {"_id": 0, "kategori": 1, "nominal": 1}).to_list(2000)
+    exp_bulan_ini = await db.expenses.find(scoped({"tanggal": {"$gte": month_start.isoformat()}}, property_id), {"_id": 0, "kategori": 1, "nominal": 1}).to_list(2000)
+    exp_bulan_lalu = await db.expenses.find(scoped({"tanggal": {"$gte": bulan_lalu_start.isoformat(), "$lt": bulan_lalu_end.isoformat()}}, property_id), {"_id": 0, "kategori": 1, "nominal": 1}).to_list(2000)
 
     def _per_kategori(items):
         out: Dict[str, int] = {}
@@ -62,21 +71,21 @@ async def _baca_semua_data() -> Dict[str, Any]:
     # proksi jumlah booking yang menempati tiap tanggal, sama logika dengan
     # /reports/kedatangan-harian yang sudah ada, supaya konsisten).
     batas_14 = (now - timedelta(days=14)).date().isoformat()
-    bookings_14hari = await db.bookings.find({
+    bookings_14hari = await db.bookings.find(scoped({
         "jam_mulai": {"$gte": batas_14}, "status": {"$in": ["aktif", "booking_paid", "checked_in", "selesai"]},
-    }, {"_id": 0, "jam_mulai": 1, "tipe": 1}).to_list(2000)
+    }, property_id), {"_id": 0, "jam_mulai": 1, "tipe": 1}).to_list(2000)
 
     # Komplain & maintenance
     batas_30 = (now - timedelta(days=30)).isoformat()
     batas_60 = (now - timedelta(days=60)).isoformat()
-    issues_30 = await db.issues.find({"created_at": {"$gte": batas_30}}, {"_id": 0, "tipe": 1, "created_at": 1, "status": 1}).to_list(500)
-    issues_prev30 = await db.issues.find({"created_at": {"$gte": batas_60, "$lt": batas_30}}, {"_id": 0, "tipe": 1}).to_list(500)
-    issues_terbuka = await db.issues.count_documents({"status": {"$in": ["open", "in_progress"]}})
-    hk_pending = await db.housekeeping_log.count_documents({"status": {"$in": ["pending", "cleaning"]}})
+    issues_30 = await db.issues.find(scoped({"created_at": {"$gte": batas_30}}, property_id), {"_id": 0, "tipe": 1, "created_at": 1, "status": 1}).to_list(500)
+    issues_prev30 = await db.issues.find(scoped({"created_at": {"$gte": batas_60, "$lt": batas_30}}, property_id), {"_id": 0, "tipe": 1}).to_list(500)
+    issues_terbuka = await db.issues.count_documents(scoped({"status": {"$in": ["open", "in_progress"]}}, property_id))
+    hk_pending = await db.housekeeping_log.count_documents(scoped({"status": {"$in": ["pending", "cleaning"]}}, property_id))
 
     # Housekeeping delay rata-rata (created "tanggal" -> selesai "jam_selesai"), trailing 30 hari
     hk_selesai = await db.housekeeping_log.find(
-        {"status": "clean", "tanggal": {"$gte": batas_30}, "jam_selesai": {"$ne": None}},
+        scoped({"status": "clean", "tanggal": {"$gte": batas_30}, "jam_selesai": {"$ne": None}}, property_id),
         {"_id": 0, "tanggal": 1, "jam_selesai": 1},
     ).to_list(500)
     delay_menit = []
@@ -92,9 +101,9 @@ async def _baca_semua_data() -> Dict[str, Any]:
     try:
         from routes.rekening import dashboard_rekening, cash_risk
         owner_ctx = {"id": "ai-grow", "nama": "AI Grow", "role": "owner"}
-        dash = await dashboard_rekening(owner_ctx)
+        dash = await dashboard_rekening(owner_ctx, property_id)
         if dash["rekening"]:
-            risk = await cash_risk(owner_ctx)
+            risk = await cash_risk(owner_ctx, property_id)
             cash = {"total_cash": dash["total_cash"], "net_cash": dash["net_cash"],
                     "goals": dash["goals"], "risk": risk}
     except Exception as e:
@@ -104,9 +113,9 @@ async def _baca_semua_data() -> Dict[str, Any]:
     # AI Grow sebelumnya tidak baca ini sama sekali padahal PRD eksplisit minta "aktivitas
     # pelanggan"). total_kunjungan>=2 = tamu yang pernah kembali (Program Loyalitas
     # Kedatangan, lihat diskon_member_untuk_total_kunjungan di core.py).
-    total_tamu = await db.guests.count_documents({})
-    tamu_berulang = await db.guests.count_documents({"total_kunjungan": {"$gte": 2}})
-    tamu_baru_bulan_ini = await db.guests.count_documents({"created_at": {"$gte": month_start.isoformat()}})
+    total_tamu = await db.guests.count_documents(scoped({}, property_id))
+    tamu_berulang = await db.guests.count_documents(scoped({"total_kunjungan": {"$gte": 2}}, property_id))
+    tamu_baru_bulan_ini = await db.guests.count_documents(scoped({"created_at": {"$gte": month_start.isoformat()}}, property_id))
 
     return {
         "summary": summary, "now": now, "hari_berjalan": hari_berjalan, "hari_dalam_bulan": hari_dalam_bulan,
@@ -217,13 +226,13 @@ def _prediksi_bisnis(data: Dict[str, Any]) -> Dict[str, Any]:
 # OPPORTUNITY ENGINE (pola weekend/weekday, deterministik dari histori booking nyata)
 # =====================================================================================
 
-async def _deteksi_opportunity() -> List[Dict[str, Any]]:
+async def _deteksi_opportunity(property_id: str) -> List[Dict[str, Any]]:
     peluang = []
     batas = (datetime.now(timezone.utc) - timedelta(days=56)).date().isoformat()  # 8 minggu
-    bookings = await db.bookings.find({
+    bookings = await db.bookings.find(scoped({
         "jam_mulai": {"$gte": batas}, "status": {"$in": ["aktif", "booking_paid", "checked_in", "selesai"]},
-    }, {"_id": 0, "jam_mulai": 1, "room_id": 1}).to_list(3000)
-    rooms = await db.rooms.find({}, {"_id": 0, "id": 1}).to_list(200)
+    }, property_id), {"_id": 0, "jam_mulai": 1, "room_id": 1}).to_list(3000)
+    rooms = await db.rooms.find(scoped({}, property_id), {"_id": 0, "id": 1}).to_list(200)
     total_kamar = len(rooms) or 1
 
     per_hari_minggu: Dict[int, List[int]] = {i: [] for i in range(7)}  # 0=Senin
@@ -375,11 +384,11 @@ ATURAN KERAS: PAKAI PERSIS angka yang diberikan, JANGAN PERNAH mengarang angka y
 ada di data. Kalau suatu bagian data kosong/tidak ada, lewati saja, jangan mengarang."""
 
 
-async def _generate_daily_brief() -> Dict[str, Any]:
-    data = await _baca_semua_data()
+async def _generate_daily_brief(property_id: str) -> Dict[str, Any]:
+    data = await _baca_semua_data(property_id)
     understand = _pahami_korelasi(data)
     predict = _prediksi_bisnis(data)
-    opportunity = await _deteksi_opportunity()
+    opportunity = await _deteksi_opportunity(property_id)
     risk = await _deteksi_risk(data)
     health = _hitung_health_score(data, risk)
     recommend = _rekomendasi(risk, opportunity, data)
@@ -421,23 +430,24 @@ async def _generate_daily_brief() -> Dict[str, Any]:
 
 
 @api.get("/ai-grow/daily-brief")
-async def get_daily_brief(user: dict = Depends(require_owner)):
-    return await _generate_daily_brief()
+async def get_daily_brief(user: dict = Depends(require_owner), property_id: str = Depends(get_active_property)):
+    return await _generate_daily_brief(property_id)
 
 
 @api.get("/ai-grow/health-score")
-async def get_health_score(user: dict = Depends(require_owner)):
-    data = await _baca_semua_data()
+async def get_health_score(user: dict = Depends(require_owner), property_id: str = Depends(get_active_property)):
+    data = await _baca_semua_data(property_id)
     risk = await _deteksi_risk(data)
     return _hitung_health_score(data, risk)
 
 
-async def _kirim_brief_telegram():
+async def _kirim_brief_telegram(property_id: str, property_nama: str = ""):
     from routes.telegram_bot import kirim_alert_owner
-    brief = await _generate_daily_brief()
+    brief = await _generate_daily_brief(property_id)
     skor = brief["health_score"]["skor"]
+    label = f" ({property_nama})" if property_nama else ""
     pesan = (
-        f"\U0001F4CA *AI Grow — Daily Executive Brief*\n"
+        f"\U0001F4CA *AI Grow — Daily Executive Brief{label}*\n"
         f"Business Health Score: *{skor}/100*\n\n"
         f"{brief['narasi']}"
     )
@@ -448,13 +458,23 @@ async def background_daily_brief_loop():
     """Kirim Daily Executive Brief ke Telegram owner tiap hari jam 07:30 WIB (beda dari
     laporan akhir hari yang sudah ada jam 22:00 - brief ini untuk MEMULAI hari, bukan
     menutup). Cek per menit supaya presisi jamnya, kirim sekali per tanggal (dilacak
-    in-memory - cukup untuk 1 proses uvicorn, sama pola dengan loop lain di server ini)."""
+    in-memory - cukup untuk 1 proses uvicorn, sama pola dengan loop lain di server ini).
+
+    Multi-properti (2026-07-25) - kirim 1 brief TERPISAH per properti aktif (owner yang
+    sama menerima beberapa pesan berlabel nama properti kalau propertinya lebih dari 1),
+    bukan 1 brief gabungan - Business Health Score & rekomendasi tiap properti berbeda
+    konteksnya, menggabungkan akan menyesatkan. Kegagalan kirim 1 properti tidak
+    menghentikan properti lain (loop terpisah per properti dengan except sendiri)."""
     terkirim_tanggal = None
     while True:
         try:
             now_wib = datetime.now(timezone.utc) + timedelta(hours=7)
             if now_wib.hour == 7 and now_wib.minute >= 30 and terkirim_tanggal != now_wib.date():
-                await _kirim_brief_telegram()
+                async for p in db.properties.find({"aktif": True}):
+                    try:
+                        await _kirim_brief_telegram(p["id"], p.get("nama") or "")
+                    except Exception as e:
+                        logger.warning(f"Gagal kirim Daily Brief properti {p.get('nama')}: {e}")
                 terkirim_tanggal = now_wib.date()
         except Exception as e:
             logger.warning(f"background_daily_brief_loop error: {e}")

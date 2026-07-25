@@ -141,12 +141,12 @@ async def _unduh_foto_telegram(bot_token: str, file_id: str) -> Optional[tuple]:
         return None
 
 
-async def _ringkasan_owner_fallback_text() -> str:
+async def _ringkasan_owner_fallback_text(property_id: str) -> str:
     """Fallback template kalau OPENAI_API_KEY belum/tidak dikonfigurasi — dipakai juga
     sebagai bagian dari konteks yang disuplai ke AI (_kumpulkan_konteks_bisnis)."""
-    s = await report_summary(user=_DUMMY_USER)
+    s = await report_summary(user=_DUMMY_USER, property_id=property_id)
     today = datetime.now(timezone.utc).date().isoformat()
-    kas = await report_kas_metode_bayar(from_date=today, to_date=today, user=_DUMMY_USER)
+    kas = await report_kas_metode_bayar(from_date=today, to_date=today, user=_DUMMY_USER, property_id=property_id)
     r = s["rooms"]
     terisi = r.get("day_use", 0) + r.get("menginap", 0)
     return (
@@ -161,27 +161,27 @@ async def _ringkasan_owner_fallback_text() -> str:
     )
 
 
-async def _kumpulkan_konteks_bisnis() -> str:
+async def _kumpulkan_konteks_bisnis(property_id: str) -> str:
     """Snapshot kondisi bisnis yang lebih dalam dari sekadar angka pendapatan — dipasok ke
     AI supaya owner bisa tanya apa saja (komplain, stok, housekeeping, dst) bukan cuma
     laporan keuangan, dan jawabannya tetap akurat (bukan karangan AI)."""
-    s = await report_summary(user=_DUMMY_USER)
+    s = await report_summary(user=_DUMMY_USER, property_id=property_id)
     today = datetime.now(timezone.utc).date().isoformat()
-    kas = await report_kas_metode_bayar(from_date=today, to_date=today, user=_DUMMY_USER)
+    kas = await report_kas_metode_bayar(from_date=today, to_date=today, user=_DUMMY_USER, property_id=property_id)
     r = s["rooms"]
 
     issues = await db.issues.find(
-        {"status": {"$in": ["open", "in_progress"]}}, {"_id": 0, "tipe": 1, "room_nomor": 1, "deskripsi": 1, "status": 1}
+        scoped({"status": {"$in": ["open", "in_progress"]}}, property_id), {"_id": 0, "tipe": 1, "room_nomor": 1, "deskripsi": 1, "status": 1}
     ).to_list(50)
     issues_teks = "Tidak ada komplain/maintenance aktif." if not issues else "\n".join(
         f"  - [{'Komplain' if it['tipe'] == 'complaint' else 'Maintenance'}] Kamar {it.get('room_nomor') or '-'}: {it['deskripsi']} (status: {it['status']})"
         for it in issues
     )
 
-    hk_antrian = await db.rooms.count_documents({"status": "perlu_dibersihkan"})
+    hk_antrian = await db.rooms.count_documents(scoped({"status": "perlu_dibersihkan"}, property_id))
 
     semua_produk = await db.products.find(
-        {"aktif": True}, {"_id": 0, "nama": 1, "kategori": 1, "stok": 1, "stok_minimal": 1}
+        scoped({"aktif": True}, property_id), {"_id": 0, "nama": 1, "kategori": 1, "stok": 1, "stok_minimal": 1}
     ).sort("kategori", 1).to_list(200)
     per_kategori: Dict[str, list] = {}
     for p in semua_produk:
@@ -202,7 +202,7 @@ async def _kumpulkan_konteks_bisnis() -> str:
     # cuma angka total. Dibatasi 60 entri terbaru untuk jaga ukuran konteks & batas pesan Telegram.
     since_30d = (datetime.now(timezone.utc) - timedelta(days=30)).date().isoformat()
     expenses_30d = await db.expenses.find(
-        {"tanggal": {"$gte": since_30d}}, {"_id": 0, "tanggal": 1, "kategori": 1, "deskripsi": 1, "nominal": 1, "user": 1}
+        scoped({"tanggal": {"$gte": since_30d}}, property_id), {"_id": 0, "tanggal": 1, "kategori": 1, "deskripsi": 1, "nominal": 1, "user": 1}
     ).sort("tanggal", -1).to_list(60)
     if expenses_30d:
         expenses_teks = "\n".join(
@@ -229,10 +229,10 @@ async def _kumpulkan_konteks_bisnis() -> str:
     )
 
 
-async def _balasan_ai_owner(pesan_masuk: str) -> str:
+async def _balasan_ai_owner(pesan_masuk: str, property_id: str) -> str:
     if not _openai_client:
-        return await _ringkasan_owner_fallback_text()
-    konteks = await _kumpulkan_konteks_bisnis()
+        return await _ringkasan_owner_fallback_text(property_id)
+    konteks = await _kumpulkan_konteks_bisnis(property_id)
     try:
         resp = await asyncio.to_thread(
             _openai_client.chat.completions.create,
@@ -246,10 +246,10 @@ async def _balasan_ai_owner(pesan_masuk: str) -> str:
         return resp.choices[0].message.content
     except Exception as e:
         logging.getLogger("telegram_bot").warning(f"Gagal generate balasan AI owner: {e}")
-        return await _ringkasan_owner_fallback_text()
+        return await _ringkasan_owner_fallback_text(property_id)
 
 
-async def _pendapatan_kamar_per_tipe_hari_ini() -> Dict[str, int]:
+async def _pendapatan_kamar_per_tipe_hari_ini(property_id: str) -> Dict[str, int]:
     """Pendapatan kamar hari ini dipecah Menginap vs Day Use + jumlah kamar/transaksi.
     Day Use SELALU lewat `checkins` (checkin langsung ATAU dari booking yang sudah check-in —
     /checkins tidak pernah dipakai utk menginap, lihat docstring create_checkin) — booking
@@ -259,21 +259,21 @@ async def _pendapatan_kamar_per_tipe_hari_ini() -> Dict[str, int]:
     today_iso = datetime.now(timezone.utc).date().isoformat()
 
     co_today = await db.checkins.find(
-        {"jam_checkout": {"$gte": today_iso}, "status": "selesai"}, {"_id": 0, "total": 1}
+        scoped({"jam_checkout": {"$gte": today_iso}, "status": "selesai"}, property_id), {"_id": 0, "total": 1}
     ).to_list(500)
     dayuse_total = sum(c.get("total", 0) for c in co_today)
     dayuse_kamar = len(co_today)
 
-    dayuse_bk_belum_checkin = await db.bookings.find({
+    dayuse_bk_belum_checkin = await db.bookings.find(scoped({
         "tipe": "day_use", "payment_status": "paid", "paid_at": {"$gte": today_iso},
         "checkin_id": {"$exists": False},
-    }, {"_id": 0, "total": 1}).to_list(200)
+    }, property_id), {"_id": 0, "total": 1}).to_list(200)
     dayuse_total += sum(int(b.get("total") or 0) for b in dayuse_bk_belum_checkin)
     dayuse_kamar += len(dayuse_bk_belum_checkin)
 
-    menginap_bk = await db.bookings.find({
+    menginap_bk = await db.bookings.find(scoped({
         "tipe": "menginap", "payment_status": "paid", "paid_at": {"$gte": today_iso},
-    }, {"_id": 0, "total": 1}).to_list(200)
+    }, property_id), {"_id": 0, "total": 1}).to_list(200)
     menginap_total = sum(int(b.get("total") or 0) for b in menginap_bk)
     menginap_kamar = len(menginap_bk)
 
@@ -283,20 +283,21 @@ async def _pendapatan_kamar_per_tipe_hari_ini() -> Dict[str, int]:
     }
 
 
-async def _laporan_harian_text() -> str:
+async def _laporan_harian_text(property_id: str, property_nama: str = "") -> str:
     """Laporan akhir hari (dikirim otomatis jam 22:00 WIB ke owner & staff yang terhubung) —
     rinci: pemasukan dipecah menginap/day use (+ jumlah kamar) & metode bayar, pengeluaran
     dengan total DAN daftar detail per item."""
-    s = await report_summary(user=_DUMMY_USER)
+    s = await report_summary(user=_DUMMY_USER, property_id=property_id)
     today_iso = datetime.now(timezone.utc).date().isoformat()
-    kas = await report_kas_metode_bayar(from_date=today_iso, to_date=today_iso, user=_DUMMY_USER)
-    kamar = await _pendapatan_kamar_per_tipe_hari_ini()
+    kas = await report_kas_metode_bayar(from_date=today_iso, to_date=today_iso, user=_DUMMY_USER, property_id=property_id)
+    kamar = await _pendapatan_kamar_per_tipe_hari_ini(property_id)
     tanggal = datetime.now(timezone.utc).astimezone(WIB).strftime("%d %B %Y")
+    label = f" — {property_nama}" if property_nama else ""
 
     total_pemasukan = kamar["dayuse_total"] + kamar["menginap_total"] + s["pendapatan_kasir_hari_ini"] + s["pendapatan_service_hari_ini"]
 
     exp_today = await db.expenses.find(
-        {"tanggal": {"$gte": today_iso}}, {"_id": 0, "kategori": 1, "deskripsi": 1, "nominal": 1, "user": 1}
+        scoped({"tanggal": {"$gte": today_iso}}, property_id), {"_id": 0, "kategori": 1, "deskripsi": 1, "nominal": 1, "user": 1}
     ).sort("nominal", -1).to_list(200)
     total_pengeluaran = sum(e.get("nominal", 0) for e in exp_today)
     if exp_today:
@@ -308,7 +309,7 @@ async def _laporan_harian_text() -> str:
         pengeluaran_detail = "  Tidak ada pengeluaran hari ini."
 
     return (
-        f"📋 Laporan Akhir Hari — {tanggal}\n\n"
+        f"📋 Laporan Akhir Hari{label} — {tanggal}\n\n"
         f"💰 PEMASUKAN: {_rp(total_pemasukan)}\n"
         f"  🛏 Menginap: {_rp(kamar['menginap_total'])} ({kamar['menginap_kamar']} kamar)\n"
         f"  ☀️ Day Use: {_rp(kamar['dayuse_total'])} ({kamar['dayuse_kamar']} kamar)\n"
@@ -507,11 +508,15 @@ async def _handle_telegram_update(kind: str, request: Request):
         if items:
             reply = await _catat_pengeluaran_items(u, items)
         elif kind == "owner":
-            reply = await _balasan_ai_owner(text)
+            # Owner belum punya cara pilih properti lewat chat Telegram (fitur terpisah,
+            # belum ada) - default ke properti utama, sama seperti stopgap lain di file
+            # ini, sampai owner benar-benar mengelola >1 properti aktif.
+            reply = await _balasan_ai_owner(text, u.get("property_id") or await get_default_property_id())
         else:
             reply = "Kirim pengeluaran lewat teks, mis. \"50000 beli galon air\" (boleh lebih dari satu sekaligus), atau foto struk dengan caption serupa."
     else:
-        reply = "Kirim teks atau foto struk untuk catat pengeluaran." if kind == "staff" else await _balasan_ai_owner("")
+        reply = ("Kirim teks atau foto struk untuk catat pengeluaran." if kind == "staff"
+                  else await _balasan_ai_owner("", u.get("property_id") or await get_default_property_id()))
     await _kirim_pesan(token, chat_id, reply)
     return {"ok": True}
 
@@ -567,17 +572,35 @@ async def kirim_alert_owner(pesan: str):
 async def background_telegram_daily_report_loop():
     """Kirim laporan akhir hari ke semua user (owner+staff) yang sudah terhubung Telegram,
     sekali sehari jam 22:00 WIB. Cek tiap 5 menit, jaga guard `last_sent_date` supaya tidak
-    dobel kirim kalau proses sempat cek 2x dalam jam yang sama."""
+    dobel kirim kalau proses sempat cek 2x dalam jam yang sama.
+
+    Multi-properti (2026-07-25) - staff SELALU dapat laporan properti sendiri (terkunci
+    lewat `property_id` akunnya). Owner belum bisa pilih properti lewat Telegram, jadi
+    dapat SATU pesan terpisah per properti aktif (label nama properti di judul) - sama
+    pola dengan `ai_grow.background_daily_brief_loop`, supaya angka tiap properti tidak
+    tercampur jadi satu laporan yang menyesatkan."""
     last_sent_date = None
     while True:
         try:
             now_wib = datetime.now(timezone.utc).astimezone(WIB)
             if now_wib.hour == 22 and now_wib.date() != last_sent_date:
-                teks = await _laporan_harian_text()
+                properti_aktif = await db.properties.find({"aktif": True}, {"_id": 0, "id": 1, "nama": 1}).to_list(50)
+                default_property_id = await get_default_property_id()
+                teks_per_properti = {}
+                for p in properti_aktif:
+                    label = p.get("nama") if len(properti_aktif) > 1 else ""
+                    teks_per_properti[p["id"]] = await _laporan_harian_text(p["id"], label)
+
                 users = await db.users.find({"telegram_chat_id": {"$ne": None}}, {"_id": 0}).to_list(200)
                 for u in users:
                     kind = "owner" if u.get("role") == "owner" else "staff"
-                    await _kirim_pesan(BOT_CONFIG[kind]["token"], u["telegram_chat_id"], teks)
+                    if kind == "owner":
+                        for teks in teks_per_properti.values():
+                            await _kirim_pesan(BOT_CONFIG[kind]["token"], u["telegram_chat_id"], teks)
+                    else:
+                        pid = u.get("property_id") or default_property_id
+                        teks = teks_per_properti.get(pid) or await _laporan_harian_text(pid)
+                        await _kirim_pesan(BOT_CONFIG[kind]["token"], u["telegram_chat_id"], teks)
                 last_sent_date = now_wib.date()
         except Exception as e:
             logging.getLogger("telegram_bot").warning(f"Gagal kirim laporan harian Telegram: {e}")

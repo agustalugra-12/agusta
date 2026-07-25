@@ -132,6 +132,7 @@ async def change_room_status(room_id: str, body: RoomStatusUpdate, user: dict = 
     if body.status == "perlu_dibersihkan":
         await db.housekeeping_log.insert_one({
             "id": str(uuid.uuid4()),
+            "property_id": property_id,
             "room_id": r["id"],
             "room_nomor": r["nomor"],
             "tanggal": now_iso(),
@@ -154,7 +155,7 @@ async def housekeeping_mulai(room_id: str, user: dict = Depends(get_current_user
         raise HTTPException(404, "Kamar tidak ditemukan")
     if r["status"] != "perlu_dibersihkan":
         raise HTTPException(400, "Kamar tidak dalam status Perlu Dibersihkan")
-    pending = await db.housekeeping_log.find_one({"room_id": room_id, "status": {"$in": ["pending", "cleaning"]}}, sort=[("tanggal", -1)])
+    pending = await db.housekeeping_log.find_one(scoped({"room_id": room_id, "status": {"$in": ["pending", "cleaning"]}}, property_id), sort=[("tanggal", -1)])
     if pending and not pending.get("jam_mulai"):
         await db.housekeeping_log.update_one({"id": pending["id"]}, {"$set": {"jam_mulai": now_iso(), "status": "cleaning"}})
     return {"ok": True}
@@ -171,7 +172,7 @@ async def housekeeping_done(room_id: str, body: HousekeepingDone, user: dict = D
     if r["status"] != "perlu_dibersihkan":
         raise HTTPException(400, "Kamar tidak dalam status Perlu Dibersihkan")
     await db.rooms.update_one({"id": room_id}, {"$set": {"status": "kosong", "info": {}}})
-    pending = await db.housekeeping_log.find_one({"room_id": room_id, "status": {"$in": ["pending", "cleaning"]}}, sort=[("tanggal", -1)])
+    pending = await db.housekeeping_log.find_one(scoped({"room_id": room_id, "status": {"$in": ["pending", "cleaning"]}}, property_id), sort=[("tanggal", -1)])
     if pending:
         await db.housekeeping_log.update_one(
             {"id": pending["id"]},
@@ -194,7 +195,7 @@ async def housekeeping_inspect(room_id: str, user: dict = Depends(get_current_us
     r = await db.rooms.find_one(scoped({"id": room_id}, property_id))
     if not r:
         raise HTTPException(404, "Kamar tidak ditemukan")
-    log = await db.housekeeping_log.find_one({"room_id": room_id, "status": "clean"}, sort=[("tanggal", -1)])
+    log = await db.housekeeping_log.find_one(scoped({"room_id": room_id, "status": "clean"}, property_id), sort=[("tanggal", -1)])
     if not log:
         raise HTTPException(400, "Tidak ada riwayat pembersihan berstatus Clean untuk kamar ini")
     await db.housekeeping_log.update_one(
@@ -245,7 +246,7 @@ async def move_room(room_id: str, body: MoveRoomBody, user: dict = Depends(get_c
             )
     # housekeeping log untuk kamar lama
     await db.housekeeping_log.insert_one({
-        "id": str(uuid.uuid4()), "room_id": old["id"], "room_nomor": old["nomor"],
+        "id": str(uuid.uuid4()), "property_id": property_id, "room_id": old["id"], "room_nomor": old["nomor"],
         "tanggal": now_iso(), "jam_mulai": None, "jam_selesai": None,
         "petugas": "", "catatan": f"Pindah tamu ke kamar {new['nomor']}", "status": "pending",
     })

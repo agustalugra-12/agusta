@@ -205,7 +205,7 @@ async def collect_balance(bid: str, body: CollectBalanceBody, user: dict = Depen
         "amount_due": new_paid, "updated_at": now,
     }})
     await db.payment_log.insert_one({
-        "id": str(uuid.uuid4()), "booking_id": b["id"], "booking_kode": b["kode"],
+        "id": str(uuid.uuid4()), "property_id": property_id, "booking_id": b["id"], "booking_kode": b["kode"],
         "order_id": f"COLLECT-{b['kode']}-{uuid.uuid4().hex[:4].upper()}",
         "gross_amount": str(body.nominal), "payment_option": "collect_balance",
         "transaction_status": "settlement", "status_code": "200",
@@ -339,7 +339,7 @@ async def mark_paid_manual(bid: str, body: ManualMarkPaidBody, user: dict = Depe
         "updated_at": now,
     }})
     await db.payment_log.insert_one({
-        "id": str(uuid.uuid4()), "booking_id": b["id"], "booking_kode": b["kode"],
+        "id": str(uuid.uuid4()), "property_id": property_id, "booking_id": b["id"], "booking_kode": b["kode"],
         "order_id": f"MANUAL-{b['kode']}", "transaction_token": None, "redirect_url": None,
         "gross_amount": str(nominal), "payment_option": "manual",
         "transaction_status": "settlement", "status_code": "200",

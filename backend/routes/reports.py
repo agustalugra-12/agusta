@@ -26,10 +26,8 @@ async def booking_widgets(user: dict = Depends(get_current_user), property_id: s
     # Midtrans lama — field ini TIDAK filter `gateway`, sengaja mencakup histori keduanya).
     # gross_amount disimpan sebagai string "61800.00". "capture" = status khusus Midtrans lama
     # (kartu kredit), tidak pernah dihasilkan Tripay lagi tapi tetap relevan utk histori.
-    # payment_log TIDAK di-scope per properti (belum ada property_id di collection ini,
-    # scope-nya masih global) - lihat memory checkpoint multi-properti untuk gap ini.
     payment_total = await db.payment_log.aggregate([
-        {"$match": {"transaction_status": {"$in": ["settlement", "capture"]}}},
+        {"$match": scoped({"transaction_status": {"$in": ["settlement", "capture"]}}, property_id)},
         {"$group": {"_id": None, "sum": {"$sum": {"$toDouble": "$gross_amount"}}, "count": {"$sum": 1}}},
     ]).to_list(1)
     payment_sum = int(payment_total[0]["sum"]) if payment_total else 0
@@ -621,7 +619,7 @@ async def report_shift(from_date: str = Query(...), to_date: str = Query(...),
         r["expense_total"] += int(e.get("nominal") or 0)
 
     hk_docs = await db.housekeeping_log.find(
-        {"jam_selesai": {"$gte": start, "$lte": end}, "status": "selesai"}, {"_id": 0, "jam_selesai": 1, "petugas": 1}
+        scoped({"jam_selesai": {"$gte": start, "$lte": end}, "status": "selesai"}, property_id), {"_id": 0, "jam_selesai": 1, "petugas": 1}
     ).to_list(10000)
     for h in hk_docs:
         if not h.get("petugas"):

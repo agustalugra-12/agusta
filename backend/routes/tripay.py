@@ -116,7 +116,7 @@ async def tripay_create_transaction(body: TripayCreateTransactionBody):
             "updated_at": now_iso(),
         }})
     await db.payment_log.insert_one({
-        "id": str(uuid.uuid4()), "booking_id": b["id"], "booking_kode": b["kode"],
+        "id": str(uuid.uuid4()), "property_id": b.get("property_id"), "booking_id": b["id"], "booking_kode": b["kode"],
         "group_id": b.get("group_id"),
         "order_id": merchant_ref, "gateway": "tripay",
         "reference": trx.get("reference"), "checkout_url": trx.get("checkout_url"),
@@ -212,6 +212,7 @@ async def tripay_callback(request: Request):
             )
         new_log = {"id": str(uuid.uuid4()), "order_id": merchant_ref, "booking_id": booking_id,
                    "booking_kode": b_guess["kode"] if b_guess else None,
+                   "property_id": b_guess.get("property_id") if b_guess else None,
                    "created_at": now_iso(), **log_fields}
         await db.payment_log.insert_one(new_log)
 
