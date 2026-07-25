@@ -18,12 +18,12 @@ import {
 // API client tanpa auth (untuk endpoint /api/public/*)
 const PUBLIC_API = axios.create({ baseURL: `${process.env.REACT_APP_BACKEND_URL}/api` });
 const fmtRp = (n) => "Rp " + Number(n || 0).toLocaleString("id-ID");
-// Sama dengan EXTRA_BED_PRICE/EXTRA_BED_MAX di backend/core.py.
-// Day Use: flat sekali bayar. Menginap: dikali jumlah malam (lihat summary di bawah).
-const EXTRA_BED_PRICE = 50000;
-const EXTRA_BED_MAX = 2;
-// Sama dengan BREAKFAST_PRICE di backend/core.py — hanya berlaku untuk booking menginap.
-const BREAKFAST_PRICE = 25000;
+// Nilai default dipakai HANYA sebelum /public/pricing-config selesai di-fetch (atau kalau
+// fetch gagal) - sumber kebenaran sebenarnya adalah backend/core.py, diambil sekali via API
+// (2026-07-25, dulu di-hardcode terpisah di sini - gampang beda sendiri kalau salah satu
+// diubah tanpa yang lain). Backend tetap menghitung ulang total resminya sendiri saat
+// create booking, nilai ini murni untuk ringkasan tampilan sebelum submit.
+const DEFAULT_PRICING_CONFIG = { service_fee_pct: 0.03, extra_bed_price: 50000, extra_bed_max: 2, breakfast_price: 25000 };
 const CS_WHATSAPP = "0851-1945-9269";
 const CS_EMAIL = "pelangihomestay9@gmail.com";
 const JAM_OPERASIONAL = "07.00 – 22.00 WITA";
@@ -82,6 +82,7 @@ function BookingForm() {
   const [paymentOption, setPaymentOption] = useState("dp50"); // dp50 | full
   const [channels, setChannels] = useState([]);
   const [method, setMethod] = useState(""); // kode channel Tripay, mis. "BRIVA"
+  const [pricingConfig, setPricingConfig] = useState(DEFAULT_PRICING_CONFIG);
   const nav = useNavigate();
 
   useEffect(() => {
@@ -90,6 +91,11 @@ function BookingForm() {
     // tamu sampai ke ringkasan — daftarnya jarang berubah, aman di-fetch lebih awal.
     PUBLIC_API.get("/payments/tripay/channels").then(r => setChannels(r.data)).catch(() => setChannels([]));
   }, [propertySlug]);
+
+  // Konstanta harga tambahan - global (bukan per-properti), cukup di-fetch sekali di awal.
+  useEffect(() => {
+    PUBLIC_API.get("/public/pricing-config").then(r => setPricingConfig(r.data)).catch(() => {});
+  }, []);
 
   // Kalau tanggal check-in digeser melewati check-out yang sudah dipilih, geser check-out juga
   useEffect(() => {
@@ -137,16 +143,16 @@ function BookingForm() {
   const perRoomSummaries = useMemo(() => {
     const isMenginap = bookingTipe === "menginap";
     return selectedRooms.map((room) => {
-      const breakfastTotal = isMenginap && denganSarapan ? BREAKFAST_PRICE * nights : 0;
-      const extraBedTotal = extraBedQty * EXTRA_BED_PRICE * (isMenginap ? nights : 1);
+      const breakfastTotal = isMenginap && denganSarapan ? pricingConfig.breakfast_price * nights : 0;
+      const extraBedTotal = extraBedQty * pricingConfig.extra_bed_price * (isMenginap ? nights : 1);
       const tarifDasar = isMenginap ? room.tarif_menginap : room.tarif;
       const tarifKamar = tarifDasar * (isMenginap ? nights : 1);
       const subtotal = tarifKamar + breakfastTotal + extraBedTotal;
-      const svc = Math.round(subtotal * 0.03);
+      const svc = Math.round(subtotal * pricingConfig.service_fee_pct);
       const total = subtotal + svc;
       return { room, tarifKamar, breakfastTotal, extraBedTotal, subtotal, service_fee: svc, total };
     });
-  }, [selectedRooms, extraBedQty, denganSarapan, bookingTipe, nights]);
+  }, [selectedRooms, extraBedQty, denganSarapan, bookingTipe, nights, pricingConfig]);
 
   const summary = useMemo(() => {
     if (perRoomSummaries.length === 0) return null;
@@ -350,7 +356,7 @@ function BookingForm() {
                             className={`p-2.5 rounded-lg border-2 text-left transition-colors ${denganSarapan ? "border-teal-deep bg-teal-deep/8" : "border-teal-deep/15 hover:border-teal-deep/30"}`}
                           >
                             <div className="text-[9px] uppercase tracking-wider text-teal-deep/60 font-semibold">Dengan Sarapan</div>
-                            <div className="font-bold text-teal-deep">{fmtRp(c.tarif_menginap + BREAKFAST_PRICE)}</div>
+                            <div className="font-bold text-teal-deep">{fmtRp(c.tarif_menginap + pricingConfig.breakfast_price)}</div>
                             <div className="text-[9px] text-teal-deep/50">/ malam</div>
                           </button>
                         </div>
@@ -469,7 +475,7 @@ function BookingForm() {
                     >
                       <div>
                         <div className="font-medium text-sm text-teal-deep">Sarapan Pagi</div>
-                        <div className="text-xs text-teal-deep/60">{fmtRp(BREAKFAST_PRICE)} / malam per kamar (opsional)</div>
+                        <div className="text-xs text-teal-deep/60">{fmtRp(pricingConfig.breakfast_price)} / malam per kamar (opsional)</div>
                       </div>
                       <div className={`w-5 h-5 rounded border-2 grid place-items-center shrink-0 ${denganSarapan ? "border-teal-deep bg-teal-deep" : "border-teal-deep/30"}`}>
                         {denganSarapan && <CheckCircle2 className="w-3.5 h-3.5 text-cream" />}
@@ -480,7 +486,7 @@ function BookingForm() {
                 {selectedRooms.every((r) => r.tipe === "Cottage") && (
                   <div>
                     <Label className="text-xs font-semibold uppercase tracking-wider text-teal-deep/60 mb-1.5 block">Permintaan Khusus</Label>
-                    <ExtraBedSelector value={extraBedQty} onChange={setExtraBedQty} max={EXTRA_BED_MAX} harga={EXTRA_BED_PRICE} satuan={selectedRooms.length > 1 ? "kamar" : "pemesanan"} />
+                    <ExtraBedSelector value={extraBedQty} onChange={setExtraBedQty} max={pricingConfig.extra_bed_max} harga={pricingConfig.extra_bed_price} satuan={selectedRooms.length > 1 ? "kamar" : "pemesanan"} />
                     <p className="text-xs text-teal-deep/50 mt-1">1 kamar Cottage standar 2 dewasa + 1 anak. Tambah extra bed untuk kapasitas 3 dewasa + 1 anak.</p>
                   </div>
                 )}

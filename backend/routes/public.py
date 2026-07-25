@@ -34,6 +34,21 @@ def _booking_date_range(start: datetime, end: datetime):
     return start_date, end_date
 
 
+@api.get("/public/pricing-config")
+async def public_pricing_config():
+    """Konstanta harga tambahan (extra bed, sarapan, service fee) untuk ringkasan harga di
+    halaman booking publik SEBELUM submit — dulu di-hardcode terpisah di PublicBook.jsx,
+    gampang beda sendiri dari core.py kalau salah satu diubah tanpa yang lain. Sekarang satu
+    sumber kebenaran; backend tetap menghitung ulang total resminya sendiri saat create
+    booking (nilai di sini murni untuk tampilan awal, tidak pernah dipakai untuk hitung final)."""
+    return {
+        "service_fee_pct": SERVICE_FEE_PCT,
+        "extra_bed_price": EXTRA_BED_PRICE,
+        "extra_bed_max": EXTRA_BED_MAX,
+        "breakfast_price": BREAKFAST_PRICE,
+    }
+
+
 @api.get("/public/rooms-catalog")
 async def public_rooms_catalog(properti: Optional[str] = None):
     """Katalog kamar untuk halaman publik. Mengelompokkan berdasarkan tipe.

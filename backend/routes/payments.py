@@ -131,12 +131,3 @@ async def list_bookings_status_bayar(status_bayar: Optional[str] = None, search:
     if status_bayar:
         items = [b for b in items if b["status_bayar"] == status_bayar]
     return items
-
-@api.get("/public/bank-accounts")
-async def public_bank_accounts():
-    """Daftar rekening bank untuk transfer manual (tampil di halaman publik /book)."""
-    accounts = [
-        {"bank": "BRI", "nomor": os.environ.get("BANK_BRI_NUMBER", "464001008162533"),
-         "atas_nama": os.environ.get("BANK_BRI_NAME", "Pelangi Homestay")},
-    ]
-    return {"accounts": accounts, "instruksi": "Transfer sesuai nominal yang tertera, kemudian klik tombol 'Saya Sudah Transfer' untuk verifikasi oleh resepsionis."}
