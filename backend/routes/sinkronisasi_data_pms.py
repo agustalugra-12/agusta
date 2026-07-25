@@ -17,12 +17,12 @@ DATA_FLOW_DEFS = [
 
 
 @api.post("/sinkronisasi-data-pms/webhook")
-async def trigger_sync_webhook(user: dict = Depends(require_owner)):
+async def trigger_sync_webhook(user: dict = Depends(require_owner), property_id: str = Depends(get_active_property)):
     """Paksa dorong ulang status data Pelangi PMS terkini ke webhook bot WhatsApp —
     dipakai kalau staf curiga bot ketinggalan update (mekanisme retry manual), selain
     push otomatis yang sudah jalan tiap ada perubahan stok (lihat push_sync_event).
     """
-    jumlah_kamar = await db.rooms.count_documents({})
+    jumlah_kamar = await db.rooms.count_documents(scoped({}, property_id))
     await push_sync_event("manual_resync", f"Resync manual dipicu staf — {jumlah_kamar} kamar")
     log = await db.sync_data_pms_log.find_one({}, {"_id": 0}, sort=[("waktu", -1)])
     await log_activity(user, "trigger_sync_webhook", "Paksa resync data ke bot WhatsApp")
@@ -30,21 +30,21 @@ async def trigger_sync_webhook(user: dict = Depends(require_owner)):
 
 
 @api.get("/sinkronisasi-data-pms/dashboard")
-async def dashboard_sinkronisasi_pms(user: dict = Depends(get_current_user)):
+async def dashboard_sinkronisasi_pms(user: dict = Depends(get_current_user), property_id: str = Depends(get_active_property)):
     cfg = await db.webhook_config.find_one({})
     bot_aktif = bool(cfg and cfg.get("aktif"))
     now = now_iso()
 
-    rooms = await db.rooms.find({}, {"_id": 0, "tipe": 1}).to_list(200)
+    rooms = await db.rooms.find(scoped({}, property_id), {"_id": 0, "tipe": 1}).to_list(200)
     jumlah_kamar = len(rooms)
     jumlah_tipe = len(set(r["tipe"] for r in rooms))
-    reservasi_ota_count = await db.bookings.count_documents({"source": "ota"})
+    reservasi_ota_count = await db.bookings.count_documents(scoped({"source": "ota"}, property_id))
 
     flows = [
         {"key": "ketersediaan", "label": "Ketersediaan Kamar", "last_sync": now, "jumlah_record": jumlah_kamar, "status": "synced"},
         {"key": "harga", "label": "Harga & Tarif", "last_sync": now, "jumlah_record": jumlah_tipe, "status": "synced"},
         {"key": "status_booking", "label": "Status Booking", "last_sync": now if bot_aktif else None,
-         "jumlah_record": await db.bookings.count_documents({}), "status": "synced" if bot_aktif else "pending"},
+         "jumlah_record": await db.bookings.count_documents(scoped({}, property_id)), "status": "synced" if bot_aktif else "pending"},
         {"key": "reservasi_baru", "label": "Reservasi Baru (Email OTA)", "last_sync": now if reservasi_ota_count else None,
          "jumlah_record": reservasi_ota_count, "status": "synced" if reservasi_ota_count else "pending"},
     ]
@@ -52,11 +52,11 @@ async def dashboard_sinkronisasi_pms(user: dict = Depends(get_current_user)):
 
 
 @api.get("/sinkronisasi-data-pms/perbandingan-ketersediaan")
-async def perbandingan_ketersediaan(user: dict = Depends(get_current_user)):
+async def perbandingan_ketersediaan(user: dict = Depends(get_current_user), property_id: str = Depends(get_active_property)):
     """Bot & PMS selalu sama (bot membaca langsung dari sumber yang sama) — endpoint ini
     tetap disediakan untuk kontrak UI, tapi nilainya akan selalu identik (bukti arsitektur
     zero-drift, bukan data tiruan yang kebetulan cocok)."""
-    rooms = await db.rooms.find({}, {"_id": 0, "tipe": 1, "status": 1}).to_list(200)
+    rooms = await db.rooms.find(scoped({}, property_id), {"_id": 0, "tipe": 1, "status": 1}).to_list(200)
     per_tipe: Dict[str, int] = {}
     for r in rooms:
         if r["status"] == "kosong":
@@ -65,9 +65,9 @@ async def perbandingan_ketersediaan(user: dict = Depends(get_current_user)):
 
 
 @api.get("/sinkronisasi-data-pms/referensi")
-async def referensi_reservasi(user: dict = Depends(get_current_user)):
+async def referensi_reservasi(user: dict = Depends(get_current_user), property_id: str = Depends(get_active_property)):
     bookings = await db.bookings.find(
-        {"status": {"$in": ["aktif", "booking_paid", "booking_pending"]}},
+        scoped({"status": {"$in": ["aktif", "booking_paid", "booking_pending"]}}, property_id),
         {"_id": 0, "id": 1, "kode": 1, "nama_tamu": 1, "room_tipe": 1, "status": 1},
     ).sort("created_at", -1).to_list(10)
     STATUS_LABEL = {"aktif": "Confirmed", "booking_paid": "Confirmed", "booking_pending": "Pending"}

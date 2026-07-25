@@ -14,10 +14,15 @@ from core import *
 import httpx
 
 
-async def _cari_kamar_dari_no_hp(no_hp: str):
+async def _cari_kamar_dari_no_hp(no_hp: str, property_id: str):
     """Cari kamar aktif tamu dari nomor HP-nya (checkin aktif, lalu booking checked_in sebagai
     fallback) — dicoba beberapa variasi format (0xxx vs 62xxx) karena provider WA & PMS bisa
-    beda konvensi penyimpanan nomor."""
+    beda konvensi penyimpanan nomor.
+
+    Multi-properti (2026-07-25) - `property_id` WAJIB diisi: tanpa ini, nomor HP tamu yang
+    kebetulan sama/mirip di 2 properti berbeda bisa salah cocok ke kamar properti lain -
+    ditemukan lewat evaluasi multi-properti, satu-satunya pemanggil (integrasi_ai_bot.py,
+    tiket komplain AI) sudah tahu property_id dari API key bot yang dipakai."""
     digits = re.sub(r"\D", "", no_hp or "")
     if not digits:
         return None, ""
@@ -26,11 +31,11 @@ async def _cari_kamar_dari_no_hp(no_hp: str):
         variasi.add("0" + digits[2:])
     elif digits.startswith("0"):
         variasi.add("62" + digits[1:])
-    ci = await db.checkins.find_one({"no_hp": {"$in": list(variasi)}, "status": "aktif"}, {"_id": 0, "room_id": 1, "room_nomor": 1})
+    ci = await db.checkins.find_one(scoped({"no_hp": {"$in": list(variasi)}, "status": "aktif"}, property_id), {"_id": 0, "room_id": 1, "room_nomor": 1})
     if ci:
         return ci["room_id"], ci["room_nomor"]
     bk = await db.bookings.find_one(
-        {"no_hp": {"$in": list(variasi)}, "status": "checked_in"},
+        scoped({"no_hp": {"$in": list(variasi)}, "status": "checked_in"}, property_id),
         {"_id": 0, "room_id": 1, "room_nomor": 1}, sort=[("created_at", -1)],
     )
     if bk:

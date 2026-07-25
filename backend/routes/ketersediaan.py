@@ -33,13 +33,13 @@ def _occupies_date(start: datetime, end: datetime, day) -> bool:
     return start_date <= day < end_date
 
 
-async def _room_status_breakdown():
+async def _room_status_breakdown(property_id: str):
     """Ambil status kamar sekali, dipakai bareng oleh ringkasan/status-tipe/notifikasi/live
     supaya polling berkala tidak query db.rooms berkali-kali per request.
     'Tersedia' = kamar berstatus kosong; selain itu (day_use, menginap, perlu_dibersihkan,
     maintenance) dihitung sebagai terisi karena tidak siap dibooking langsung.
     """
-    rooms = await db.rooms.find({}, {"_id": 0, "tipe": 1, "status": 1}).to_list(500)
+    rooms = await db.rooms.find(scoped({}, property_id), {"_id": 0, "tipe": 1, "status": 1}).to_list(500)
     by_tipe: Dict[str, Dict[str, int]] = {}
     for r in rooms:
         tipe = r.get("tipe", "-")
@@ -79,9 +79,9 @@ def _notifikasi_from_breakdown(by_tipe: Dict[str, Dict[str, int]]) -> list:
 
 # ---- Dasbor Ketersediaan ----
 @api.get("/ketersediaan/ringkasan-hari-ini")
-async def ringkasan_hari_ini(user: dict = Depends(get_current_user)):
+async def ringkasan_hari_ini(user: dict = Depends(get_current_user), property_id: str = Depends(get_active_property)):
     """Ringkasan okupansi hari ini: total kamar tersedia, terisi, dan persentase okupansi."""
-    rooms, _ = await _room_status_breakdown()
+    rooms, _ = await _room_status_breakdown(property_id)
     return _ringkasan_from_rooms(rooms)
 
 
@@ -90,21 +90,22 @@ async def kalender_bulanan(
     year: int = Query(..., ge=2000, le=2100),
     month: int = Query(..., ge=1, le=12),
     user: dict = Depends(get_current_user),
+    property_id: str = Depends(get_active_property),
 ):
     """Okupansi per hari untuk satu bulan (Kalender Ketersediaan). Dihitung dari booking
     aktif/pending/paid yang overlap tiap tanggal — bukan status kamar hari-ini (yang hanya
     relevan untuk hari ini).
     """
-    total_rooms = await db.rooms.count_documents({})
+    total_rooms = await db.rooms.count_documents(scoped({}, property_id))
     month_start = datetime(year, month, 1, tzinfo=timezone.utc)
     month_end = datetime(year + 1, 1, 1, tzinfo=timezone.utc) if month == 12 else datetime(year, month + 1, 1, tzinfo=timezone.utc)
 
-    bookings = await db.bookings.find({
+    bookings = await db.bookings.find(scoped({
         "status": {"$in": ACTIVE_BOOKING_STATUSES},
         "sync_status": {"$nin": SYNC_STATUS_BELUM_CONFIRMED},
         "jam_mulai": {"$lt": month_end.isoformat()},
         "jam_selesai": {"$gte": month_start.isoformat()},
-    }, {"_id": 0, "room_id": 1, "jam_mulai": 1, "jam_selesai": 1}).to_list(2000)
+    }, property_id), {"_id": 0, "room_id": 1, "jam_mulai": 1, "jam_selesai": 1}).to_list(2000)
 
     parsed = [(b["room_id"], parse_iso(b["jam_mulai"], "jam_mulai"), parse_iso(b["jam_selesai"], "jam_selesai")) for b in bookings if b.get("jam_selesai")]
 
@@ -130,6 +131,7 @@ async def kalender_bulanan(
 async def ketersediaan_hari(
     tanggal: str = Query(...),
     user: dict = Depends(get_current_user),
+    property_id: str = Depends(get_active_property),
 ):
     """Ketersediaan satu tanggal tertentu, dipecah per tipe kamar — dipakai dialog detail hari
     di Kalender Ketersediaan. Logika overlap booking sama dengan kalender_bulanan, tapi
@@ -141,13 +143,13 @@ async def ketersediaan_hari(
         raise HTTPException(400, "Format tanggal harus YYYY-MM-DD")
     day_end = day_start + timedelta(days=1)
 
-    rooms = await db.rooms.find({}, {"_id": 0, "id": 1, "tipe": 1}).to_list(500)
-    bookings = await db.bookings.find({
+    rooms = await db.rooms.find(scoped({}, property_id), {"_id": 0, "id": 1, "tipe": 1}).to_list(500)
+    bookings = await db.bookings.find(scoped({
         "status": {"$in": ACTIVE_BOOKING_STATUSES},
         "sync_status": {"$nin": SYNC_STATUS_BELUM_CONFIRMED},
         "jam_mulai": {"$lt": day_end.isoformat()},
         "jam_selesai": {"$gte": day_start.isoformat()},
-    }, {"_id": 0, "room_id": 1, "jam_mulai": 1, "jam_selesai": 1}).to_list(2000)
+    }, property_id), {"_id": 0, "room_id": 1, "jam_mulai": 1, "jam_selesai": 1}).to_list(2000)
     occupied_room_ids = {
         b["room_id"] for b in bookings
         if b.get("jam_selesai") and _occupies_date(parse_iso(b["jam_mulai"], "jam_mulai"), parse_iso(b["jam_selesai"], "jam_selesai"), day_start.date())
@@ -177,31 +179,31 @@ async def ketersediaan_hari(
 
 
 @api.get("/ketersediaan/status-tipe-kamar")
-async def status_tipe_kamar(user: dict = Depends(get_current_user)):
+async def status_tipe_kamar(user: dict = Depends(get_current_user), property_id: str = Depends(get_active_property)):
     """Ketersediaan hari ini, dipecah per tipe kamar (Standard/Cottage)."""
-    _, by_tipe = await _room_status_breakdown()
+    _, by_tipe = await _room_status_breakdown(property_id)
     return _status_tipe_from_breakdown(by_tipe)
 
 
 @api.get("/ketersediaan/notifikasi")
-async def notifikasi_ketersediaan(user: dict = Depends(get_current_user)):
+async def notifikasi_ketersediaan(user: dict = Depends(get_current_user), property_id: str = Depends(get_active_property)):
     """Deteksi kondisi yang perlu perhatian staff: stok kamar per tipe yang menipis/habis.
     Availability di aplikasi ini dibaca langsung dari satu sumber data (bukan disinkronkan
     dari sistem lain), sehingga tidak ada kelas notifikasi 'error sinkronisasi' — lihat
     keputusan pada task 'Buat mekanisme sinkronisasi data dari Pelangi PMS'.
     """
-    _, by_tipe = await _room_status_breakdown()
+    _, by_tipe = await _room_status_breakdown(property_id)
     return _notifikasi_from_breakdown(by_tipe)
 
 
 @api.get("/ketersediaan/live")
-async def ketersediaan_live(user: dict = Depends(get_current_user)):
+async def ketersediaan_live(user: dict = Depends(get_current_user), property_id: str = Depends(get_active_property)):
     """Endpoint gabungan (ringkasan + status tipe kamar + notifikasi) dalam satu response,
     dipakai frontend untuk auto-refresh berkala (polling) di Dasbor Ketersediaan — mengikuti
     pola polling sederhana yang sudah dipakai Dashboard.jsx (setInterval), bukan WebSocket,
     karena tidak ada infrastruktur WebSocket di backend ini.
     """
-    rooms, by_tipe = await _room_status_breakdown()
+    rooms, by_tipe = await _room_status_breakdown(property_id)
     return {
         "ringkasan": _ringkasan_from_rooms(rooms),
         "status_tipe_kamar": _status_tipe_from_breakdown(by_tipe),

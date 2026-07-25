@@ -7,8 +7,13 @@ from core import *
 # `rooms` yang sudah ada (dipakai juga oleh /api/rooms dan /api/public/rooms-catalog).
 
 @api.get("/pms-room-types")
-async def list_pms_room_types(user: dict = Depends(get_current_user)):
-    rooms = await db.rooms.find({}, {"_id": 0, "tipe": 1, "tarif": 1}).to_list(500)
+async def list_pms_room_types(user: dict = Depends(get_current_user), property_id: str = Depends(get_active_property)):
+    """Baca `rooms` di-scope ke properti aktif (2026-07-25) - sama seperti setiap endpoint
+    kamar lain di sistem ini, supaya jumlah_kamar tidak tercampur antar properti. Tabel
+    `room_mappings`/`email_logs` di bawah SENGAJA tetap global - keputusan bisnis sudah
+    ada (lihat routes/otomasi_email.py): integrasi RedDoorz/OTA masih 1 akun Gmail
+    bersama untuk semua properti, belum dipisah per properti."""
+    rooms = await db.rooms.find(scoped({}, property_id), {"_id": 0, "tipe": 1, "tarif": 1}).to_list(500)
     grouped: Dict[str, Any] = {}
     for r in rooms:
         t = r["tipe"]
@@ -18,12 +23,12 @@ async def list_pms_room_types(user: dict = Depends(get_current_user)):
     return list(grouped.values())
 
 @api.post("/pms-room-types/sync")
-async def sync_pms_room_types(user: dict = Depends(require_owner)):
+async def sync_pms_room_types(user: dict = Depends(require_owner), property_id: str = Depends(get_active_property)):
     """"Impor dari PMS" — di arsitektur ini PMS = aplikasi ini sendiri, jadi "sinkronisasi"
     berarti membaca ulang `rooms` (selalu live). Dipertahankan sebagai endpoint eksplisit
     supaya tombol "Impor dari PMS" di UI punya aksi nyata + tercatat di audit log.
     """
-    tipe_list = await list_pms_room_types(user)
+    tipe_list = await list_pms_room_types(user, property_id)
     await log_activity(user, "sync_pms_room_types", f"Impor {len(tipe_list)} tipe kamar dari PMS")
     return {"tipe": [t["tipe"] for t in tipe_list], "waktu": now_iso()}
 

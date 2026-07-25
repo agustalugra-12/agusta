@@ -161,7 +161,7 @@ async def ai_bot_buat_tiket(body: AiBotTiketIn, property_id: str = Depends(verif
         if r:
             room_id, room_nomor = r["id"], r["nomor"]
     if not room_id:
-        room_id, room_nomor = await _cari_kamar_dari_no_hp(body.no_hp)
+        room_id, room_nomor = await _cari_kamar_dari_no_hp(body.no_hp, property_id)
     if not room_id and body.room_nomor:
         room_nomor = body.room_nomor.strip()  # tidak match db.rooms persis, tetap tampilkan apa adanya
     tiket = await buat_issue(

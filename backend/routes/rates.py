@@ -5,8 +5,8 @@ from core import *
 # `rates` cuma menyimpan override per tanggal — tanggal tanpa override memakai tarif dasar.
 
 
-async def _tarif_dasar_per_tipe() -> Dict[str, int]:
-    rooms = await db.rooms.find({}, {"_id": 0, "tipe": 1, "tarif": 1}).to_list(200)
+async def _tarif_dasar_per_tipe(property_id: str) -> Dict[str, int]:
+    rooms = await db.rooms.find(scoped({}, property_id), {"_id": 0, "tipe": 1, "tarif": 1}).to_list(200)
     out: Dict[str, int] = {}
     for r in rooms:
         out.setdefault(r["tipe"], r["tarif"])
@@ -15,18 +15,19 @@ async def _tarif_dasar_per_tipe() -> Dict[str, int]:
 
 @api.get("/rates/kalender")
 async def get_kalender_harga(room_type: str = Query(...), from_date: str = Query(...),
-                              to_date: str = Query(...), user: dict = Depends(get_current_user)):
+                              to_date: str = Query(...), user: dict = Depends(get_current_user),
+                              property_id: str = Depends(get_active_property)):
     """Harga per tanggal untuk satu tipe kamar dalam rentang [from_date, to_date]:
     override dari `rates` kalau ada, jatuh balik ke tarif dasar `rooms.tarif`."""
-    dasar = await _tarif_dasar_per_tipe()
+    dasar = await _tarif_dasar_per_tipe(property_id)
     if room_type not in dasar:
         raise HTTPException(404, "Tipe kamar tidak ditemukan")
     tarif_dasar = dasar[room_type]
 
-    overrides = await db.rates.find({
+    overrides = await db.rates.find(scoped({
         "room_type": room_type,
         "tanggal": {"$gte": from_date, "$lte": to_date},
-    }, {"_id": 0, "tanggal": 1, "harga": 1}).to_list(400)
+    }, property_id), {"_id": 0, "tanggal": 1, "harga": 1}).to_list(400)
     by_date = {o["tanggal"]: o["harga"] for o in overrides}
 
     d_from = datetime.fromisoformat(from_date).date()
@@ -41,16 +42,18 @@ async def get_kalender_harga(room_type: str = Query(...), from_date: str = Query
 
 
 @api.get("/rates/tipe-kamar")
-async def get_tipe_kamar_rates(user: dict = Depends(get_current_user)):
+async def get_tipe_kamar_rates(user: dict = Depends(get_current_user), property_id: str = Depends(get_active_property)):
     """Daftar tipe kamar + tarif dasar, dipakai untuk tab selector di halaman Kalender Harga."""
-    dasar = await _tarif_dasar_per_tipe()
+    dasar = await _tarif_dasar_per_tipe(property_id)
     return [{"tipe": k, "tarif_dasar": v} for k, v in dasar.items()]
 
 
 @api.post("/rates/update-massal")
-async def update_harga_massal(body: RateBulkUpdateBody, user: dict = Depends(get_current_user)):
+async def update_harga_massal(body: RateBulkUpdateBody, user: dict = Depends(get_current_user),
+                               property_id: str = Depends(get_active_property)):
     """Update Harga Massal: terapkan `harga` ke setiap tanggal di [dari, sampai] untuk satu
-    tipe kamar (atau semua tipe kalau room_type == 'Semua'). Upsert per (room_type, tanggal)."""
+    tipe kamar (atau semua tipe kalau room_type == 'Semua'). Upsert per (property_id, room_type, tanggal)
+    - cocok dengan compound unique index yang sudah ada sejak Fase 0 multi-properti."""
     if body.harga <= 0:
         raise HTTPException(400, "Harga harus lebih dari 0")
     d_from = datetime.fromisoformat(body.dari).date()
@@ -58,7 +61,7 @@ async def update_harga_massal(body: RateBulkUpdateBody, user: dict = Depends(get
     if d_from > d_to:
         raise HTTPException(400, "Rentang tanggal tidak valid")
 
-    dasar = await _tarif_dasar_per_tipe()
+    dasar = await _tarif_dasar_per_tipe(property_id)
     tipe_list = list(dasar.keys()) if body.room_type == "Semua" else [body.room_type]
     for t in tipe_list:
         if t not in dasar:
@@ -71,9 +74,9 @@ async def update_harga_massal(body: RateBulkUpdateBody, user: dict = Depends(get
         iso = d.isoformat()
         for t in tipe_list:
             await db.rates.update_one(
-                {"room_type": t, "tanggal": iso},
+                scoped({"room_type": t, "tanggal": iso}, property_id),
                 {"$set": {"harga": body.harga, "updated_at": now, "updated_by": user["nama"]},
-                 "$setOnInsert": {"id": str(uuid.uuid4()), "room_type": t, "tanggal": iso}},
+                 "$setOnInsert": {"id": str(uuid.uuid4()), "room_type": t, "tanggal": iso, "property_id": property_id}},
                 upsert=True,
             )
         d += timedelta(days=1)
