@@ -466,7 +466,7 @@ async def batalkan_reservasi_otomatis(log_id: str, data: dict, sumber: str, subj
             "cancel_reason": f'Dibatalkan otomatis: email {data.get("jenis", "modifikasi/pembatalan")} OTA "{subjek}" ({sumber}, no. {no_reservasi})',
             "cancel_fee": 0, "refund_amount": 0,
         }})
-        await log_availability_change(booking["room_id"], booking.get("room_tipe", ""), 1, "booking_dibatalkan_otomatis_ota", booking_id=booking["id"])
+        await log_availability_change(booking["room_id"], booking.get("room_tipe", ""), 1, "booking_dibatalkan_otomatis_ota", booking.get("property_id"), booking_id=booking["id"])
         await db.audit_log.insert_one({
             "id": str(uuid.uuid4()), "user_id": None, "username": "ai_email_parser",
             "action": "cancel_ota_auto",
@@ -853,7 +853,7 @@ async def modifikasi_batalkan(booking_id: str, user: dict = Depends(get_current_
         "cancel_fee": 0, "refund_amount": 0,
         "modifikasi_status": "dibatalkan", "modifikasi_reviewed_at": now, "modifikasi_reviewed_by": user["nama"],
     }})
-    await log_availability_change(b["room_id"], b.get("room_tipe", ""), 1, "booking_dibatalkan_modifikasi_ota", booking_id=b["id"])
+    await log_availability_change(b["room_id"], b.get("room_tipe", ""), 1, "booking_dibatalkan_modifikasi_ota", b.get("property_id"), booking_id=b["id"])
     await db.email_logs.update_many(
         {"id": {"$in": b.get("modifikasi_log_ids", [])}},
         {"$set": {"status": "Parsed_Success", "aksi": "reservasi_dibatalkan", "alasan": None}},

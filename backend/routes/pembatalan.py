@@ -136,7 +136,7 @@ async def approve_cancellation_request(booking_id: str, user: dict = Depends(get
     if b.get("payment_status") == "paid":
         update_fields["payment_status"] = "refunded" if refund > 0 else "forfeited"
     await db.bookings.update_one({"id": booking_id}, {"$set": update_fields})
-    await log_availability_change(b["room_id"], b.get("room_tipe", ""), 1, "booking_dibatalkan_ai", booking_id=b["id"])
+    await log_availability_change(b["room_id"], b.get("room_tipe", ""), 1, "booking_dibatalkan_ai", b.get("property_id"), booking_id=b["id"])
     await log_activity(
         user, "approve_cancellation_request",
         f"Setujui pembatalan {b['kode']} ({b['nama_tamu']}) — refund Rp{refund:,}".replace(",", "."),

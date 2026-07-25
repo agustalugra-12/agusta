@@ -228,16 +228,21 @@ async def log_activity(user: dict, action: str, detail: str = "", entity: str = 
         "timestamp": now_iso(),
     })
 
-async def log_availability_change(room_id: str, room_tipe: str, stock_change: int, reason: str, booking_id: Optional[str] = None):
+async def log_availability_change(room_id: str, room_tipe: str, stock_change: int, reason: str, property_id: str, booking_id: Optional[str] = None):
     """Catat pergerakan ketersediaan kamar (Dasbor Ketersediaan — riwayat stok & okupansi).
     stock_change: +1 saat kamar dilepas kembali jadi tersedia, -1 saat kamar terisi/dibooking.
-    """
+
+    Multi-properti (2026-07-25) - `property_id` WAJIB diisi (gap terakhir yang ditemukan
+    lewat evaluasi ulang multi-properti): sebelumnya `availability_logs` sama sekali tidak
+    ada penanda properti, jadi riwayat stok (routes/sinkronisasi_ketersediaan.py) selalu
+    tercampur semua properti jadi satu."""
     await db.availability_logs.insert_one({
         "id": str(uuid.uuid4()),
         "room_id": room_id,
         "room_tipe": room_tipe,
         "stock_change": stock_change,
         "reason": reason,
+        "property_id": property_id,
         "booking_id": booking_id,
         "changed_at": now_iso(),
     })

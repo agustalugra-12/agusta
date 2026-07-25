@@ -95,7 +95,7 @@ async def create_booking(body: BookingCreate, user: dict = Depends(get_current_u
             if group_id:
                 doc["group_id"] = group_id
             await db.bookings.insert_one(doc)
-            await log_availability_change(r["id"], r["tipe"], -1, "booking_dibuat", booking_id=doc["id"])
+            await log_availability_change(r["id"], r["tipe"], -1, "booking_dibuat", property_id, booking_id=doc["id"])
             await upsert_guest(body.nama_tamu, body.no_hp, body.no_identitas, body.kendaraan, property_id, count_kunjungan=False)
             await log_activity(user, "create_booking", f"Booking {body.tipe} kamar {r['nomor']} untuk {body.nama_tamu}", entity=r["nomor"])
             doc.pop("_id", None)
@@ -166,7 +166,7 @@ async def cancel_with_fee(bid: str, body: CancelWithFeeBody, user: dict = Depend
     if b.get("status") == "booking_paid":
         update_fields["payment_status"] = "refunded" if refund > 0 else "forfeited"
     await db.bookings.update_one({"id": bid}, {"$set": update_fields})
-    await log_availability_change(b["room_id"], b.get("room_tipe", ""), 1, "booking_dibatalkan", booking_id=b["id"])
+    await log_availability_change(b["room_id"], b.get("room_tipe", ""), 1, "booking_dibatalkan", b.get("property_id"), booking_id=b["id"])
     detail = (
         f"Cancel booking {b['kode']}: total Rp{total:,}, fee Rp{fee:,}, "
         f"{'refund Rp' + format(refund, ',') if refund > 0 else 'tidak ada refund'}"
@@ -442,7 +442,7 @@ async def mark_no_show(bid: str, body: NoShowBody, user: dict = Depends(get_curr
         "status": "no_show", "payment_status": "kept",
         "no_show_at": now, "no_show_by": user["nama"], "no_show_reason": body.alasan,
     }})
-    await log_availability_change(b["room_id"], b.get("room_tipe", ""), 1, "no_show", booking_id=b["id"])
+    await log_availability_change(b["room_id"], b.get("room_tipe", ""), 1, "no_show", b.get("property_id"), booking_id=b["id"])
     await log_activity(user, "no_show",
                        f"No-show booking {b['kode']} kamar {b.get('room_nomor','')}: Rp{paid:,} tetap masuk pembukuan".replace(",", "."),
                        entity=b.get("room_nomor", ""))
@@ -553,6 +553,6 @@ async def cancel_booking(bid: str, user: dict = Depends(get_current_user),
     if b["status"] not in ("aktif", "booking_pending", "booking_paid"):
         raise HTTPException(400, "Booking sudah tidak dapat dibatalkan")
     await db.bookings.update_one({"id": bid}, {"$set": {"status": "cancelled", "cancelled_at": now_iso(), "cancelled_by": user["nama"]}})
-    await log_availability_change(b["room_id"], b.get("room_tipe", ""), 1, "booking_dibatalkan", booking_id=b["id"])
+    await log_availability_change(b["room_id"], b.get("room_tipe", ""), 1, "booking_dibatalkan", b.get("property_id"), booking_id=b["id"])
     await log_activity(user, "cancel_booking", f"Batalkan booking {b['kode']} kamar {b['room_nomor']}")
     return {"ok": True}

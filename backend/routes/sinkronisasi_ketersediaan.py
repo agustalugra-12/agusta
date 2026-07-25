@@ -60,12 +60,15 @@ async def riwayat_stok(
     sampai: Optional[str] = Query(None),
     tipe_kamar: Optional[str] = Query(None),
     user: dict = Depends(get_current_user),
+    property_id: str = Depends(get_active_property),
 ):
     """Riwayat perubahan stok — dari `availability_logs` sungguhan (Fase 1), dilengkapi
     `sumber` hasil lookup ke `bookings.source` (online -> Website, walk_in -> Pelangi PMS,
     ota -> Email OTA) supaya kolom Sumber di UI mencerminkan saluran asli, bukan data tiruan.
+    Multi-properti (2026-07-25) - `availability_logs` sekarang punya property_id juga
+    (gap terakhir yang ditutup, ditemukan lewat evaluasi ulang multi-properti).
     """
-    q: Dict[str, Any] = {}
+    q: Dict[str, Any] = scoped({}, property_id)
     if tipe_kamar:
         q["room_tipe"] = tipe_kamar
     if dari or sampai:
@@ -79,7 +82,7 @@ async def riwayat_stok(
 
     booking_ids = list({l["booking_id"] for l in logs if l.get("booking_id")})
     bookings = await db.bookings.find(
-        {"id": {"$in": booking_ids}}, {"_id": 0, "id": 1, "source": 1, "room_nomor": 1}
+        scoped({"id": {"$in": booking_ids}}, property_id), {"_id": 0, "id": 1, "source": 1, "room_nomor": 1}
     ).to_list(len(booking_ids) or 1) if booking_ids else []
     booking_map = {b["id"]: b for b in bookings}
     SOURCE_LABEL = {"online": "Website", "walk_in": "Pelangi PMS", "ota": "Email OTA"}

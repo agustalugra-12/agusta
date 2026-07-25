@@ -31,6 +31,8 @@ CORE_COLLECTIONS = [
     # SEBELUM/SESEGERA deploy Fase 4 landing, bukan opsional seperti collection lain.
     "payment_log", "housekeeping_log",  # 2026-07-25, gap kecil yang tersisa - ditutup
     # belakangan karena tidak langsung bikin crash/leak seserius Fase 4 di atas.
+    "availability_logs",  # 2026-07-25, gap terakhir dari evaluasi ulang multi-properti -
+    # riwayat stok (routes/sinkronisasi_ketersediaan.py) tercampur semua properti tanpa ini.
 ]
 
 

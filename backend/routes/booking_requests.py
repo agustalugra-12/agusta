@@ -209,7 +209,7 @@ async def _coba_auto_approve_day_use(doc: Dict[str, Any]) -> None:
             "approved_by": "AI WhatsApp (otomatis)", "approved_at": now, "updated_at": now,
             "checkout_url": trx.get("checkout_url"), "total": booking["total"],
         }})
-        await log_availability_change(room["id"], room["tipe"], 0, "booking_auto_approve_ai", booking_id=booking["id"])
+        await log_availability_change(room["id"], room["tipe"], 0, "booking_auto_approve_ai", doc["property_id"], booking_id=booking["id"])
 
         pesan = (
             f"Halo {doc['nama_tamu']}, booking Day Use Anda *otomatis dikonfirmasi* berdasarkan "
@@ -517,7 +517,7 @@ async def approve_booking_request(rid: str, body: BookingRequestApprove, user: d
                 }})
                 await log_availability_change(
                     b["room_id"], b.get("room_tipe", ""), 1, "booking_dibatalkan_rollback_approve_gagal",
-                    booking_id=b["id"],
+                    b.get("property_id"), booking_id=b["id"],
                 )
             raise
 

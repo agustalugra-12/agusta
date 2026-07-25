@@ -174,7 +174,7 @@ async def create_reservation(data: Dict[str, Any], property_id: str, source: str
     async with room_locks(data["room_id"]):
         await check_room_available(data["room_id"], mulai, selesai, property_id)
         await db.bookings.insert_one(doc)
-    await log_availability_change(r["id"], r["tipe"], -1, "booking_dibuat", booking_id=doc["id"])
+    await log_availability_change(r["id"], r["tipe"], -1, "booking_dibuat", property_id, booking_id=doc["id"])
     await upsert_guest(data["nama_tamu"], data["no_hp"], data["no_identitas"], data["kendaraan"],
                         property_id, count_kunjungan=False)
 

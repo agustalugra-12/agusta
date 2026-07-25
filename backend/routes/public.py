@@ -281,7 +281,7 @@ async def public_create_booking(body: PublicBookingCreate, properti: Optional[st
             }})
             await log_availability_change(
                 b["room_id"], b.get("room_tipe", ""), 1, "booking_dibatalkan_rollback_group_gagal",
-                booking_id=b["id"],
+                b.get("property_id"), booking_id=b["id"],
             )
         raise
 
@@ -332,7 +332,7 @@ async def public_batalkan_booking(bid: str, body: CancelWithFeeBody = CancelWith
     if is_paid:
         update_fields["payment_status"] = "refunded" if refund > 0 else "forfeited"
     await db.bookings.update_one({"id": bid}, {"$set": update_fields})
-    await log_availability_change(b["room_id"], b.get("room_tipe", ""), 1, "booking_dibatalkan_mandiri", booking_id=b["id"])
+    await log_availability_change(b["room_id"], b.get("room_tipe", ""), 1, "booking_dibatalkan_mandiri", b.get("property_id"), booking_id=b["id"])
     await db.audit_log.insert_one({
         "id": str(uuid.uuid4()), "user_id": None, "username": "guest_self_service",
         "action": "cancel_self_service",
