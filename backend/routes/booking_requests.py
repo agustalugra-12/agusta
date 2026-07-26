@@ -486,10 +486,11 @@ async def buat_booking_request(data: Dict[str, Any], property_id: Optional[str] 
     """Dipanggil dari alur pengumpulan data AI WhatsApp (pesan_whatsapp.py) setelah field
     wajib lengkap & tamu konfirmasi — sengaja BUKAN endpoint HTTP publik (tidak menambah
     permukaan serangan baru untuk membuat data). `data` wajib berisi: nama_tamu, no_hp,
-    tipe (day_use|menginap), room_tipe, tanggal_checkin; boleh berisi jumlah_kamar,
-    jumlah_tamu, jam_checkin (day_use), tanggal_checkout (menginap), catatan,
-    payment_option (dp50|full — preferensi tamu KALAU disebutkan sendiri di chat, lihat
-    BOOKING_FLOW_SYSTEM_PROMPT; None kalau belum disebut — staf yang putuskan saat approve).
+    tipe (day_use|menginap), room_tipe, tanggal_checkin, dan (KHUSUS day_use, 2026-07-26)
+    jam_checkin - lihat guard di bawah; boleh berisi jumlah_kamar, jumlah_tamu,
+    tanggal_checkout (menginap), catatan, payment_option (dp50|full — preferensi tamu
+    KALAU disebutkan sendiri di chat, lihat BOOKING_FLOW_SYSTEM_PROMPT; None kalau belum
+    disebut — staf yang putuskan saat approve).
 
     `property_id` (2026-07-25, Fase 4) - diisi pemanggil yang sudah tahu propertinya
     sendiri (ai_bot_buat_booking_request, resolve dari API key ai-chat-bot). Kalau None
@@ -508,6 +509,24 @@ async def buat_booking_request(data: Dict[str, Any], property_id: Optional[str] 
         raise HTTPException(400, "Format tanggal_checkin tidak valid (harus YYYY-MM-DD)")
     if tanggal_checkin_date < datetime.now().date():
         raise HTTPException(400, "Tanggal check-in tidak boleh di masa lalu - tanya ulang tanggal yang benar ke tamu")
+
+    # Guard jam_checkin wajib untuk Day Use (2026-07-26, permintaan user - berlaku SEMUA
+    # tenant karena divalidasi di sini, satu-satunya titik masuk booking_request AI, bukan
+    # per-prompt/per-bot). Sebelumnya jam_checkin opsional & diam-diam default ke "14:00"
+    # kalau tamu tidak sebutkan (lihat _coba_auto_approve_day_use/approve_booking_request) -
+    # bahaya nyata: kamar yang masih ditempati tamu Menginap sampai checkout jam 12 siang
+    # bisa salah dicek pakai asumsi 14:00 (aman) padahal tamu Day Use yang sebenarnya
+    # datang jam 09:00-10:00 (masih bentrok). Dengan jam kedatangan ASLI selalu terisi,
+    # check_room_available (hard validator, dipanggil lewat create_reservation) akan
+    # membandingkan jam BENAR tamu terhadap jam checkout Menginap yang keluar - kalau
+    # bentrok, kandidat kamar itu otomatis dilewati (coba kamar lain / fallback ke staf),
+    # bukan diam-diam dianggap aman gara-gara asumsi jam yang salah.
+    if data.get("tipe") == "day_use" and not (data.get("jam_checkin") or "").strip():
+        raise HTTPException(
+            400,
+            "Jam kedatangan wajib diisi untuk Day Use - tanya tamu jam berapa rencana "
+            "datang (format HH:MM, contoh 10:00) sebelum lanjut booking.",
+        )
 
     property_id = property_id or await get_default_property_id()
     diskon_info, diskon_ai_persen, diskon_persen_efektif, preview_harga = await _hitung_diskon_gabungan(data, property_id)
