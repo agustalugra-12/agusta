@@ -184,6 +184,12 @@ async def housekeeping_done(room_id: str, body: HousekeepingDone, user: dict = D
             }}
         )
     await log_activity(user, "housekeeping_done", f"Kamar {r['nomor']} selesai dibersihkan", entity=r["nomor"])
+    # Kamar ini baru saja BENAR-BENAR jadi "kosong" lagi (2026-07-26) - kalau ada booking
+    # Menginap yang sempat ditunda menunggu kamar tipe ini (auto_retry_dayuse, lihat
+    # _coba_auto_approve_menginap di routes/booking_requests.py), coba proses sekarang.
+    # Best-effort, tidak pernah menggagalkan housekeeping_done itu sendiri.
+    from routes.booking_requests import coba_retry_menginap_dayuse
+    await coba_retry_menginap_dayuse(property_id, r["tipe"])
     return {"ok": True}
 
 @api.post("/rooms/{room_id}/housekeeping-inspect")

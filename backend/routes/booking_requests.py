@@ -284,11 +284,51 @@ async def _coba_auto_approve_menginap(doc: Dict[str, Any]) -> None:
             doc["tanggal_checkin"], tipe=doc.get("room_tipe"), checkout=doc["tanggal_checkout"],
             property_id_override=doc["property_id"],
         )
+
         if not avail["rooms"]:
+            # Tidak ada kamar genuinely kosong SEKARANG. Kalau penuhnya HARI INI khusus karena
+            # Day Use (dikonfirmasi user 2026-07-26) - jangan buru-buru tolak: kasih tahu tamu
+            # perkiraan jam kamar siap SEKARANG, tandai booking_request ini untuk di-retry
+            # otomatis begitu kamar itu BENAR-BENAR selesai dibersihkan (lihat
+            # coba_retry_menginap_dayuse, dipanggil dari housekeeping_done di routes/rooms.py) -
+            # `create_reservation` tetap menolak booking utk kamar yang status live-nya belum
+            # "kosong" apa pun jam yang diminta (safety guard yang sudah lama ada, sengaja TIDAK
+            # disentuh/dilewati di sini - andalkan status yang benar-benar diperbarui staf/sistem,
+            # bukan perkiraan waktu). `estimasi_kamar_siap` SENGAJA cuma pernah menghitung ini utk
+            # Day Use, tidak pernah utk Menginap yang sedang berlangsung (Menginap tidak checkout
+            # hari itu) - konsisten dengan filosofi yang sama dipakai `rekomendasi_slot_kosong`.
+            today_local = datetime.now().strftime("%Y-%m-%d")
+            if doc["tanggal_checkin"] == today_local:
+                from scheduling_engine import estimasi_kamar_siap, WIB
+                q_tipe = {"tipe": doc["room_tipe"]} if doc.get("room_tipe") else {}
+                rooms_tipe_sama = await db.rooms.find(scoped(q_tipe, doc["property_id"]), {"_id": 0}).to_list(200)
+                estimasi_list = []
+                for r in rooms_tipe_sama:
+                    siap = await estimasi_kamar_siap(r["id"], doc["property_id"])
+                    if siap:
+                        estimasi_list.append(siap)
+                if estimasi_list:
+                    siap_paling_cepat = min(estimasi_list)
+                    jam_str = siap_paling_cepat.astimezone(WIB).strftime("%H:%M")
+                    await db.booking_requests.update_one({"id": doc["id"]}, {"$set": {
+                        "auto_retry_dayuse": True, "updated_at": now_iso(),
+                    }})
+                    pesan = (
+                        f"Halo {doc['nama_tamu']}, untuk saat ini kamar {doc.get('room_tipe') or ''} "
+                        f"sedang penuh karena masih dipakai tamu Day Use. Perkiraan kamar siap "
+                        f"sekitar pukul {jam_str} WIB (setelah tamu checkout & dibersihkan) — "
+                        f"begitu siap, booking Menginap Anda akan *otomatis diproses* dan link "
+                        f"pembayaran dikirim ke nomor ini. Tidak perlu booking ulang."
+                    )
+                    from routes.pesan_whatsapp import _kirim_via_provider
+                    await _kirim_via_provider(doc["no_hp"], pesan)
+                    return  # tetap "waiting_approval" - auto-retry akan diproses saat kamar siap
+
             await _auto_reject_penuh(doc)
             return
 
-        start, end = ci.astimezone(timezone.utc), co.astimezone(timezone.utc)
+        end = co.astimezone(timezone.utc)
+        start = ci.astimezone(timezone.utc)
         room = None
         booking = None
         last_conflict: Optional[Exception] = None
@@ -342,9 +382,16 @@ async def _coba_auto_approve_menginap(doc: Dict[str, Any]) -> None:
             }})
             await log_availability_change(room["id"], room["tipe"], 0, "booking_auto_approve_ai", doc["property_id"], booking_id=booking["id"])
 
+            # Kalau ini hasil auto-retry (sebelumnya sempat dikasih tahu "kamar penuh karena
+            # Day Use, tunggu sampai jam segini") - tegaskan kamarnya sekarang benar-benar
+            # siap, supaya tamu tidak bingung kenapa tiba-tiba dapat konfirmasi.
+            intro = (
+                "Kabar baik! Kamar sudah siap - booking Menginap Anda *otomatis dikonfirmasi*!"
+                if doc.get("auto_retry_dayuse")
+                else "booking Menginap Anda *otomatis dikonfirmasi* berdasarkan ketersediaan kamar saat ini!"
+            )
             pesan = (
-                f"Halo {doc['nama_tamu']}, booking Menginap Anda *otomatis dikonfirmasi* berdasarkan "
-                f"ketersediaan kamar saat ini!\n\n"
+                f"Halo {doc['nama_tamu']}, {intro}\n\n"
                 f"Kamar: {room['nomor']} ({room['tipe']})\n"
                 f"Check-in: {doc['tanggal_checkin']} — Check-out: {doc['tanggal_checkout']} ({nights} malam)\n"
                 f"Total: Rp{int(booking['total']):,}".replace(",", ".") + "\n"
@@ -367,6 +414,30 @@ async def _coba_auto_approve_menginap(doc: Dict[str, Any]) -> None:
             raise
     except Exception as e:
         logging.getLogger("booking_requests").warning(f"Auto-approve menginap {doc.get('kode')} gagal: {e}")
+
+
+async def coba_retry_menginap_dayuse(property_id: str, room_tipe: str) -> None:
+    """Dipanggil dari routes/rooms.py's housekeeping_done() (2026-07-26) - tepat setelah
+    sebuah kamar Day Use SELESAI dibersihkan & statusnya benar-benar jadi "kosong" lagi
+    (bukan cuma perkiraan waktu - itu sebabnya retry di-trigger DI SINI, bukan di titik
+    checkout atau dari perkiraan `estimasi_kamar_siap` semata, supaya tidak melanggar guard
+    keamanan create_reservation yang menolak booking hari ini untuk kamar yang status
+    live-nya belum "kosong"). Cari booking_request Menginap yang sempat ditandai
+    `auto_retry_dayuse` (dibuat saat kamar tipe ini penuh karena Day Use, lihat
+    _coba_auto_approve_menginap) untuk properti & tipe kamar yang sama, proses FIFO (yang
+    paling lama nunggu duluan) - tiap retry berhenti sendiri kalau memang tidak ada lagi
+    kamar kosong (mis. 2 booking_request menunggu tapi cuma 1 kamar yang baru siap).
+    Best-effort murni, tidak pernah melempar exception ke pemanggil (housekeeping_done tidak
+    boleh gagal gara-gara ini)."""
+    try:
+        pending = await db.booking_requests.find(scoped({
+            "status": "waiting_approval", "tipe": "menginap", "auto_retry_dayuse": True,
+            "room_tipe": {"$in": [room_tipe, None]},
+        }, property_id), {"_id": 0}).sort("created_at", 1).to_list(50)
+        for doc in pending:
+            await _coba_auto_approve_menginap(doc)
+    except Exception as e:
+        logging.getLogger("booking_requests").warning(f"Retry auto-approve menginap (dayuse) gagal: {e}")
 
 
 async def _hitung_diskon_gabungan(data: Dict[str, Any], property_id: str):
