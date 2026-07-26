@@ -330,7 +330,14 @@ async def _catat_pengeluaran_items(user_doc: dict, items: list, foto_url: str = 
     """Satu-satunya jalur insert ke db.expenses dari bot Telegram (owner & staff) — sengaja
     TIDAK PERNAH menyentuh db.bookings/kasir/payment_log, jadi struktural tidak mungkin
     'pemasukan' tercatat lewat sini apa pun yang diminta/dikirim user."""
-    property_id = await get_default_property_id()  # STOPGAP (2026-07-24) - Telegram bot belum tahu properti mana (bot tunggal, belum per-properti)
+    # Multi-properti (2026-07-26) - staf sudah punya property_id di akunnya sendiri
+    # (di-set saat akun dibuat), jadi resolve dari situ dulu - SAMA pola dengan
+    # _balasan_ai_owner/kirim_briefing_semua_owner di file ini. Sebelumnya selalu pakai
+    # get_default_property_id() apa pun propertinya staf pengirim - bug nyata: staf
+    # properti kedua (mis. harmoni) yang catat pengeluaran lewat Telegram akan salah
+    # tercatat di properti default (Pelangi Homestay). Owner (belum terikat 1 properti)
+    # tetap fallback ke default seperti sebelumnya.
+    property_id = user_doc.get("property_id") or await get_default_property_id()
     baris, total = [], 0
     for it in items:
         doc = {
