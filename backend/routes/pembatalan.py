@@ -154,8 +154,15 @@ async def approve_cancellation_request(booking_id: str, user: dict = Depends(get
         "Dana refund akan ditransfer manual oleh staf kami, mohon ditunggu."
     )
     try:
-        from routes.pesan_whatsapp import _kirim_via_provider
-        await _kirim_via_provider(b["no_hp"], pesan)
+        # Antre review staf bisa berjam-jam/berhari - hampir pasti di luar jendela 24 jam
+        # Meta (2026-07-26), WAJIB sertakan template.
+        from routes.pesan_whatsapp import _kirim_dengan_alert
+        refund_str = f"{refund:,}".replace(",", ".")
+        await _kirim_dengan_alert(
+            b["no_hp"], pesan, konteks=f"approve pembatalan {b['kode']}",
+            template_name="pembatalan_disetujui_v1",
+            template_params=[b["nama_tamu"], b["kode"], refund_str, policy["label"]],
+        )
     except Exception as e:
         logging.getLogger("pembatalan").warning(f"Gagal kirim notif approve ke {b['no_hp']}: {e}")
 
@@ -179,8 +186,12 @@ async def reject_cancellation_request(booking_id: str, body: CancelWithFeeBody =
 
     pesan = f"Halo {b['nama_tamu']}, permintaan pembatalan booking {b['kode']} belum bisa kami proses. Silakan hubungi kami untuk info lebih lanjut."
     try:
-        from routes.pesan_whatsapp import _kirim_via_provider
-        await _kirim_via_provider(b["no_hp"], pesan)
+        from routes.pesan_whatsapp import _kirim_dengan_alert
+        await _kirim_dengan_alert(
+            b["no_hp"], pesan, konteks=f"reject pembatalan {b['kode']}",
+            template_name="pembatalan_ditolak_v1",
+            template_params=[b["nama_tamu"], b["kode"], body.alasan or "belum memenuhi kebijakan pembatalan"],
+        )
     except Exception as e:
         logging.getLogger("pembatalan").warning(f"Gagal kirim notif tolak ke {b['no_hp']}: {e}")
     return {"ok": True}
@@ -210,16 +221,29 @@ async def mark_refund_sent(booking_id: str, user: dict = Depends(get_current_use
         entity=b.get("room_nomor", ""),
     )
 
+    from routes.pesan_whatsapp import _kirim_dengan_alert
     if refund_amount > 0:
         pesan = (
             f"Halo {b['nama_tamu']}, refund pembatalan booking {b['kode']} sebesar "
             f"Rp{refund_amount:,}".replace(",", ".") + " sudah berhasil kami kirimkan. Terima kasih."
         )
+        refund_str = f"{refund_amount:,}".replace(",", ".")
+        try:
+            # Transfer manual staf bisa berjam-jam/berhari setelah approve - hampir pasti
+            # di luar jendela 24 jam Meta (2026-07-26), WAJIB sertakan template.
+            await _kirim_dengan_alert(
+                b["no_hp"], pesan, konteks=f"refund terkirim {b['kode']}",
+                template_name="refund_terkirim_v1",
+                template_params=[b["nama_tamu"], b["kode"], refund_str],
+            )
+        except Exception as e:
+            logging.getLogger("pembatalan").warning(f"Gagal kirim konfirmasi refund ke {b['no_hp']}: {e}")
     else:
         pesan = f"Halo {b['nama_tamu']}, booking {b['kode']} sudah kami batalkan sesuai permintaan. Terima kasih."
-    try:
-        from routes.pesan_whatsapp import _kirim_via_provider
-        await _kirim_via_provider(b["no_hp"], pesan)
-    except Exception as e:
-        logging.getLogger("pembatalan").warning(f"Gagal kirim konfirmasi refund ke {b['no_hp']}: {e}")
+        try:
+            # Tidak ada template khusus utk kasus tanpa-refund (jarang terjadi) - tetap
+            # dapat manfaat alert-kalau-gagal dari _kirim_dengan_alert.
+            await _kirim_dengan_alert(b["no_hp"], pesan, konteks=f"batal tanpa refund {b['kode']}")
+        except Exception as e:
+            logging.getLogger("pembatalan").warning(f"Gagal kirim konfirmasi refund ke {b['no_hp']}: {e}")
     return {"ok": True}

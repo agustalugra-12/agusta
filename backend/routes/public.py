@@ -358,13 +358,20 @@ async def public_batalkan_booking(bid: str, body: CancelWithFeeBody = CancelWith
     # Notifikasi konfirmasi ke tamu via WhatsApp (best-effort — pakai webhook yang sama
     # dengan bot WhatsApp, kalau staf sudah konfigurasi; kalau belum, cukup dilewati saja).
     try:
-        from routes.pesan_whatsapp import _kirim_via_provider
+        # Tamu batalkan lewat WEB (bukan chat WA) - TIDAK ADA sesi WA aktif sama sekali,
+        # jadi SELALU di luar jendela 24 jam Meta (2026-07-26) - WAJIB template.
+        from routes.pesan_whatsapp import _kirim_dengan_alert
         pesan = (
             f"Booking {b['kode']} sudah dibatalkan. "
             + (f"Biaya pembatalan Rp{biaya:,}.".replace(",", ".") if biaya else "Tidak ada biaya pembatalan.")
             + (f" Refund Rp{refund:,} akan diproses staf kami.".replace(",", ".") if refund > 0 else "")
         )
-        await _kirim_via_provider(b["no_hp"], pesan)
+        refund_str = f"{refund:,}".replace(",", ".") if refund > 0 else "0"
+        await _kirim_dengan_alert(
+            b["no_hp"], pesan, konteks=f"batal mandiri via web {b['kode']}",
+            template_name="pembatalan_disetujui_v1",
+            template_params=[b.get("nama_tamu", "Tamu"), b["kode"], refund_str, policy["label"]],
+        )
     except Exception:
         pass
 

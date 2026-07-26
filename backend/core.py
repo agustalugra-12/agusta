@@ -227,6 +227,15 @@ async def property_butuh_reddoorz(property_id: str) -> bool:
         return True
     return p.get("butuh_sinkron_reddoorz", True)
 
+
+async def nama_properti(property_id: str) -> str:
+    """Nama tampilan properti untuk dipakai isi variabel WhatsApp Message Template
+    (2026-07-26) - fallback ke "kami" kalau properti tidak ditemukan, supaya kalimat
+    template tetap wajar dibaca ("booking Anda di kami...") daripada string kosong."""
+    p = await db.properties.find_one({"id": property_id}, {"_id": 0, "nama": 1})
+    return (p or {}).get("nama") or "kami"
+
+
 async def log_activity(user: dict, action: str, detail: str = "", entity: str = ""):
     """AuditLogger — dipanggil di semua route yang mengubah data (stok kamar, reservasi,
     pengguna, dst). Tiap panggilan menulis satu dokumen `AuditLog` ke collection `audit_log`.

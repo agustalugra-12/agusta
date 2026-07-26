@@ -129,8 +129,13 @@ async def _auto_reject_penuh(doc: Dict[str, Any]) -> None:
         f"tanggal {doc['tanggal_checkin']} sedang penuh. Silakan coba tanggal lain atau tipe "
         f"kamar lain, kami siap bantu."
     )
-    from routes.pesan_whatsapp import _kirim_via_provider
-    await _kirim_via_provider(doc["no_hp"], pesan)
+    from routes.pesan_whatsapp import _kirim_dengan_alert
+    nama_prop = await nama_properti(doc["property_id"])
+    await _kirim_dengan_alert(
+        doc["no_hp"], pesan, konteks=f"auto-tolak booking penuh {doc['id']}",
+        template_name="menginap_ditolak_v1",
+        template_params=[doc["nama_tamu"], nama_prop, doc["tanggal_checkin"]],
+    )
 
 
 async def _coba_auto_approve_day_use(doc: Dict[str, Any]) -> None:
@@ -221,8 +226,11 @@ async def _coba_auto_approve_day_use(doc: Dict[str, Any]) -> None:
                 f"Total: Rp{int(booking['total']):,}".replace(",", ".") + "\n"
                 f"Silakan selesaikan pembayaran melalui link berikut:\n{trx.get('checkout_url')}"
             )
-            from routes.pesan_whatsapp import _kirim_via_provider
-            await _kirim_via_provider(doc["no_hp"], pesan)
+            # Kirim SAAT ITU JUGA (same-turn dgn pesan tamu), selalu dalam jendela 24 jam -
+            # tidak perlu template, tetap pakai wrapper alert supaya staf tahu kalau WAHA
+            # down/gagal kirim (2026-07-26, lihat _kirim_dengan_alert).
+            from routes.pesan_whatsapp import _kirim_dengan_alert
+            await _kirim_dengan_alert(doc["no_hp"], pesan, konteks=f"auto-approve day use {doc['id']}")
         except Exception:
             # Bug nyata ditemukan & diperbaiki (2026-07-26): kalau Tripay gagal SETELAH
             # booking asli sudah terlanjur dibuat, booking itu sebelumnya dibiarkan
@@ -332,8 +340,10 @@ async def _coba_auto_approve_menginap(doc: Dict[str, Any]) -> None:
                             f"begitu siap, booking Menginap Anda akan *otomatis diproses* dan link "
                             f"pembayaran dikirim ke nomor ini. Tidak perlu booking ulang."
                         )
-                        from routes.pesan_whatsapp import _kirim_via_provider
-                        await _kirim_via_provider(doc["no_hp"], pesan)
+                        # Kirim SAAT ITU JUGA (same-turn dgn permintaan tamu) - selalu
+                        # dalam jendela 24 jam, tidak perlu template.
+                        from routes.pesan_whatsapp import _kirim_dengan_alert
+                        await _kirim_dengan_alert(doc["no_hp"], pesan, konteks=f"kamar penuh day-use, tunggu jam {jam_str} ({doc['id']})")
                     await db.booking_requests.update_one({"id": doc["id"]}, {"$set": {
                         "auto_retry_dayuse": True, "updated_at": now_iso(),
                     }})
@@ -412,8 +422,19 @@ async def _coba_auto_approve_menginap(doc: Dict[str, Any]) -> None:
                 f"Total: Rp{int(booking['total']):,}".replace(",", ".") + "\n"
                 f"Silakan selesaikan pembayaran melalui link berikut:\n{trx.get('checkout_url')}"
             )
-            from routes.pesan_whatsapp import _kirim_via_provider
-            await _kirim_via_provider(doc["no_hp"], pesan)
+            # Kalau ini hasil retry setelah housekeeping (auto_retry_dayuse) - bisa terjadi
+            # BERJAM-JAM setelah pesan terakhir tamu, jadi mungkin sudah di luar jendela 24
+            # jam Meta (2026-07-26) - WAJIB sertakan template, `_kirim_dengan_alert` yang
+            # menentukan pakai teks bebas atau template lewat relay ai-chat-bot.
+            from routes.pesan_whatsapp import _kirim_dengan_alert
+            nama_prop = await nama_properti(doc["property_id"])
+            total_str = f"{int(booking['total']):,}".replace(",", ".")
+            tanggal_str = f"{doc['tanggal_checkin']} - {doc['tanggal_checkout']}"
+            await _kirim_dengan_alert(
+                doc["no_hp"], pesan, konteks=f"auto-approve menginap {doc['id']}",
+                template_name="menginap_disetujui_v1",
+                template_params=[doc["nama_tamu"], nama_prop, tanggal_str, total_str, trx.get("checkout_url") or ""],
+            )
         except Exception:
             # Sama seperti _coba_auto_approve_day_use (bug nyata ditemukan & diperbaiki
             # 2026-07-26) - kalau Tripay gagal SETELAH booking asli sudah dibuat, rollback
@@ -788,8 +809,17 @@ async def approve_booking_request(rid: str, body: BookingRequestApprove, user: d
                 f"Silakan selesaikan pembayaran melalui link berikut:\n{trx.get('checkout_url')}"
             )
             try:
-                from routes.pesan_whatsapp import _kirim_via_provider
-                await _kirim_via_provider(req["no_hp"], pesan)
+                # Antre review staf bisa berjam-jam/berhari - hampir pasti di luar jendela
+                # 24 jam Meta (2026-07-26), WAJIB sertakan template.
+                from routes.pesan_whatsapp import _kirim_dengan_alert
+                nama_prop = await nama_properti(property_id)
+                total_str = f"{total_group:,}".replace(",", ".")
+                tanggal_str = f"{req.get('tanggal_checkin', '')} - {req.get('tanggal_checkout') or req.get('tanggal_checkin', '')}"
+                await _kirim_dengan_alert(
+                    req["no_hp"], pesan, konteks=f"approve booking request {rid}",
+                    template_name="menginap_disetujui_v1",
+                    template_params=[req["nama_tamu"], nama_prop, tanggal_str, total_str, trx.get("checkout_url") or ""],
+                )
             except Exception as e:
                 logging.getLogger("booking_requests").warning(f"Gagal kirim link bayar ke {req['no_hp']}: {e}")
         except Exception:
@@ -830,8 +860,15 @@ async def reject_booking_request(rid: str, body: BookingRequestReject, user: dic
             " Silakan hubungi kami lagi untuk tanggal lain, kami siap bantu."
         )
         try:
-            from routes.pesan_whatsapp import _kirim_via_provider
-            await _kirim_via_provider(req["no_hp"], pesan)
+            # Sama seperti approve - antre review staf bisa berjam-jam/berhari, WAJIB
+            # sertakan template (2026-07-26).
+            from routes.pesan_whatsapp import _kirim_dengan_alert
+            nama_prop = await nama_properti(property_id)
+            await _kirim_dengan_alert(
+                req["no_hp"], pesan, konteks=f"reject booking request {rid}",
+                template_name="menginap_ditolak_v1",
+                template_params=[req["nama_tamu"], nama_prop, req.get("tanggal_checkin", "")],
+            )
         except Exception as e:
             logging.getLogger("booking_requests").warning(f"Gagal kirim pesan tolak ke {req['no_hp']}: {e}")
 
