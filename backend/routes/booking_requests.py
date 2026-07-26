@@ -498,6 +498,24 @@ async def buat_booking_request(data: Dict[str, Any], property_id: Optional[str] 
     stopgap - jaga kompatibilitas kalau ada pemanggil lama."""
     payment_option = data.get("payment_option")
 
+    # Guard nama & no_hp wajib (2026-07-26, permintaan user - berlaku SEMUA tenant, sama
+    # pola dengan guard jam_checkin di bawah). Sebelumnya `data["no_hp"]`/`data["nama_tamu"]`
+    # diakses langsung tanpa validasi - kalau kosong/hilang, KeyError mentah (bukan pesan
+    # jelas yang bisa dipahami AI utk bertanya ulang) ATAU (kalau modelnya str kosong lolos
+    # Pydantic) booking_request tersimpan tanpa kontak yang valid - staf tidak bisa hubungi
+    # tamu sama sekali kalau approve/tolak perlu konfirmasi lebih lanjut. no_hp juga dicek
+    # minimal harus mayoritas digit (bukan validasi format ketat - importir bisa beda-beda,
+    # cukup tolak yang jelas-jelas bukan nomor sama sekali, mis. kosong/nama tertukar).
+    if not (data.get("nama_tamu") or "").strip():
+        raise HTTPException(400, "Nama tamu wajib diisi - tanya nama lengkap tamu sebelum lanjut booking.")
+    no_hp_bersih = (data.get("no_hp") or "").strip()
+    if not no_hp_bersih or sum(c.isdigit() for c in no_hp_bersih) < 8:
+        raise HTTPException(
+            400,
+            "Nomor WhatsApp tamu wajib diisi & valid - konfirmasi ulang nomor WhatsApp tamu "
+            "(bukan cuma nama) sebelum lanjut booking, supaya staf bisa menghubungi kalau perlu.",
+        )
+
     # Guard tanggal masa lalu (2026-07-19, audit reliabilitas AI booking flow) - AI WhatsApp
     # sekarang selalu diberi tanggal hari ini di prompt-nya (lihat build_dynamic_prompt di
     # ai-chat-bot), tapi tetap divalidasi keras di sini sebagai lapis pertahanan kedua kalau
