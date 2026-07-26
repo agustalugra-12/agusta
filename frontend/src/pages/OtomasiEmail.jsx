@@ -199,9 +199,22 @@ function LogEmailDetailDialog({ log, onClose }) {
                 <div><span className="text-slate-500">Check-out:</span> {fmtDateTime(log.extracted_data.check_out)}</div>
                 <div><span className="text-slate-500">Jumlah Tamu:</span> {log.extracted_data.jumlah_tamu}</div>
                 <div><span className="text-slate-500">Jumlah Kamar:</span> {log.extracted_data.jumlah_kamar || 1}</div>
-                <div className="flex justify-between pt-1 border-t border-slate-200 mt-1">
-                  <span className="font-bold">Harga</span><b className="text-blue-700">{fmtRp(log.extracted_data.harga)}</b>
-                </div>
+                {log.aksi === "cocok_booking_whatsapp" && log.harga_asli_pms ? (
+                  <>
+                    <div className="flex justify-between pt-1 border-t border-slate-200 mt-1 text-slate-400">
+                      <span>Harga di email (info saja)</span><span>{fmtRp(log.extracted_data.harga)}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="font-bold">Harga yang berlaku (link pembayaran WA)</span>
+                      <b className="text-emerald-700">{fmtRp(log.harga_asli_pms.reduce((a, b) => a + b, 0))}</b>
+                    </div>
+                    <p className="text-[11px] text-slate-500">Reservasi ini cocok dengan booking WhatsApp yang sudah dibuat &amp; dibayar tamu sebelumnya - harga di atas (bukan angka mentah email OTA) yang tercatat sebagai pemasukan.</p>
+                  </>
+                ) : (
+                  <div className="flex justify-between pt-1 border-t border-slate-200 mt-1">
+                    <span className="font-bold">Harga</span><b className="text-blue-700">{fmtRp(log.extracted_data.harga)}</b>
+                  </div>
+                )}
                 <div><span className="text-slate-500">Status Pembayaran:</span> {log.extracted_data.status_pembayaran}</div>
                 {log.reservation_ids && log.reservation_ids.length > 1 && (
                   <div className="text-emerald-700 pt-1 border-t border-slate-200 mt-1">{log.reservation_ids.length} reservasi dibuat dari email ini (multi-kamar)</div>

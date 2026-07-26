@@ -946,7 +946,8 @@ class EmailLog(BaseModel):
     extracted_data: Optional[EmailExtractedData] = None
     reservation_id: Optional[str] = None  # booking PMS yang dibuat/dibatalkan otomatis dari email ini (pertama, kalau lebih dari satu)
     reservation_ids: Optional[List[str]] = None  # semua booking PMS terkait (kalau 1 email OTA = beberapa kamar sekaligus)
-    aksi: Optional[str] = None  # reservasi_baru_dibuat | reservasi_dibatalkan — hasil Reservation Automation
+    aksi: Optional[str] = None  # reservasi_baru_dibuat | cocok_booking_whatsapp | reservasi_dibatalkan — hasil Reservation Automation
+    harga_asli_pms: Optional[List[int]] = None  # diisi kalau aksi=cocok_booking_whatsapp - total booking ASLI (link pembayaran WA), beda dari extracted_data.harga (angka mentah email OTA)
     alasan: Optional[str] = None  # diisi kalau status Failed/Manual_Required
     processed_at: str
 

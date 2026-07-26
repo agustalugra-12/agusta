@@ -340,9 +340,16 @@ async def buat_reservasi_otomatis(log_id: str, data: dict, sumber: str, subjek: 
                 "sync_status": "synced", "ota_reservation_no": data.get("no_reservasi"), "updated_at": now_iso(),
             }})
             reservation_ids.append(b["id"])
+        # `aksi` DIBEDAKAN dari "reservasi_baru_dibuat" di bawah (2026-07-27, permintaan user) -
+        # kasus ini sama sekali TIDAK membuat booking baru, cuma menyinkronkan yang sudah ada.
+        # `harga_asli_pms` (total booking asli, dari link pembayaran WA) disimpan supaya
+        # frontend (OtomasiEmail.jsx) bisa tampilkan itu sebagai harga yang SESUNGGUHNYA
+        # berlaku, bukan angka mentah `extracted_data.harga` di email OTA (yang belum tentu
+        # sama - RedDoorz bisa catat harga net beda dari harga yang tamu bayar via WA/Tripay).
         await db.email_logs.update_one({"id": log_id}, {"$set": {
             "reservation_id": reservation_ids[0], "reservation_ids": reservation_ids,
-            "aksi": "reservasi_baru_dibuat", "status": "Parsed_Success",
+            "harga_asli_pms": [b["total"] for b in pending_match],
+            "aksi": "cocok_booking_whatsapp", "status": "Parsed_Success",
         }})
         return
 
@@ -372,10 +379,18 @@ async def buat_reservasi_otomatis(log_id: str, data: dict, sumber: str, subjek: 
     # ASLI dari laporan/invoice RedDoorz lewat POST /bookings/{id}/konfirmasi-harga-ota. Ini
     # karena tarif net yang OTA bayar ke hotel biasanya LEBIH RENDAH dari tarif publik (margin
     # OTA) - mencatatnya sebagai pendapatan asli akan OVERSTATE laporan keuangan.
+    # Nominal di email OTA (RedDoorz dkk) adalah tarif NET, belum termasuk service fee PMS
+    # (2026-07-27, ditemukan lewat laporan user - reservasi tanpa WA sama sekali/langsung
+    # diinput ke RedDoorz sebelumnya tercatat TANPA service fee sama sekali, beda dari semua
+    # booking lain di PMS yang selalu kena SERVICE_FEE_PCT). Perlakukan `harga_dari_email`
+    # sebagai SUBTOTAL, lalu hitung service fee dengan persentase yang SAMA seperti booking
+    # manapun, supaya total yang tercatat konsisten dengan cara PMS menghitung di mana pun.
     harga_dari_email = int(data.get("harga") or 0)
     harga_dikonfirmasi = harga_dari_email > 0
-    total_semua = harga_dari_email or (dipilih[0]["tarif_menginap"] * jumlah_kamar)  # OTA selalu tipe menginap
-    total_per_kamar = round(total_semua / jumlah_kamar)
+    subtotal_semua = harga_dari_email or (dipilih[0]["tarif_menginap"] * jumlah_kamar)  # OTA selalu tipe menginap
+    subtotal_per_kamar = round(subtotal_semua / jumlah_kamar)
+    service_fee_per_kamar = round(subtotal_per_kamar * SERVICE_FEE_PCT)
+    total_per_kamar = subtotal_per_kamar + service_fee_per_kamar
     dibatalkan = data.get("status_pembayaran") == "Dibatalkan"
     reservation_ids = []
     for r in dipilih:
@@ -393,7 +408,7 @@ async def buat_reservasi_otomatis(log_id: str, data: dict, sumber: str, subjek: 
             },
             property_id,
             source="ota",
-            harga_override={"subtotal": total_per_kamar, "service_fee": 0, "total": total_per_kamar, "dp_min": 0},
+            harga_override={"subtotal": subtotal_per_kamar, "service_fee": service_fee_per_kamar, "total": total_per_kamar, "dp_min": 0},
         )
         update_fields = {"ota_reservation_no": data.get("no_reservasi")}
         if dibatalkan:
