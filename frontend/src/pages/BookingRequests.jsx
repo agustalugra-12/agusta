@@ -7,6 +7,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Copy, ExternalLink, Check, X, AlertOctagon } from "lucide-react";
+import { useAuth } from "@/context/AuthContext";
 
 const STATUS_LABEL = {
   waiting_approval: "Menunggu Persetujuan",
@@ -55,6 +56,7 @@ function badgeInfo(it) {
 // lalu sistem langsung membuat booking sungguhan + link bayar Tripay & mengirimkannya ke
 // tamu via WhatsApp (lihat POST /booking-requests/{id}/approve di backend).
 export function SetujuiDialog({ req, onOpenChange, onApproved }) {
+  const { properties } = useAuth();
   const [rooms, setRooms] = useState([]);
   const [channels, setChannels] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -69,7 +71,12 @@ export function SetujuiDialog({ req, onOpenChange, onApproved }) {
   // yang gampang terlewat saat staf buru-buru - dijadikan checkbox WAJIB (hanya untuk
   // Menginap, RedDoorz tidak pernah dipakai Day Use) supaya benar-benar jadi langkah
   // sadar sebelum tombol Terima bisa diklik, bukan sekadar imbauan yang bisa dilewati.
+  // 2026-07-26: properti yang tidak listing di RedDoorz (mis. harmoni, lihat halaman Kelola
+  // Properti) tidak butuh langkah ini sama sekali - Menginap-nya biasanya sudah kena
+  // auto-approve duluan (backend), checkbox ini cuma relevan untuk properti yang masih
+  // butuh RedDoorz DAN request yang tetap sampai ke review manual (mis. grup >1 kamar).
   const [redDoorzChecked, setRedDoorzChecked] = useState(false);
+  const propertiButuhReddoorz = properties.find((p) => p.id === req?.property_id)?.butuh_sinkron_reddoorz !== false;
 
   useEffect(() => {
     if (!req) return;
@@ -110,7 +117,7 @@ export function SetujuiDialog({ req, onOpenChange, onApproved }) {
 
   const setujui = async () => {
     if (selected.length !== butuh || !method) return;
-    if (req.tipe === "menginap" && !redDoorzChecked) return;
+    if (req.tipe === "menginap" && propertiButuhReddoorz && !redDoorzChecked) return;
     setSubmitting(true);
     setError("");
     try {
@@ -202,7 +209,7 @@ export function SetujuiDialog({ req, onOpenChange, onApproved }) {
                 </div>
               </>
             )}
-            {req.tipe === "menginap" && (
+            {req.tipe === "menginap" && propertiButuhReddoorz && (
               <label className="flex items-start gap-2 p-2.5 rounded-lg border-2 border-amber-300 bg-amber-50 text-xs cursor-pointer">
                 <input
                   type="checkbox" checked={redDoorzChecked}
@@ -228,7 +235,7 @@ export function SetujuiDialog({ req, onOpenChange, onApproved }) {
         )}
         <DialogFooter>
           {!hasil ? (
-            <Button onClick={setujui} disabled={selected.length !== butuh || !method || submitting || (req.tipe === "menginap" && !redDoorzChecked)} className="bg-blue-700 hover:bg-blue-800">
+            <Button onClick={setujui} disabled={selected.length !== butuh || !method || submitting || (req.tipe === "menginap" && propertiButuhReddoorz && !redDoorzChecked)} className="bg-blue-700 hover:bg-blue-800">
               {submitting ? "Menerima…" : "Terima & Kirim Link Bayar"}
             </Button>
           ) : (

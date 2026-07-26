@@ -9,7 +9,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "
 import { useAuth } from "@/context/AuthContext";
 import { Plus, Pencil, Building2 } from "lucide-react";
 
-const emptyForm = { nama: "", slug: "", alamat: "", aktif: true };
+const emptyForm = { nama: "", slug: "", alamat: "", aktif: true, butuh_sinkron_reddoorz: true };
 
 export default function Properti() {
   const { activePropertyId, setActivePropertyId } = useAuth();
@@ -21,14 +21,14 @@ export default function Properti() {
   useEffect(() => { load(); }, []);
 
   const openNew = () => { setForm(emptyForm); setEdit("new"); };
-  const openEdit = (p) => { setForm({ nama: p.nama, slug: p.slug, alamat: p.alamat || "", aktif: p.aktif }); setEdit(p); };
+  const openEdit = (p) => { setForm({ nama: p.nama, slug: p.slug, alamat: p.alamat || "", aktif: p.aktif, butuh_sinkron_reddoorz: p.butuh_sinkron_reddoorz !== false }); setEdit(p); };
 
   const save = async () => {
     try {
       if (edit === "new") {
-        await api.post("/properties", { nama: form.nama, slug: form.slug || form.nama, alamat: form.alamat });
+        await api.post("/properties", { nama: form.nama, slug: form.slug || form.nama, alamat: form.alamat, butuh_sinkron_reddoorz: form.butuh_sinkron_reddoorz });
       } else {
-        await api.put(`/properties/${edit.id}`, { nama: form.nama, slug: form.slug, alamat: form.alamat, aktif: form.aktif });
+        await api.put(`/properties/${edit.id}`, { nama: form.nama, slug: form.slug, alamat: form.alamat, aktif: form.aktif, butuh_sinkron_reddoorz: form.butuh_sinkron_reddoorz });
       }
       toast.success("Tersimpan");
       setEdit(null);
@@ -55,6 +55,7 @@ export default function Properti() {
               <th className="text-left p-3">Slug</th>
               <th className="text-left p-3">Alamat</th>
               <th className="text-left p-3">Status</th>
+              <th className="text-left p-3">Menginap</th>
               <th className="text-right p-3">Aksi</th>
             </tr></thead>
             <tbody>
@@ -72,6 +73,11 @@ export default function Properti() {
                       {p.aktif ? "Aktif" : "Nonaktif"}
                     </span>
                   </td>
+                  <td className="p-3">
+                    <span className={`text-xs px-2 py-0.5 rounded ${p.butuh_sinkron_reddoorz === false ? "bg-blue-100 text-blue-700" : "bg-amber-100 text-amber-800"}`}>
+                      {p.butuh_sinkron_reddoorz === false ? "Auto-konfirmasi" : "Perlu review staf"}
+                    </span>
+                  </td>
                   <td className="p-3 text-right space-x-1">
                     {p.id !== activePropertyId && (
                       <Button size="sm" variant="outline" onClick={() => setActivePropertyId(p.id)}>Pindah ke sini</Button>
@@ -81,7 +87,7 @@ export default function Properti() {
                 </tr>
               ))}
               {items.length === 0 && (
-                <tr><td colSpan={5} className="p-6 text-center text-slate-400">Belum ada properti.</td></tr>
+                <tr><td colSpan={6} className="p-6 text-center text-slate-400">Belum ada properti.</td></tr>
               )}
             </tbody>
           </table>
@@ -98,6 +104,22 @@ export default function Properti() {
               <Input data-testid="properti-slug" value={form.slug} onChange={(e) => setForm(f => ({ ...f, slug: e.target.value }))} placeholder={form.nama ? form.nama.toLowerCase().replace(/[^a-z0-9]+/g, "-") : ""} />
             </div>
             <div><Label>Alamat</Label><Input data-testid="properti-alamat" value={form.alamat} onChange={(e) => setForm(f => ({ ...f, alamat: e.target.value }))} /></div>
+            <label className="flex items-start gap-2 p-2.5 rounded-lg border border-slate-200 bg-slate-50 text-xs cursor-pointer">
+              <input
+                type="checkbox" data-testid="properti-butuh-reddoorz"
+                checked={form.butuh_sinkron_reddoorz}
+                onChange={(e) => setForm(f => ({ ...f, butuh_sinkron_reddoorz: e.target.checked }))}
+                className="mt-0.5"
+              />
+              <span>
+                Properti ini listing di RedDoorz (butuh sinkron manual RedDoorz untuk booking Menginap).
+                <span className="block text-slate-500 mt-0.5">
+                  Kalau dimatikan: booking Menginap di properti ini langsung diproses otomatis begitu tamu
+                  sebutkan preferensi bayar (DP/Lunas) via AI WhatsApp - persis seperti Day Use, tidak perlu
+                  ditinjau/disetujui staf.
+                </span>
+              </span>
+            </label>
             {edit !== "new" && (
               <div>
                 <Label>Status</Label>

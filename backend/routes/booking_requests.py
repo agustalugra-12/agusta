@@ -110,20 +110,22 @@ async def _hitung_preview_harga(data: Dict[str, Any], diskon_persen: int, proper
 
 
 async def _auto_reject_penuh(doc: Dict[str, Any]) -> None:
-    """Day Use yang BENAR-BENAR tidak ada kamar kosong (bukan gagal krn payment_option belum
-    jelas atau >1 kamar) - langsung tolak otomatis & kabari tamu jujur SAAT ITU JUGA
-    (dikonfirmasi user 2026-07-19), JANGAN dibiarkan nyangkut "waiting_approval" menunggu
-    staf sadar sendiri - staf pun tidak akan pernah bisa approve ini (create_reservation
-    pasti gagal, memang tidak ada kamar). Konsisten dengan filosofi Day Use otomatis
-    end-to-end: hasil negatif pun harus otomatis & cepat, bukan cuma hasil positif."""
+    """Day Use (atau Menginap di properti yang auto-approve, lihat _coba_auto_approve_menginap)
+    yang BENAR-BENAR tidak ada kamar kosong (bukan gagal krn payment_option belum jelas atau
+    >1 kamar) - langsung tolak otomatis & kabari tamu jujur SAAT ITU JUGA (dikonfirmasi user
+    2026-07-19), JANGAN dibiarkan nyangkut "waiting_approval" menunggu staf sadar sendiri -
+    staf pun tidak akan pernah bisa approve ini (create_reservation pasti gagal, memang tidak
+    ada kamar). Konsisten dengan filosofi auto-approve end-to-end: hasil negatif pun harus
+    otomatis & cepat, bukan cuma hasil positif."""
     now = now_iso()
     await db.booking_requests.update_one({"id": doc["id"]}, {"$set": {
         "status": "rejected", "rejected_by": "AI WhatsApp (otomatis)",
         "rejected_reason": "Kamar penuh - tidak ada kamar kosong pada tanggal & tipe yang diminta",
         "updated_at": now,
     }})
+    label_tipe = "Menginap" if doc["tipe"] == "menginap" else "Day Use"
     pesan = (
-        f"Mohon maaf {doc['nama_tamu']}, kamar {doc.get('room_tipe') or ''} untuk Day Use "
+        f"Mohon maaf {doc['nama_tamu']}, kamar {doc.get('room_tipe') or ''} untuk {label_tipe} "
         f"tanggal {doc['tanggal_checkin']} sedang penuh. Silakan coba tanggal lain atau tipe "
         f"kamar lain, kami siap bantu."
     )
@@ -197,35 +199,174 @@ async def _coba_auto_approve_day_use(doc: Dict[str, Any]) -> None:
             )
             return
 
-        from routes.tripay import tripay_create_transaction
-        trx = await tripay_create_transaction(TripayCreateTransactionBody(
-            booking_id=booking["id"], payment_option=doc["payment_option_diminta"],
-            method=AUTO_APPROVE_PAYMENT_METHOD,
-        ))
+        try:
+            from routes.tripay import tripay_create_transaction
+            trx = await tripay_create_transaction(TripayCreateTransactionBody(
+                booking_id=booking["id"], payment_option=doc["payment_option_diminta"],
+                method=AUTO_APPROVE_PAYMENT_METHOD,
+            ))
 
-        now = now_iso()
-        await db.booking_requests.update_one({"id": doc["id"]}, {"$set": {
-            "status": "waiting_payment", "booking_ids": [booking["id"]], "group_id": None,
-            "approved_by": "AI WhatsApp (otomatis)", "approved_at": now, "updated_at": now,
-            "checkout_url": trx.get("checkout_url"), "total": booking["total"],
-        }})
-        await log_availability_change(room["id"], room["tipe"], 0, "booking_auto_approve_ai", doc["property_id"], booking_id=booking["id"])
+            now = now_iso()
+            await db.booking_requests.update_one({"id": doc["id"]}, {"$set": {
+                "status": "waiting_payment", "booking_ids": [booking["id"]], "group_id": None,
+                "approved_by": "AI WhatsApp (otomatis)", "approved_at": now, "updated_at": now,
+                "checkout_url": trx.get("checkout_url"), "total": booking["total"],
+            }})
+            await log_availability_change(room["id"], room["tipe"], 0, "booking_auto_approve_ai", doc["property_id"], booking_id=booking["id"])
 
-        pesan = (
-            f"Halo {doc['nama_tamu']}, booking Day Use Anda *otomatis dikonfirmasi* berdasarkan "
-            f"ketersediaan kamar saat ini!\n\n"
-            f"Kamar: {room['nomor']} ({room['tipe']})\n"
-            f"Total: Rp{int(booking['total']):,}".replace(",", ".") + "\n"
-            f"Silakan selesaikan pembayaran melalui link berikut:\n{trx.get('checkout_url')}"
-        )
-        from routes.pesan_whatsapp import _kirim_via_provider
-        await _kirim_via_provider(doc["no_hp"], pesan)
+            pesan = (
+                f"Halo {doc['nama_tamu']}, booking Day Use Anda *otomatis dikonfirmasi* berdasarkan "
+                f"ketersediaan kamar saat ini!\n\n"
+                f"Kamar: {room['nomor']} ({room['tipe']})\n"
+                f"Total: Rp{int(booking['total']):,}".replace(",", ".") + "\n"
+                f"Silakan selesaikan pembayaran melalui link berikut:\n{trx.get('checkout_url')}"
+            )
+            from routes.pesan_whatsapp import _kirim_via_provider
+            await _kirim_via_provider(doc["no_hp"], pesan)
+        except Exception:
+            # Bug nyata ditemukan & diperbaiki (2026-07-26): kalau Tripay gagal SETELAH
+            # booking asli sudah terlanjur dibuat, booking itu sebelumnya dibiarkan
+            # "yatim" (booking_pending, mengunci kamar, tidak pernah dibayar) - staf tidak
+            # tahu itu ada karena booking_request tetap terlihat "waiting_approval" seperti
+            # belum diproses sama sekali. Sekarang di-rollback (sama pola dengan
+            # approve_booking_request manual) supaya kamar kembali bebas & staf yang proses
+            # ulang manual tidak bentrok dengan booking hantu.
+            await db.bookings.update_one({"id": booking["id"]}, {"$set": {
+                "status": "cancelled", "cancelled_at": now_iso(),
+                "cancelled_by": "system_rollback_auto_approve_gagal",
+            }})
+            await log_availability_change(
+                room["id"], room["tipe"], 1, "booking_dibatalkan_rollback_auto_approve_gagal",
+                doc["property_id"], booking_id=booking["id"],
+            )
+            raise
     except Exception as e:
         # Best-effort murni - kalau ADA yang gagal di tengah jalan (Tripay down, kamar
         # keburu terisi race condition, dst), booking_request tetap "waiting_approval",
         # staf tetap bisa proses manual seperti biasa. Tidak pernah bikin buat_booking_request
         # gagal gara-gara ini.
         logging.getLogger("booking_requests").warning(f"Auto-approve day_use {doc.get('kode')} gagal: {e}")
+
+
+async def _coba_auto_approve_menginap(doc: Dict[str, Any]) -> None:
+    """Auto-approve + auto-kirim link bayar untuk booking Menginap, SAMA seperti Day Use,
+    TAPI HANYA untuk properti yang tidak butuh sinkron manual RedDoorz (dikonfirmasi user
+    2026-07-26: properti "harmoni" tidak listing di RedDoorz sama sekali, jadi Menginap-nya
+    bisa langsung diproses otomatis berdasarkan ketersediaan real-time, sama seperti Day
+    Use). Properti yang MASIH butuh RedDoorz (mis. Pelangi Homestay) TETAP wajib direview
+    manual staf seperti sebelumnya - fungsi ini diam-diam tidak melakukan apa pun untuk
+    properti itu (lihat property_butuh_reddoorz di core.py). Sisanya sama persis dengan
+    _coba_auto_approve_day_use: payment_option harus sudah disebutkan tamu, hanya 1 kamar,
+    tarif pakai tarif_menginap x jumlah malam (sama seperti approve_booking_request manual),
+    best-effort (gagal = fallback ke review staf manual, tidak pernah melempar exception ke
+    caller)."""
+    try:
+        if doc["tipe"] != "menginap" or doc["payment_option_diminta"] not in ("dp50", "full"):
+            return
+        if doc["jumlah_kamar"] != 1:
+            return  # grup >1 kamar tetap lewat review staf, sama seperti Day Use
+        if not doc.get("tanggal_checkout"):
+            return  # data belum lengkap - AI seharusnya selalu minta ini utk Menginap, jaga-jaga saja
+        if await property_butuh_reddoorz(doc["property_id"]):
+            return  # properti ini tetap wajib direview manual staf (RedDoorz)
+
+        try:
+            ci = datetime.fromisoformat(f"{doc['tanggal_checkin']}T14:00:00+07:00")
+            co = datetime.fromisoformat(f"{doc['tanggal_checkout']}T12:00:00+07:00")
+        except Exception:
+            return
+        if co <= ci:
+            return
+        nights = max(1, (co.date() - ci.date()).days)
+
+        from routes.public import public_availability
+        avail = await public_availability(
+            doc["tanggal_checkin"], tipe=doc.get("room_tipe"), checkout=doc["tanggal_checkout"],
+            property_id_override=doc["property_id"],
+        )
+        if not avail["rooms"]:
+            await _auto_reject_penuh(doc)
+            return
+
+        start, end = ci.astimezone(timezone.utc), co.astimezone(timezone.utc)
+        room = None
+        booking = None
+        last_conflict: Optional[Exception] = None
+        for kandidat_room in avail["rooms"]:
+            subtotal = int(kandidat_room["tarif_menginap"]) * nights
+            service_fee = round(subtotal * SERVICE_FEE_PCT)
+            total = subtotal + service_fee
+            harga_override = {"subtotal": subtotal, "service_fee": service_fee, "total": total, "dp_min": round(total * 0.5)}
+            try:
+                booking = await create_reservation({
+                    "room_id": kandidat_room["id"], "nama_tamu": doc["nama_tamu"], "no_hp": doc["no_hp"],
+                    "email": "", "no_identitas": "", "kendaraan": "",
+                    "jumlah_tamu": doc.get("jumlah_tamu", 1),
+                    "jam_mulai": start, "jam_selesai": end,
+                    "catatan": doc.get("catatan") or "", "created_by": "AI WhatsApp (otomatis)",
+                    "tipe": "menginap", "dengan_sarapan": False,
+                }, doc["property_id"], source="whatsapp_auto", harga_override=harga_override,
+                   diskon_ai_persen=doc.get("diskon_ai_persen") or 0)
+                room = kandidat_room
+                break
+            except HTTPException as e:
+                if e.status_code == 400 and "sudah dibooking" in str(e.detail):
+                    last_conflict = e
+                    continue  # kamar ini bentrok - coba kandidat berikutnya
+                raise
+        if booking is None:
+            logging.getLogger("booking_requests").warning(
+                f"Auto-approve menginap {doc.get('kode')}: semua {len(avail['rooms'])} kandidat "
+                f"kamar bentrok, fallback ke review staf. Konflik terakhir: {last_conflict}"
+            )
+            return
+
+        # Properti ini tidak butuh RedDoorz (sudah dicek di atas) - langsung "not_required",
+        # BEDA dari approve_booking_request manual yang selalu set "waiting_reddoorz_input"
+        # untuk tipe menginap (properti lain yang masih butuh RedDoorz).
+        await db.bookings.update_one({"id": booking["id"]}, {"$set": {"sync_status": "not_required"}})
+        booking["sync_status"] = "not_required"
+
+        try:
+            from routes.tripay import tripay_create_transaction
+            trx = await tripay_create_transaction(TripayCreateTransactionBody(
+                booking_id=booking["id"], payment_option=doc["payment_option_diminta"],
+                method=AUTO_APPROVE_PAYMENT_METHOD,
+            ))
+
+            now = now_iso()
+            await db.booking_requests.update_one({"id": doc["id"]}, {"$set": {
+                "status": "waiting_payment", "booking_ids": [booking["id"]], "group_id": None,
+                "approved_by": "AI WhatsApp (otomatis)", "approved_at": now, "updated_at": now,
+                "checkout_url": trx.get("checkout_url"), "total": booking["total"],
+            }})
+            await log_availability_change(room["id"], room["tipe"], 0, "booking_auto_approve_ai", doc["property_id"], booking_id=booking["id"])
+
+            pesan = (
+                f"Halo {doc['nama_tamu']}, booking Menginap Anda *otomatis dikonfirmasi* berdasarkan "
+                f"ketersediaan kamar saat ini!\n\n"
+                f"Kamar: {room['nomor']} ({room['tipe']})\n"
+                f"Check-in: {doc['tanggal_checkin']} — Check-out: {doc['tanggal_checkout']} ({nights} malam)\n"
+                f"Total: Rp{int(booking['total']):,}".replace(",", ".") + "\n"
+                f"Silakan selesaikan pembayaran melalui link berikut:\n{trx.get('checkout_url')}"
+            )
+            from routes.pesan_whatsapp import _kirim_via_provider
+            await _kirim_via_provider(doc["no_hp"], pesan)
+        except Exception:
+            # Sama seperti _coba_auto_approve_day_use (bug nyata ditemukan & diperbaiki
+            # 2026-07-26) - kalau Tripay gagal SETELAH booking asli sudah dibuat, rollback
+            # supaya tidak ada booking "yatim" yang mengunci kamar tanpa pembayaran.
+            await db.bookings.update_one({"id": booking["id"]}, {"$set": {
+                "status": "cancelled", "cancelled_at": now_iso(),
+                "cancelled_by": "system_rollback_auto_approve_gagal",
+            }})
+            await log_availability_change(
+                room["id"], room["tipe"], 1, "booking_dibatalkan_rollback_auto_approve_gagal",
+                doc["property_id"], booking_id=booking["id"],
+            )
+            raise
+    except Exception as e:
+        logging.getLogger("booking_requests").warning(f"Auto-approve menginap {doc.get('kode')} gagal: {e}")
 
 
 async def _hitung_diskon_gabungan(data: Dict[str, Any], property_id: str):
@@ -299,9 +440,14 @@ async def buat_booking_request(data: Dict[str, Any], property_id: Optional[str] 
 
     # Day Use dengan payment_option jelas: coba auto-approve + auto-kirim link bayar
     # langsung (dikonfirmasi user 2026-07-19), TIDAK perlu menunggu staf klik Terima di
-    # PMS - beda dari Menginap yang tetap wajib direview manual. Best-effort, diam-diam
-    # tidak melakukan apa pun kalau gagal/tidak berlaku (lihat docstring fungsinya).
+    # PMS. Menginap SAMA-SAMA bisa auto-approve (2026-07-26) TAPI HANYA di properti yang
+    # tidak butuh sinkron manual RedDoorz (mis. harmoni) - properti yang masih butuh
+    # RedDoorz (mis. Pelangi Homestay) tetap wajib direview manual staf seperti biasa.
+    # Best-effort, diam-diam tidak melakukan apa pun kalau gagal/tidak berlaku (lihat
+    # docstring masing-masing fungsi) - salah satu dari 2 fungsi ini selalu no-op karena
+    # tipe booking cuma bisa salah satu (day_use ATAU menginap).
     await _coba_auto_approve_day_use(doc)
+    await _coba_auto_approve_menginap(doc)
     doc = await db.booking_requests.find_one({"id": doc["id"]}, {"_id": 0}) or doc
 
     ringkas = (
@@ -473,7 +619,11 @@ async def approve_booking_request(rid: str, body: BookingRequestApprove, user: d
                 # dianggap "Confirmed" — admin harus input manual ke PMS RedDoorz dulu, baru dianggap
                 # pasti setelah email konfirmasi RedDoorz cocok (lihat otomasi_email.py). Day Use tidak
                 # pernah masuk RedDoorz (aturan lama, tidak berubah), jadi langsung "not_required".
-                sync_status = "waiting_reddoorz_input" if tipe == "menginap" else "not_required"
+                # Properti yang tidak butuh sinkron RedDoorz (2026-07-26, mis. harmoni) juga langsung
+                # "not_required" apa pun tipenya - biasanya Menginap-nya sudah kena auto-approve duluan
+                # (lihat _coba_auto_approve_menginap), ini jaga-jaga untuk kasus yang tetap lewat review
+                # manual staf (mis. grup >1 kamar).
+                sync_status = "waiting_reddoorz_input" if (tipe == "menginap" and await property_butuh_reddoorz(property_id)) else "not_required"
                 await db.bookings.update_one({"id": booking["id"]}, {"$set": {"sync_status": sync_status}})
                 booking["sync_status"] = sync_status
                 created_bookings.append(booking)

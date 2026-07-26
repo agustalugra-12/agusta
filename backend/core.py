@@ -214,6 +214,19 @@ async def get_default_property_id() -> str:
     _default_property_id_cache = p["id"]
     return _default_property_id_cache
 
+async def property_butuh_reddoorz(property_id: str) -> bool:
+    """Multi-properti (2026-07-26, permintaan user) - beberapa properti (mis. "harmoni")
+    tidak listing di RedDoorz sama sekali, jadi booking Menginap-nya TIDAK perlu direview
+    manual staf/sinkron RedDoorz seperti Pelangi Homestay - bisa auto-approve seperti Day
+    Use (lihat _coba_auto_approve_menginap di routes/booking_requests.py). Default True
+    kalau field belum ada di dokumen properti (properti lama/belum pernah di-toggle) -
+    PERILAKU HARI INI TIDAK BERUBAH untuk properti manapun sampai owner eksplisit
+    mematikannya lewat halaman Kelola Properti."""
+    p = await db.properties.find_one({"id": property_id}, {"_id": 0, "butuh_sinkron_reddoorz": 1})
+    if not p:
+        return True
+    return p.get("butuh_sinkron_reddoorz", True)
+
 async def log_activity(user: dict, action: str, detail: str = "", entity: str = ""):
     """AuditLogger — dipanggil di semua route yang mengubah data (stok kamar, reservasi,
     pengguna, dst). Tiap panggilan menulis satu dokumen `AuditLog` ke collection `audit_log`.
@@ -560,12 +573,14 @@ class PropertyCreate(BaseModel):
     nama: str
     slug: str  # dipakai di URL Booking Engine publik (book.pelangihomestay.com/<slug>) - unik
     alamat: Optional[str] = ""
+    butuh_sinkron_reddoorz: bool = True  # default True - properti baru dianggap listing OTA RedDoorz kecuali dimatikan eksplisit
 
 class PropertyUpdate(BaseModel):
     nama: Optional[str] = None
     slug: Optional[str] = None
     alamat: Optional[str] = None
     aktif: Optional[bool] = None
+    butuh_sinkron_reddoorz: Optional[bool] = None
 
 class RoomCreate(BaseModel):
     nomor: str

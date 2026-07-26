@@ -30,6 +30,7 @@ async def create_property(body: PropertyCreate, user: dict = Depends(require_own
         "slug": slug,
         "alamat": (body.alamat or "").strip(),
         "aktif": True,
+        "butuh_sinkron_reddoorz": body.butuh_sinkron_reddoorz,
         "created_at": now_iso(),
     }
     await db.properties.insert_one(doc)
@@ -45,6 +46,7 @@ async def update_property(property_id: str, body: PropertyUpdate, user: dict = D
     if body.nama is not None: updates["nama"] = body.nama.strip()
     if body.alamat is not None: updates["alamat"] = body.alamat.strip()
     if body.aktif is not None: updates["aktif"] = body.aktif
+    if body.butuh_sinkron_reddoorz is not None: updates["butuh_sinkron_reddoorz"] = body.butuh_sinkron_reddoorz
     if body.slug is not None:
         slug = _slugify(body.slug)
         if slug != p["slug"] and await db.properties.find_one({"slug": slug}):
