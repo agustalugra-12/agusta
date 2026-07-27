@@ -269,7 +269,14 @@ async def _cocokkan_booking_pending_reddoorz(nama_tamu: str, room_tipe: str, che
     booking duplikat untuk reservasi yang sebenarnya sudah ada. Cocok = tipe kamar sama,
     check-in beda maksimal 1 hari (RedDoorz kadang beda pembulatan zona waktu), dan nama tamu
     beririsan (longgar, huruf/angka saja, case-insensitive) — tidak exact match karena ejaan
-    AI WhatsApp vs RedDoorz bisa sedikit beda. Return maksimal `jumlah_kamar` kandidat."""
+    AI WhatsApp vs RedDoorz bisa sedikit beda. Return maksimal `jumlah_kamar` kandidat.
+
+    Diurutkan berdasarkan selisih tanggal (0 hari dulu, baru ±1 hari) SEBELUM dipotong ke
+    `jumlah_kamar` (2026-07-27, ditemukan lewat laporan nyata: 3 booking tamu sama menunggu
+    sinkron bersamaan tanggal berdekatan - email konfirmasi utk tanggal 4 Agustus sempat
+    salah nyantol ke booking tanggal 3 Agustus krn keduanya sama-sama lolos toleransi ±1 hari
+    & urutan hasil query tidak menjamin yang PALING cocok duluan. Cocok persis (0 hari) HARUS
+    selalu menang daripada cocok kira-kira, kalau ada beberapa kandidat memenuhi syarat."""
     kandidat = await db.bookings.find({
         "source": "whatsapp_request", "sync_status": "waiting_reddoorz_sync",
         "room_tipe": room_tipe, "tipe": "menginap",
@@ -281,12 +288,14 @@ async def _cocokkan_booking_pending_reddoorz(nama_tamu: str, room_tipe: str, che
             b_checkin = parse_iso(b["jam_mulai"], "jam_mulai")
         except HTTPException:
             continue
-        if abs((b_checkin.date() - check_in.date()).days) > 1:
+        selisih_hari = abs((b_checkin.date() - check_in.date()).days)
+        if selisih_hari > 1:
             continue
         b_nama_norm = re.sub(r"[^a-z0-9]", "", (b.get("nama_tamu") or "").lower())
         if nama_norm and b_nama_norm and (nama_norm in b_nama_norm or b_nama_norm in nama_norm):
-            cocok.append(b)
-    return cocok[:jumlah_kamar]
+            cocok.append((selisih_hari, b))
+    cocok.sort(key=lambda pair: pair[0])
+    return [b for _, b in cocok[:jumlah_kamar]]
 
 
 async def buat_reservasi_otomatis(log_id: str, data: dict, sumber: str, subjek: str) -> None:
