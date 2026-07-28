@@ -100,7 +100,18 @@ async def _hitung_preview_harga(data: Dict[str, Any], diskon_persen: int, proper
     hasil_diskon = terapkan_diskon_member(subtotal_sebelum_diskon, diskon_persen)
     subtotal = hasil_diskon["subtotal"]
     diskon_rp = hasil_diskon["diskon_rp"]
-    service_fee = round(subtotal * SERVICE_FEE_PCT)
+    # Bug nyata ditemukan 2026-07-28 (audit akurasi diskon member, permintaan user): service
+    # fee di sini SEBELUMNYA dihitung dari `subtotal` (SUDAH dipotong diskon) - beda dari
+    # reservation_service.py (jalur SUNGGUHAN saat staf approve booking request ini), yang
+    # menghitung service_fee dari subtotal SEBELUM diskon lalu TIDAK menghitung ulang setelah
+    # diskon diterapkan (`terapkan_diskon_member` cuma ubah `subtotal`, `service_fee` tetap
+    # nilai pre-diskon - lihat komentar 2026-07-19 di core.py). Akibatnya AI menyebutkan/
+    # menjanjikan total yang LEBIH RENDAH ke tamu drpd yang benar-benar akan ditagih staf
+    # nanti (utk kedatangan ke-10/diskon 100%, preview bahkan menunjukkan Rp0 total, padahal
+    # service fee tetap harus dibayar) - dites nyata lewat simulator, selisih preview vs
+    # charge sungguhan Rp2.025 di 1 skenario contoh. Diperbaiki: hitung dari
+    # subtotal_sebelum_diskon, PERSIS sama seperti reservation_service.py.
+    service_fee = round(subtotal_sebelum_diskon * SERVICE_FEE_PCT)
     total = subtotal + service_fee
     return {
         "tarif_kamar": subtotal_sebelum_diskon, "diskon_rp": diskon_rp,
