@@ -31,7 +31,10 @@ client = AsyncIOMotorClient(mongo_url)
 db = client[os.environ['DB_NAME']]
 
 JWT_ALGO = "HS256"
-JWT_SECRET = os.environ.get("JWT_SECRET", "change-me")
+# Wajib diisi lewat env var, TANPA fallback (2026-07-27, audit keamanan) - default lama
+# "change-me" bikin server tetap nyala pakai kunci JWT yang bisa ditebak siapa saja kalau
+# env var pernah lupa/gagal ke-set saat deploy, alih-alih gagal start dgn jelas.
+JWT_SECRET = os.environ['JWT_SECRET']
 
 # ---- Shared APIRouter — every route module registers on this instance ----
 api = APIRouter(prefix="/api")

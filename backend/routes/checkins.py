@@ -193,10 +193,13 @@ async def list_guests(q: Optional[str] = None, user: dict = Depends(get_current_
                       property_id: str = Depends(get_active_property)):
     query: Dict[str, Any] = {}
     if q:
+        # re.escape() (2026-07-27, audit keamanan) - cegah ReDoS dari pola regex jahat, cari
+        # sbg teks harfiah.
+        q_escaped = re.escape(q)
         query = {"$or": [
-            {"nama": {"$regex": q, "$options": "i"}},
-            {"no_hp": {"$regex": q, "$options": "i"}},
-            {"no_identitas": {"$regex": q, "$options": "i"}},
+            {"nama": {"$regex": q_escaped, "$options": "i"}},
+            {"no_hp": {"$regex": q_escaped, "$options": "i"}},
+            {"no_identitas": {"$regex": q_escaped, "$options": "i"}},
         ]}
     items = await db.guests.find(scoped(query, property_id), {"_id": 0}).to_list(500)
     for it in items:

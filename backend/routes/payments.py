@@ -118,9 +118,12 @@ async def list_bookings_status_bayar(status_bayar: Optional[str] = None, search:
         raise HTTPException(400, "status_bayar harus belum_bayar, dp, atau lunas")
     q: Dict[str, Any] = scoped({}, property_id)
     if search:
+        # re.escape() (2026-07-27, audit keamanan) - cegah ReDoS dari pola regex jahat, cari
+        # sbg teks harfiah.
+        search_escaped = re.escape(search)
         q["$or"] = [
-            {"nama_tamu": {"$regex": search, "$options": "i"}},
-            {"kode": {"$regex": search, "$options": "i"}},
+            {"nama_tamu": {"$regex": search_escaped, "$options": "i"}},
+            {"kode": {"$regex": search_escaped, "$options": "i"}},
         ]
     fields = {"_id": 0, "id": 1, "kode": 1, "nama_tamu": 1, "room_nomor": 1, "room_tipe": 1,
               "tipe": 1, "status": 1, "payment_status": 1, "payment_option": 1, "total": 1,

@@ -441,7 +441,7 @@ _PUBLIC_BOOKING_FIELDS = [
 
 
 @api.get("/public/bookings/{bid}")
-async def public_get_booking(bid: str):
+async def public_get_booking(bid: str, _rl: None = Depends(rate_limiter(30, 60))):
     b = await db.bookings.find_one({"id": bid}, {"_id": 0})
     if not b:
         raise HTTPException(404, "Booking tidak ditemukan")
@@ -488,7 +488,7 @@ async def resend_voucher_email(bid: str, user: dict = Depends(get_current_user))
 
 
 @api.get("/public/bookings/{bid}/voucher.pdf")
-async def public_download_voucher_pdf(bid: str):
+async def public_download_voucher_pdf(bid: str, _rl: None = Depends(rate_limiter(30, 60))):
     b = await db.bookings.find_one({"id": bid}, {"_id": 0})
     if not b:
         raise HTTPException(404, "Booking tidak ditemukan")

@@ -121,9 +121,13 @@ async def list_bookings(status: Optional[str] = None, tipe: Optional[str] = None
     if tipe: q["tipe"] = tipe
     if sync_status: q["sync_status"] = sync_status
     if search:
+        # re.escape() (2026-07-27, audit keamanan) - tanpa ini, teks pencarian jahat berpola
+        # regex backtracking eksponensial (mis. "(a+)+b") bisa bikin query MongoDB hang/CPU
+        # spike (ReDoS). Sekarang selalu dicari sbg teks harfiah, bukan pola regex.
+        search_escaped = re.escape(search)
         q["$or"] = [
-            {"nama_tamu": {"$regex": search, "$options": "i"}},
-            {"kode": {"$regex": search, "$options": "i"}},
+            {"nama_tamu": {"$regex": search_escaped, "$options": "i"}},
+            {"kode": {"$regex": search_escaped, "$options": "i"}},
         ]
     if date:
         try:
