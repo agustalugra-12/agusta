@@ -52,17 +52,30 @@ async def room_locks(*room_ids: str):
 async def check_room_available(room_id: str, mulai: datetime, selesai: datetime,
                                 property_id: str, exclude_booking_id: Optional[str] = None) -> bool:
     """Raise HTTPException(400) jika kamar sudah dibooking pada rentang [mulai, selesai).
-    Booking yang dianggap konflik: status aktif/booking_pending/booking_paid.
+    Booking yang dianggap konflik: status aktif/booking_pending/booking_paid/checked_in.
     exclude_booking_id dipakai saat reschedule (update_booking) agar booking itu
     sendiri tidak dianggap konflik dengan dirinya sendiri.
 
     property_id (2026-07-24, multi-properti) WAJIB - room_id sendiri sudah unik global
     (uuid) jadi secara teknis query tanpa property_id tetap benar, tapi disertakan
     tetap sebagai lapis pertahanan konsisten dengan scoped() di collection lain.
-    """
+
+    Bug nyata ditemukan 2026-07-28 (audit atas permintaan user - pastikan kamar Menginap
+    TIDAK BISA ditumpuk Day Use, beda dari arah sebaliknya yang memang sengaja diizinkan):
+    daftar status di sini TIDAK PERNAH menyertakan "checked_in" - begitu tamu Menginap
+    BENAR-BENAR check-in (status booking berubah jadi "checked_in", lihat
+    checkin_from_booking di routes/bookings.py), fungsi ini berhenti menganggap booking
+    itu sebagai penghalang, jadi booking BARU yang overlap waktu (mis. Day Use di tengah
+    masa inap tamu yang sudah check-in) bisa LOLOS dibuat - dites nyata & terbukti
+    sebelum fix ini. scheduling_engine.py sudah punya daftar status yang BENAR
+    (BOOKING_TERKONFIRMASI_STATUS, sudah termasuk "checked_in") tapi TIDAK bisa di-import
+    langsung ke sini - scheduling_engine.py sendiri import check_room_available dari file
+    ini, import balik akan circular. Ditambahkan langsung di sini sbg perbaikan tercepat
+    & paling aman - kalau nanti direfactor, pindahkan konstanta status ini ke core.py
+    supaya jadi satu sumber kebenaran yang sama utk kedua file."""
     query: Dict[str, Any] = scoped({
         "room_id": room_id,
-        "status": {"$in": ["aktif", "booking_pending", "booking_paid"]},
+        "status": {"$in": ["aktif", "booking_pending", "booking_paid", "checked_in"]},
         "jam_mulai": {"$lt": selesai.isoformat()},
         "jam_selesai": {"$gt": mulai.isoformat()},
     }, property_id)
