@@ -663,11 +663,21 @@ async def list_booking_requests(status: Optional[str] = None, user: dict = Depen
         q["status"] = "waiting_payment"
     items = await db.booking_requests.find(scoped(q, property_id), {"_id": 0}).sort("created_at", -1).to_list(500)
 
+    # Satu query $in dibatch di luar loop (2026-07-28, audit performa) - sebelumnya tiap
+    # item dengan booking_ids query db.bookings sendiri-sendiri (N+1, sampai 500 query
+    # terpisah kalau daftar penuh). Semua booking diambil sekali lalu di-lookup per id
+    # lewat dict, hasilnya identik dengan query per-item sebelumnya.
+    all_booking_ids = list({bid for it in items for bid in it.get("booking_ids") or []})
+    bookings_by_id: Dict[str, dict] = {}
+    if all_booking_ids:
+        all_bks = await db.bookings.find(scoped({"id": {"$in": all_booking_ids}}, property_id), {"_id": 0}).to_list(len(all_booking_ids))
+        bookings_by_id = {b["id"]: b for b in all_bks}
+
     for it in items:
         it["status_efektif"] = it["status"]
         it["booking_ringkasan"] = None
         if it.get("booking_ids"):
-            bks = await db.bookings.find(scoped({"id": {"$in": it["booking_ids"]}}, property_id), {"_id": 0}).to_list(20)
+            bks = [bookings_by_id[bid] for bid in it["booking_ids"] if bid in bookings_by_id]
             if bks:
                 it["booking_ringkasan"] = [{
                     "kode": b["kode"], "room_nomor": b.get("room_nomor"), "room_tipe": b.get("room_tipe"),

@@ -1,3 +1,4 @@
+import asyncio
 from core import *
 from email_service import generate_voucher_pdf, send_voucher_email, kirim_voucher_wa
 from routes.push import send_push
@@ -256,7 +257,10 @@ async def tripay_callback(request: Request):
                 if new_payment == "paid" and not was_paid:
                     try:
                         gb_paid = {**gb, "status": new_status, "payment_status": new_payment}
-                        pdf_bytes = generate_voucher_pdf(gb_paid)
+                        # to_thread (2026-07-28, audit performa) - webhook Tripay ini paling
+                        # kritis krn dipanggil eksternal & harus cepat balas 200, generate_voucher_pdf
+                        # (ReportLab, sync) tidak boleh blokir event loop tunggal.
+                        pdf_bytes = await asyncio.to_thread(generate_voucher_pdf, gb_paid)
                         await send_voucher_email(gb_paid, pdf_bytes)
                         # Kirim voucher via WA juga (2026-07-20, permintaan user) - tamu
                         # tahu bookingnya sudah masuk saat itu juga, berlaku day_use & menginap.

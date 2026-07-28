@@ -226,8 +226,43 @@ async def report_service_revenue(from_date: str = Query(...), to_date: str = Que
 async def report_summary(user: dict = Depends(get_current_user), property_id: str = Depends(get_active_property)):
     today_iso = datetime.now(timezone.utc).date().isoformat()
     month_start = datetime.now(timezone.utc).replace(day=1, hour=0, minute=0, second=0, microsecond=0).isoformat()
-    # rooms
-    rooms = await db.rooms.find(scoped({}, property_id), {"_id": 0}).to_list(500)
+    today_date = datetime.now(timezone.utc).date()
+    today_start_dt = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+    today_end_dt = today_start_dt + timedelta(days=1)
+
+    # 13 query di bawah SEMUANYA independen satu sama lain (tidak ada yang butuh hasil query
+    # lain) - dijalankan paralel lewat asyncio.gather (2026-07-28, audit performa) alih-alih
+    # berurutan seperti sebelumnya. Endpoint ini dipanggil tiap Dashboard dibuka/refresh -
+    # 13 round-trip DB berurutan jadi 1 round-trip paralel, latensi total turun signifikan.
+    (
+        rooms, today_bookings, ci_today, co_today, bk_today, kasir_today,
+        ci_month, kasir_month, bk_month, svc_today, svc_month, exp_today, exp_month,
+    ) = await asyncio.gather(
+        db.rooms.find(scoped({}, property_id), {"_id": 0}).to_list(500),
+        db.bookings.find(scoped({
+            "status": {"$in": ["aktif", "booking_pending", "booking_paid"]},
+            "jam_mulai": {"$lt": today_end_dt.isoformat()},
+            "jam_selesai": {"$gt": today_start_dt.isoformat()},
+        }, property_id), {"_id": 0, "room_id": 1, "jam_mulai": 1, "jam_selesai": 1}).to_list(500),
+        db.checkins.find(scoped({"jam_checkin": {"$gte": today_iso}}, property_id), {"_id": 0}).to_list(500),
+        db.checkins.find(scoped({"jam_checkout": {"$gte": today_iso}, "status": "selesai"}, property_id), {"_id": 0}).to_list(500),
+        db.bookings.find(scoped({
+            "source": {"$in": ["ota", "online", "whatsapp"]}, "payment_status": "paid",
+            "paid_at": {"$gte": today_iso}, "ota_harga_dikonfirmasi": {"$ne": False},
+        }, property_id), {"_id": 0, "total": 1}).to_list(1000),
+        db.kasir.find(scoped({"timestamp": {"$gte": today_iso}}, property_id), {"_id": 0}).to_list(1000),
+        db.checkins.find(scoped({"jam_checkout": {"$gte": month_start}, "status": "selesai"}, property_id), {"_id": 0}).to_list(2000),
+        db.kasir.find(scoped({"timestamp": {"$gte": month_start}}, property_id), {"_id": 0}).to_list(2000),
+        db.bookings.find(scoped({
+            "source": {"$in": ["ota", "online", "whatsapp"]}, "payment_status": "paid",
+            "paid_at": {"$gte": month_start}, "ota_harga_dikonfirmasi": {"$ne": False},
+        }, property_id), {"_id": 0, "total": 1}).to_list(5000),
+        db.services.find(scoped({"tanggal": {"$gte": today_iso}}, property_id), {"_id": 0}).to_list(500),
+        db.services.find(scoped({"tanggal": {"$gte": month_start}}, property_id), {"_id": 0}).to_list(2000),
+        db.expenses.find(scoped({"tanggal": {"$gte": today_iso}}, property_id), {"_id": 0}).to_list(500),
+        db.expenses.find(scoped({"tanggal": {"$gte": month_start}}, property_id), {"_id": 0}).to_list(2000),
+    )
+
     counts = {"kosong": 0, "day_use": 0, "menginap": 0, "perlu_dibersihkan": 0, "maintenance": 0, "dipesan_hari_ini": 0}
     # Kamar berstatus "kosong" tapi SUDAH ada booking (aktif/booking_pending/booking_paid) yang
     # menempati hari ini dihitung sebagai "dipesan_hari_ini", BUKAN "kosong" — sebelumnya kartu
@@ -236,14 +271,6 @@ async def report_summary(user: dict = Depends(get_current_user), property_id: st
     # tamu benar-benar di-check-in, lihat checkin_from_booking di routes/bookings.py). Rentang
     # tanggal sama seperti _occupies_date (routes/ketersediaan.py): [checkin_date, checkout_date)
     # exclusive checkout, kecuali day-use (checkin=checkout, tetap terhitung).
-    today_date = datetime.now(timezone.utc).date()
-    today_start_dt = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
-    today_end_dt = today_start_dt + timedelta(days=1)
-    today_bookings = await db.bookings.find(scoped({
-        "status": {"$in": ["aktif", "booking_pending", "booking_paid"]},
-        "jam_mulai": {"$lt": today_end_dt.isoformat()},
-        "jam_selesai": {"$gt": today_start_dt.isoformat()},
-    }, property_id), {"_id": 0, "room_id": 1, "jam_mulai": 1, "jam_selesai": 1}).to_list(500)
     rooms_dipesan_hari_ini = set()
     for b in today_bookings:
         b_start = parse_iso(b["jam_mulai"], "jam_mulai").date()
@@ -258,8 +285,6 @@ async def report_summary(user: dict = Depends(get_current_user), property_id: st
         else:
             counts[status] = counts.get(status, 0) + 1
     # checkins today
-    ci_today = await db.checkins.find(scoped({"jam_checkin": {"$gte": today_iso}}, property_id), {"_id": 0}).to_list(500)
-    co_today = await db.checkins.find(scoped({"jam_checkout": {"$gte": today_iso}, "status": "selesai"}, property_id), {"_id": 0}).to_list(500)
     rev_room_today = sum(c.get("total", 0) for c in co_today)
     # booking online/OTA/WhatsApp yang sudah lunas (dibucket per paid_at — tanggal uang benar-benar
     # masuk, sama seperti /reports/daily & /reports/rooms yang sudah lebih dulu diperbaiki 2026-07-13;
@@ -269,35 +294,20 @@ async def report_summary(user: dict = Depends(get_current_user), property_id: st
     # emailnya tidak mencantumkan nominal, sempat memakai ESTIMASI tarif publik PMS sebagai
     # placeholder (lihat buat_reservasi_otomatis, routes/otomasi_email.py) - jangan dihitung
     # sebagai pendapatan asli sampai staf konfirmasi nominal settlement sungguhan.
-    bk_today = await db.bookings.find(scoped({
-        "source": {"$in": ["ota", "online", "whatsapp"]}, "payment_status": "paid",
-        "paid_at": {"$gte": today_iso}, "ota_harga_dikonfirmasi": {"$ne": False},
-    }, property_id), {"_id": 0, "total": 1}).to_list(1000)
     rev_booking_today = sum(int(b.get("total") or 0) for b in bk_today)
     # kasir today / month
-    kasir_today = await db.kasir.find(scoped({"timestamp": {"$gte": today_iso}}, property_id), {"_id": 0}).to_list(1000)
     rev_kasir_today = sum(k.get("total", 0) for k in kasir_today)
     rev_per_kat = {"makanan": 0, "minuman": 0, "laundry": 0}
     for k in kasir_today:
         for it in k.get("items", []):
             rev_per_kat[it["kategori"]] = rev_per_kat.get(it["kategori"], 0) + it["subtotal"]
     # month
-    ci_month = await db.checkins.find(scoped({"jam_checkout": {"$gte": month_start}, "status": "selesai"}, property_id), {"_id": 0}).to_list(2000)
-    kasir_month = await db.kasir.find(scoped({"timestamp": {"$gte": month_start}}, property_id), {"_id": 0}).to_list(2000)
-    bk_month = await db.bookings.find(scoped({
-        "source": {"$in": ["ota", "online", "whatsapp"]}, "payment_status": "paid",
-        "paid_at": {"$gte": month_start}, "ota_harga_dikonfirmasi": {"$ne": False},
-    }, property_id), {"_id": 0, "total": 1}).to_list(5000)
     rev_booking_month = sum(int(b.get("total") or 0) for b in bk_month)
     # services (manual)
-    svc_today = await db.services.find(scoped({"tanggal": {"$gte": today_iso}}, property_id), {"_id": 0}).to_list(500)
-    svc_month = await db.services.find(scoped({"tanggal": {"$gte": month_start}}, property_id), {"_id": 0}).to_list(2000)
     rev_svc_today = sum(s.get("nominal", 0) for s in svc_today)
     rev_svc_month = sum(s.get("nominal", 0) for s in svc_month)
     rev_month = sum(c.get("total", 0) for c in ci_month) + sum(k.get("total", 0) for k in kasir_month) + rev_svc_month + rev_booking_month
     # expenses
-    exp_today = await db.expenses.find(scoped({"tanggal": {"$gte": today_iso}}, property_id), {"_id": 0}).to_list(500)
-    exp_month = await db.expenses.find(scoped({"tanggal": {"$gte": month_start}}, property_id), {"_id": 0}).to_list(2000)
     total_exp_today = sum(e.get("nominal", 0) for e in exp_today)
     total_exp_month = sum(e.get("nominal", 0) for e in exp_month)
     # Okupansi harian (2026-07-21, permintaan user) - kamar yang TIDAK "kosong" (day_use,

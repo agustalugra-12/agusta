@@ -1,3 +1,4 @@
+import asyncio
 from core import *
 from email_service import generate_voucher_pdf, send_voucher_email, kirim_voucher_wa
 
@@ -56,7 +57,7 @@ async def update_payment_status_manual(log_id: str, body: PaymentStatusUpdateBod
             if new_payment == "paid" and not was_paid:
                 try:
                     b_paid = {**b, "status": new_status, "payment_status": new_payment}
-                    pdf_bytes = generate_voucher_pdf(b_paid)
+                    pdf_bytes = await asyncio.to_thread(generate_voucher_pdf, b_paid)
                     await send_voucher_email(b_paid, pdf_bytes)
                     await kirim_voucher_wa(b_paid, pdf_bytes)
                 except Exception as e:
