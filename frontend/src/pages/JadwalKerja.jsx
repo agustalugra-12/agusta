@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
-import { ChevronLeft, ChevronRight, Sparkles, Send, Users, Plus, Pencil, Repeat2, AlertTriangle, History } from "lucide-react";
+import { ChevronLeft, ChevronRight, Sparkles, Send, Users, Plus, Pencil, Repeat2, AlertTriangle, History, Printer } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
 
 const SHIFT_LABEL = { morning: "Morning", middle: "Middle", night: "Night", off: "Off" };
@@ -306,8 +306,20 @@ export default function JadwalKerja() {
                 </Button>
               </>
             )}
+            {/* Print (2026-07-28, permintaan user - staf butuh salinan cetak jadwal). Print
+                browser NATIVE (window.print()), BUKAN generate PDF server-side seperti fitur
+                lama yang sengaja dihapus 2026-07-17 krn sempat crash saat generate - ini murni
+                client-side, tidak ada beban/risiko server sama sekali. Dibuka utk semua role
+                (bukan cuma owner) krn staf jugalah yang butuh salinan fisiknya. */}
+            <Button size="sm" variant="outline" onClick={() => window.print()}>
+              <Printer className="w-3.5 h-3.5 mr-1" /> Print
+            </Button>
           </div>
 
+          {/* Kop cetak (2026-07-28) - HANYA terlihat saat print (class print:block, tersembunyi
+              di layar biasa via hidden) - halaman cetak tanpa ini cuma tabel telanjang tanpa
+              konteks bulan/tahun apa & keterangan kode shift (MOR/MID/NIG/OFF) yang di layar
+              biasa cuma kelihatan lewat hover tooltip title="..." yang TIDAK IKUT TERCETAK. */}
           {isOwner && jadwal.status === "draft" && totalPelanggaran > 0 && (
             <div className="rounded-xl bg-red-50 border border-red-200 p-3 flex items-start gap-2 text-sm text-red-700">
               <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />
@@ -315,7 +327,23 @@ export default function JadwalKerja() {
             </div>
           )}
 
-          <Card className="border-slate-200">
+          {/* id="jadwal-print-root" (2026-07-28) - satu-satunya bagian yang tetap terlihat saat
+              print, lihat CSS @media print di bawah (body* disembunyikan semua, cuma ini yang
+              di-unhide) - kop cetak (bulan/tahun/keterangan kode shift) SENGAJA dimasukkan di
+              dalam wrapper yang sama supaya ikut tercetak bersama tabelnya. */}
+          <div id="jadwal-print-root">
+            <div className="hidden print:block mb-3">
+              <h2 className="text-lg font-bold">Jadwal Kerja Staf — {BULAN_LABEL[month]} {year}</h2>
+              <p className="text-xs text-slate-500">
+                Dicetak {new Date().toLocaleDateString("id-ID", { day: "2-digit", month: "long", year: "numeric" })}
+                {jadwal.status === "published" ? " · Published" : " · Draft"}
+              </p>
+              <p className="text-xs text-slate-600 mt-1">
+                Keterangan: MOR = Morning, MID = Middle, NIG = Night, OFF = Libur
+              </p>
+            </div>
+
+            <Card className="border-slate-200">
             <CardContent className="p-3 overflow-x-auto">
               <table className="border-collapse text-xs">
                 <thead>
@@ -354,9 +382,21 @@ export default function JadwalKerja() {
                 </tbody>
               </table>
             </CardContent>
-          </Card>
+            </Card>
+          </div>
         </>
       )}
+
+      {/* Print CSS (2026-07-28) - scoped ke #jadwal-print-root, BUKAN stylesheet global, supaya
+          tidak menyentuh perilaku print halaman lain sama sekali. Pola umum "isolasi 1 area utk
+          print": sembunyikan SEMUA elemen body, lalu unhide cuma area ini + turunannya. */}
+      <style>{`
+        @media print {
+          body * { visibility: hidden; }
+          #jadwal-print-root, #jadwal-print-root * { visibility: visible; }
+          #jadwal-print-root { position: absolute; left: 0; top: 0; width: 100%; }
+        }
+      `}</style>
 
       {/* Popover edit sel sederhana via dialog */}
       <Dialog open={!!editCell} onOpenChange={(o) => { if (!o) setEditCell(null); }}>
