@@ -219,7 +219,7 @@ export default function Dashboard() {
   // Collect sisa pelunasan dialog state
   const [collectDialog, setCollectDialog] = useState(null); // { booking, sisa, nominal, metode }
 
-  const handleRoomClick = (room, upcomingBk) => {
+  const handleRoomClick = (room, upcomingBk, laterTodayBk) => {
     // Jika tanggal yang dilihat punya booking di room ini → buka detail booking
     if (upcomingBk) {
       setBookingDetail(upcomingBk);
@@ -236,8 +236,11 @@ export default function Dashboard() {
     if (room.status === "day_use") {
       const ci = active.find((x) => x.room_id === room.id);
       if (ci) {
-        // buka action dialog untuk pilih: checkout atau move room
-        setActionRoom({ ...room, _checkin: ci });
+        // buka action dialog untuk pilih: checkout atau move room. _laterTodayBk (2026-07-28,
+        // permintaan user - kamar yang menumpuk Day Use+Menginap hari yang sama cuma kelihatan
+        // 1 warna di grid) diteruskan ke sini supaya dialog-nya juga tampilkan booking lain yang
+        // sudah mengantre hari ini di kamar yang sama, bukan cuma titik warna di grid.
+        setActionRoom({ ...room, _checkin: ci, _laterTodayBk: laterTodayBk });
         setStatusForm({ status: room.status, nama_tamu: ci.nama_tamu, catatan: ci.catatan || "" });
       } else { toast.error("Data check-in tidak ditemukan"); }
       return;
@@ -247,7 +250,7 @@ export default function Dashboard() {
       openQuickBook([room]);
       return;
     }
-    setActionRoom(room);
+    setActionRoom({ ...room, _laterTodayBk: laterTodayBk });
     setStatusForm({ status: room.status, nama_tamu: room.info?.nama_tamu || "", catatan: room.info?.catatan || "" });
     setHkPetugas(user?.nama || "");
   };
@@ -634,6 +637,12 @@ export default function Dashboard() {
               <span className="w-3 h-3 rounded-sm" style={{ background: "#3B82F6" }} />
               <span className="text-slate-600">Booked Menginap ({bookingsOnDate.length})</span>
             </div>
+            {isToday && (
+              <div className="flex items-center gap-1.5" title="Titik kecil di pojok kiri-atas kamar menandakan sudah ada booking lain (Day Use/Menginap) yang mengantre di kamar yang sama hari ini">
+                <span className="w-2 h-2 rounded-full bg-slate-400" />
+                <span className="text-slate-600">Titik = ada booking lain menyusul hari ini di kamar sama</span>
+              </div>
+            )}
           </div>
           <div data-testid="room-grid" className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 gap-3">
             {rooms.map((r) => {
@@ -646,15 +655,31 @@ export default function Dashboard() {
               const bkLabel = upcomingBk
                 ? new Date(upcomingBk.jam_mulai).toLocaleString("id-ID", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })
                 : null;
+              // Kamar yang MENUMPUK Day Use + Menginap di hari yang sama (kasus lapangan
+              // nyata, permintaan user 2026-07-28) - selama ini grid cuma bisa tampilkan 1
+              // warna dari `r.status` (real-time, cuma tau status SAAT INI), jadi kalau kamar
+              // sedang Day Use TAPI juga sudah ada booking Menginap yang akan check-in nanti
+              // hari ini di kamar yang SAMA (diperbolehkan - lihat scheduling_engine.py,
+              // asal tidak overlap waktu), booking Menginap itu jadi tidak kelihatan sama
+              // sekali di dashboard sampai Day Use-nya selesai. Cuma dicek saat kamar TIDAK
+              // kosong (kosong sudah punya jalur `upcomingBk` sendiri di atas) - cari booking
+              // lain hari ini di kamar ini yang jam_mulai-nya masih di depan (belum mulai).
+              const laterTodayBk = (isToday && effStatus !== "kosong") ? bookingsOnDate
+                .filter(b => b.room_id === r.id && new Date(b.jam_mulai) > new Date())
+                .sort((a, c) => a.jam_mulai.localeCompare(c.jam_mulai))[0] : null;
+              const laterColor = laterTodayBk ? (laterTodayBk.tipe === "menginap" ? "#3B82F6" : "#92400E") : null;
+              const laterLabel = laterTodayBk
+                ? `${laterTodayBk.tipe === "menginap" ? "Menginap" : "Day Use"} ${new Date(laterTodayBk.jam_mulai).toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit" })}`
+                : null;
               const selectable = multiSelectMode && effStatus === "kosong" && !upcomingBk;
               const isSelected = selectable && selectedIds.includes(r.id);
               return (
               <div
                 key={r.id}
                 data-testid={`room-${r.nomor}`}
-                onClick={() => handleRoomClick(r, upcomingBk)}
+                onClick={() => handleRoomClick(r, upcomingBk, laterTodayBk)}
                 role="button" tabIndex={0}
-                onKeyDown={(e) => { if (e.key === "Enter") handleRoomClick(r, upcomingBk); }}
+                onKeyDown={(e) => { if (e.key === "Enter") handleRoomClick(r, upcomingBk, laterTodayBk); }}
                 className={`room-card relative rounded-xl text-white p-4 aspect-square flex flex-col justify-between text-left overflow-hidden cursor-pointer ${isSelected ? "ring-4 ring-blue-500 ring-offset-2" : ""} ${selectable && !isSelected ? "ring-2 ring-dashed ring-white/60" : ""}`}
                 style={{ background: bg }}
               >
@@ -672,6 +697,16 @@ export default function Dashboard() {
                 {bkLabel && (
                   <div className="absolute top-0 right-0 bg-amber-900/80 text-[9px] font-bold px-1.5 py-0.5 rounded-bl-md">
                     {bkLabel}
+                  </div>
+                )}
+                {laterTodayBk && (
+                  <div
+                    data-testid={`room-later-${r.nomor}`}
+                    title={`Ada booking lain hari ini: ${laterLabel} — ${laterTodayBk.nama_tamu}`}
+                    className="absolute top-1 left-1 flex items-center gap-1 bg-black/50 rounded-full px-1.5 py-0.5 z-10"
+                  >
+                    <span className="w-2 h-2 rounded-full shrink-0" style={{ background: laterColor }} />
+                    <span className="text-[9px] font-bold whitespace-nowrap">{laterLabel}</span>
                   </div>
                 )}
                 {upcomingBk && (
@@ -765,6 +800,19 @@ export default function Dashboard() {
               <span className="w-3 h-3 rounded-sm" style={{ background: statusColor(actionRoom?.status) }} />
               <span className="font-medium">{statusLabel(actionRoom?.status)}</span>
             </div>
+            {actionRoom?._laterTodayBk && (
+              <div className="rounded-lg bg-amber-50 border border-amber-200 p-2.5 flex items-start gap-2">
+                <span className="w-2.5 h-2.5 rounded-full mt-1 shrink-0" style={{ background: actionRoom._laterTodayBk.tipe === "menginap" ? "#3B82F6" : "#92400E" }} />
+                <div>
+                  <p className="font-medium text-amber-900">
+                    Kamar ini juga sudah ada booking {actionRoom._laterTodayBk.tipe === "menginap" ? "Menginap" : "Day Use"} lain hari ini
+                  </p>
+                  <p className="text-amber-800">
+                    {actionRoom._laterTodayBk.nama_tamu} — mulai {new Date(actionRoom._laterTodayBk.jam_mulai).toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit" })}
+                  </p>
+                </div>
+              </div>
+            )}
             {actionRoom?.status === "day_use" && actionRoom?._checkin && (
               <>
                 <div><span className="text-slate-500">Tamu:</span> <b>{actionRoom._checkin.nama_tamu}</b></div>
