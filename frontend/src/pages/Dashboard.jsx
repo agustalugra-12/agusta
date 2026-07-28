@@ -703,10 +703,11 @@ export default function Dashboard() {
                   <div
                     data-testid={`room-later-${r.nomor}`}
                     title={`Ada booking lain hari ini: ${laterLabel} — ${laterTodayBk.nama_tamu}`}
-                    className="absolute top-1 left-1 flex items-center gap-1 bg-black/50 rounded-full px-1.5 py-0.5 z-10"
+                    className="absolute top-7 left-1 right-1 flex items-center justify-center gap-1.5 text-white font-extrabold text-[13px] px-2 py-1.5 rounded-lg shadow-lg z-10 border-2 border-white animate-pulse"
+                    style={{ background: laterColor }}
                   >
-                    <span className="w-2 h-2 rounded-full shrink-0" style={{ background: laterColor }} />
-                    <span className="text-[9px] font-bold whitespace-nowrap">{laterLabel}</span>
+                    <span className="text-base leading-none">{laterTodayBk.tipe === "menginap" ? "🌙" : "☀️"}</span>
+                    <span className="whitespace-nowrap">{laterLabel}</span>
                   </div>
                 )}
                 {upcomingBk && (
