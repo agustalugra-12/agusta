@@ -153,10 +153,20 @@ async def list_bookings(status: Optional[str] = None, tipe: Optional[str] = None
 @api.post("/bookings/{bid}/cancel-with-fee")
 async def cancel_with_fee(bid: str, body: CancelWithFeeBody, user: dict = Depends(get_current_user),
                           property_id: str = Depends(get_active_property)):
-    """Cancel booking dengan biaya pembatalan 10% (online dan walk-in).
-    - booking_paid: refund = paid - 10% fee. Fee diakui sebagai revenue.
-    - booking_pending / aktif: no refund (belum ada uang masuk), 10% fee dicatat sebagai piutang/audit.
-    Return: {refund_amount, fee, original_total, status}
+    """Cancel booking (staf, dari Dashboard) - biaya pembatalan pakai KEBIJAKAN TUNGGAL yang
+    sama dgn semua channel lain (`hitung_kebijakan_pembatalan`, lihat memory proyek "Two
+    Cancellation Policies"): H-7 s/d H-3 (>=72 jam sblm check-in) = refund 100% (fee 0%),
+    H-2 s/d hari-H (<72 jam) = fee 50%.
+
+    BUG NYATA diperbaiki 2026-07-31 (dilaporkan Agus) - endpoint ini SEBELUMNYA masih pakai
+    fee 10% flat hardcode, tertinggal dari unifikasi kebijakan 2026-07-19 yang sudah
+    diterapkan di pembatalan.py (AI WhatsApp) & public.py (dulu self-service, sekarang
+    dimatikan) - staf yang batalkan lewat Dashboard jadi kena/kasih angka yang BEDA dari
+    kebijakan resmi. Sekarang 1 fungsi yang sama dipakai di semua tempat.
+
+    - booking_paid: refund = paid - fee. Fee diakui sebagai revenue.
+    - booking_pending / aktif: no refund (belum ada uang masuk), fee dicatat sebagai piutang/audit.
+    Return: {refund_amount, fee, original_total, status, policy_label}
     """
     b = await db.bookings.find_one(scoped({"id": bid}, property_id))
     if not b:
@@ -164,26 +174,29 @@ async def cancel_with_fee(bid: str, body: CancelWithFeeBody, user: dict = Depend
     if b.get("status") not in ("aktif", "booking_pending", "booking_paid"):
         raise HTTPException(400, f"Booking tidak dapat dibatalkan (status: {b.get('status')})")
     total = int(b.get("total") or 0)
-    fee = round(total * 0.10) if total else 0
+    policy = hitung_kebijakan_pembatalan(b["jam_mulai"])
+    fee = round(total * policy["biaya_persen"] / 100) if total else 0
     paid = int(b.get("amount_due") or 0)
     refund = max(0, paid - fee) if b.get("status") == "booking_paid" else 0
     now = now_iso()
     update_fields = {
         "status": "cancelled", "cancelled_at": now, "cancelled_by": user["nama"],
         "cancel_reason": body.alasan, "cancel_fee": fee, "refund_amount": refund,
+        "cancel_policy_label": policy["label"], "cancel_fee_percent": policy["biaya_persen"],
     }
     if b.get("status") == "booking_paid":
         update_fields["payment_status"] = "refunded" if refund > 0 else "forfeited"
     await db.bookings.update_one({"id": bid}, {"$set": update_fields})
     await log_availability_change(b["room_id"], b.get("room_tipe", ""), 1, "booking_dibatalkan", b.get("property_id"), booking_id=b["id"])
     detail = (
-        f"Cancel booking {b['kode']}: total Rp{total:,}, fee Rp{fee:,}, "
+        f"Cancel booking {b['kode']}: total Rp{total:,}, fee Rp{fee:,} ({policy['label']}), "
         f"{'refund Rp' + format(refund, ',') if refund > 0 else 'tidak ada refund'}"
     ).replace(",", ".")
     await log_activity(user, "cancel_with_fee", detail, entity=b.get("room_nomor", ""))
     return {
         "ok": True, "refund_amount": refund, "fee": fee, "original_paid": paid,
         "original_total": total, "booking_kode": b["kode"], "previous_status": b.get("status"),
+        "policy_label": policy["label"], "biaya_persen": policy["biaya_persen"],
     }
 
 @api.post("/bookings/{bid}/collect-balance")

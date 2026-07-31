@@ -34,6 +34,21 @@ const todayLocal = () => {
 };
 
 const nowLocalDateTime = () => { const d = new Date(); d.setMinutes(d.getMinutes() - d.getTimezoneOffset()); return d.toISOString().slice(0, 16); };
+
+// Kebijakan pembatalan TUNGGAL (2026-07-31, bug nyata dibenerin - dashboard sebelumnya
+// hardcode fee 10% flat, tidak sesuai kebijakan resmi yang sudah dipakai channel lain sejak
+// 2026-07-19) - sama persis dgn hitung_kebijakan_pembatalan (core.py) & calcCancelPolicy
+// (PublicBook.jsx): H-7 s/d H-3 (>=72 jam sblm check-in) = gratis, H-2 s/d hari-H = 50%.
+// Cuma dipakai utk PRATINJAU di dialog konfirmasi staf - angka final tetap dihitung ulang
+// server-side saat submit (cancel-with-fee), tidak dipercaya dari sini.
+const calcCancelFeePolicy = (jamMulaiIso) => {
+  const jamCheckin = new Date(jamMulaiIso);
+  const jamTersisa = (jamCheckin.getTime() - Date.now()) / 3600000;
+  if (jamTersisa >= 72) {
+    return { label: "H-7 s/d H-3 (masih ≥ 72 jam sebelum check-in): refund 100%", biaya_persen: 0 };
+  }
+  return { label: "H-2 s/d Hari-H (<72 jam sebelum check-in): biaya 50%", biaya_persen: 50 };
+};
 const emptyQuickForm = (tarif) => ({
   tipe: "day_use", nama_tamu: "", no_hp: "", no_identitas: "", kendaraan: "", jumlah_tamu: 1,
   jam_checkin: nowLocalDateTime(), malam: 1, harga: tarif ?? 0, catatan: "",
@@ -67,8 +82,9 @@ export default function Dashboard() {
   const [selectedIds, setSelectedIds] = useState([]);
 
   const [slotWarnings, setSlotWarnings] = useState([]); // [{room_nomor, alasan, rekomendasi_selesai}]
+  const [memberPreview, setMemberPreview] = useState(null); // {nama, total_kunjungan, kedatangan_ke, diskon_persen} | null
 
-  const openQuickBook = (rooms) => { setQuickForm(emptyQuickForm(rooms[0]?.tarif)); setQuickBookRooms(rooms); setSlotWarnings([]); };
+  const openQuickBook = (rooms) => { setQuickForm(emptyQuickForm(rooms[0]?.tarif)); setQuickBookRooms(rooms); setSlotWarnings([]); setMemberPreview(null); };
   const toggleRoomSelect = (room) => {
     setSelectedIds((ids) => ids.includes(room.id) ? ids.filter((id) => id !== room.id) : [...ids, room.id]);
   };
@@ -104,6 +120,32 @@ export default function Dashboard() {
     )).then((hasil) => { if (!batal) setSlotWarnings(hasil.filter(Boolean)); });
     return () => { batal = true; };
   }, [quickForm.tipe, quickForm.jam_checkin, quickBookRooms]);
+
+  // Pengenalan Member real-time (2026-07-31, permintaan Agus - "Member Intelligence") - staf
+  // sebelumnya TIDAK dapat info sama sekali saat mengetik HP/KTP tamu walk-in di Quick Book,
+  // padahal diskon loyalitas SUDAH benar dihitung di backend saat submit - staf cuma tidak
+  // tahu SEBELUM submit, jadi tidak bisa menyapa/menginformasikan tamu itu member. Debounce
+  // 400ms supaya tidak query tiap ketikan huruf; butuh minimal 5 digit HP atau 4 karakter KTP
+  // (nomor sangat pendek/awal terlalu banyak match acak, tidak berguna).
+  useEffect(() => {
+    const hp = quickForm.no_hp.trim();
+    const ktp = quickForm.no_identitas.trim();
+    if (hp.length < 5 && ktp.length < 4) { setMemberPreview(null); return; }
+    let batal = false;
+    const t = setTimeout(() => {
+      api.get("/guests", { params: { q: ktp.length >= 4 ? ktp : hp } })
+        .then(({ data }) => {
+          if (batal) return;
+          const match = data.find((g) =>
+            (ktp && g.no_identitas && g.no_identitas === ktp) ||
+            (hp && g.no_hp && g.no_hp.replace(/\D/g, "").endsWith(hp.replace(/\D/g, "").slice(-9)))
+          );
+          setMemberPreview(match && match.total_kunjungan > 0 ? match : null);
+        })
+        .catch(() => { if (!batal) setMemberPreview(null); });
+    }, 400);
+    return () => { batal = true; clearTimeout(t); };
+  }, [quickForm.no_hp, quickForm.no_identitas]);
 
   const submitQuickBook = async () => {
     if (!quickBookRooms.length) return;
@@ -258,18 +300,19 @@ export default function Dashboard() {
   const cancelBookingDetail = async () => {
     if (!bookingDetail) return;
     const totalNum = Number(bookingDetail.total || 0);
-    const fee = Math.round(totalNum * 0.10);
+    const policy = calcCancelFeePolicy(bookingDetail.jam_mulai);
+    const fee = Math.round(totalNum * policy.biaya_persen / 100);
     const paid = Number(bookingDetail.amount_due || 0);
     const refund = bookingDetail.status === "booking_paid" ? Math.max(0, paid - fee) : 0;
     const msg = bookingDetail.status === "booking_paid"
-      ? `Batalkan booking ${bookingDetail.kode}? Fee 10% (${fmtRp(fee)}) dipotong dari pembayaran. Refund: ${fmtRp(refund)}.`
-      : `Batalkan booking ${bookingDetail.kode}? Fee 10% (${fmtRp(fee)}) akan dicatat sebagai biaya pembatalan.`;
+      ? `Batalkan booking ${bookingDetail.kode}? ${policy.label} - fee ${fmtRp(fee)} dipotong dari pembayaran. Refund: ${fmtRp(refund)}.`
+      : `Batalkan booking ${bookingDetail.kode}? ${policy.label} - fee ${fmtRp(fee)} akan dicatat sebagai biaya pembatalan.`;
     if (!window.confirm(msg)) return;
     try {
       const { data } = await api.post(`/bookings/${bookingDetail.id}/cancel-with-fee`, { alasan: "" });
       const tmsg = data.refund_amount > 0
-        ? `Booking dibatalkan. Refund ${fmtRp(data.refund_amount)} (fee ${fmtRp(data.fee)})`
-        : `Booking dibatalkan. Fee ${fmtRp(data.fee)} tercatat.`;
+        ? `Booking dibatalkan. Refund ${fmtRp(data.refund_amount)} (fee ${fmtRp(data.fee)}, ${data.policy_label})`
+        : `Booking dibatalkan. Fee ${fmtRp(data.fee)} tercatat (${data.policy_label}).`;
       toast.success(tmsg);
       setBookingDetail(null); load();
     } catch (e) { toast.error(e?.response?.data?.detail || "Gagal"); }
@@ -350,17 +393,20 @@ export default function Dashboard() {
     } catch (e) { toast.error(e?.response?.data?.detail || "Gagal"); }
   };
 
-  // Quick cancel langsung dari kartu kamar (tombol X) - juga apply 10% fee universal
+  // Quick cancel langsung dari kartu kamar (tombol X) - fee pakai kebijakan pembatalan
+  // tunggal (2026-07-31, bug nyata dibenerin - sebelumnya hardcode 10% flat, tidak sesuai
+  // aturan resmi H-7~H-3=gratis/H-2~hari-H=50%, lihat calcCancelFeePolicy).
   const quickCancelBooking = async (bk) => {
     if (!bk) return;
     const totalNum = Number(bk.total || 0);
-    const fee = Math.round(totalNum * 0.10);
-    if (!window.confirm(`Batalkan booking ${bk.kode} (${bk.nama_tamu}, kamar ${bk.room_nomor})? Fee pembatalan 10% (${fmtRp(fee)}) akan dicatat.`)) return;
+    const policy = calcCancelFeePolicy(bk.jam_mulai);
+    const fee = Math.round(totalNum * policy.biaya_persen / 100);
+    if (!window.confirm(`Batalkan booking ${bk.kode} (${bk.nama_tamu}, kamar ${bk.room_nomor})? ${policy.label} - fee ${fmtRp(fee)} akan dicatat.`)) return;
     try {
       const { data } = await api.post(`/bookings/${bk.id}/cancel-with-fee`, { alasan: "" });
       const tmsg = data.refund_amount > 0
-        ? `Booking dibatalkan. Refund ${fmtRp(data.refund_amount)} (fee ${fmtRp(data.fee)})`
-        : `Booking ${bk.kode} dibatalkan. Fee ${fmtRp(data.fee)} tercatat.`;
+        ? `Booking dibatalkan. Refund ${fmtRp(data.refund_amount)} (fee ${fmtRp(data.fee)}, ${data.policy_label})`
+        : `Booking ${bk.kode} dibatalkan. Fee ${fmtRp(data.fee)} tercatat (${data.policy_label}).`;
       toast.success(tmsg);
       load();
     } catch (e) { toast.error(e?.response?.data?.detail || "Gagal"); }
@@ -750,6 +796,22 @@ export default function Dashboard() {
             <div className="col-span-2"><Label>Nama Tamu *</Label><Input data-testid="q-nama" value={quickForm.nama_tamu} onChange={(e) => setQuickForm(f => ({ ...f, nama_tamu: e.target.value }))} autoFocus /></div>
             <div><Label>HP</Label><Input data-testid="q-hp" value={quickForm.no_hp} onChange={(e) => setQuickForm(f => ({ ...f, no_hp: e.target.value }))} /></div>
             <div><Label>KTP</Label><Input value={quickForm.no_identitas} onChange={(e) => setQuickForm(f => ({ ...f, no_identitas: e.target.value }))} /></div>
+            {memberPreview && (
+              <div data-testid="q-member-badge" className="col-span-2 flex items-center gap-2.5 rounded-lg border-2 border-amber-300 bg-amber-50 px-3 py-2.5">
+                <Percent className="w-5 h-5 text-amber-600 shrink-0" />
+                <div className="text-sm">
+                  <p className="font-bold text-amber-900">
+                    {memberPreview.nama} — Member, kedatangan ke-{memberPreview.kedatangan_ke}
+                  </p>
+                  <p className="text-amber-800">
+                    {memberPreview.diskon_persen > 0
+                      ? `Dapat diskon loyalitas ${memberPreview.diskon_persen}% hari ini`
+                      : "Belum dapat diskon di kedatangan ini (lihat tabel loyalitas)"}
+                    {memberPreview.total_kunjungan > 0 && ` — sudah ${memberPreview.total_kunjungan}x datang`}
+                  </p>
+                </div>
+              </div>
+            )}
             <div><Label>Kendaraan</Label><Input value={quickForm.kendaraan} onChange={(e) => setQuickForm(f => ({ ...f, kendaraan: e.target.value }))} /></div>
             <div><Label>Jumlah Tamu</Label><Input type="number" min="1" value={quickForm.jumlah_tamu} onChange={(e) => setQuickForm(f => ({ ...f, jumlah_tamu: e.target.value }))} /></div>
             {quickForm.tipe === "day_use" ? (
@@ -957,7 +1019,7 @@ export default function Dashboard() {
                   Check-in Tamu
                 </Button>
                 <Button data-testid="bd-reschedule" variant="outline" onClick={() => setRescheduleMode(true)}>Reschedule</Button>
-                <Button data-testid="bd-cancel" variant="outline" onClick={cancelBookingDetail} className="text-red-600 border-red-300 hover:bg-red-50">Batalkan (Fee 10%)</Button>
+                <Button data-testid="bd-cancel" variant="outline" onClick={cancelBookingDetail} className="text-red-600 border-red-300 hover:bg-red-50">Batalkan (Fee {calcCancelFeePolicy(bookingDetail.jam_mulai).biaya_persen}%)</Button>
               </>
             )}
             {!rescheduleMode && bookingDetail?.status === "booking_pending" && (
@@ -966,7 +1028,7 @@ export default function Dashboard() {
                 <Button data-testid="bd-mark-paid-manual" variant="outline" onClick={markPaidManual} className="text-emerald-700 border-emerald-400 hover:bg-emerald-50">
                   Konfirmasi Pembayaran Manual
                 </Button>
-                <Button data-testid="bd-cancel-pending" variant="outline" onClick={cancelBookingDetail} className="text-red-600 border-red-300 hover:bg-red-50">Batalkan (Fee 10%)</Button>
+                <Button data-testid="bd-cancel-pending" variant="outline" onClick={cancelBookingDetail} className="text-red-600 border-red-300 hover:bg-red-50">Batalkan (Fee {calcCancelFeePolicy(bookingDetail.jam_mulai).biaya_persen}%)</Button>
               </>
             )}
             {!rescheduleMode && bookingDetail?.no_hp && (
@@ -991,7 +1053,7 @@ export default function Dashboard() {
                 )}
                 <Button data-testid="bd-reschedule-paid" variant="outline" onClick={() => setRescheduleMode(true)}>Reschedule</Button>
                 <Button data-testid="bd-cancel-refund" variant="outline" onClick={cancelBookingDetail} className="text-red-600 border-red-300 hover:bg-red-50">
-                  Batalkan + Refund (Fee 10%)
+                  Batalkan + Refund (Fee {calcCancelFeePolicy(bookingDetail.jam_mulai).biaya_persen}%)
                 </Button>
                 <Button data-testid="bd-no-show" variant="outline" onClick={markNoShow} className="text-amber-700 border-amber-400 hover:bg-amber-50">
                   Tandai No-Show
