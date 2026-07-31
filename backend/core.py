@@ -248,6 +248,18 @@ async def property_ada_sarapan(property_id: str) -> bool:
     return p.get("ada_sarapan", True)
 
 
+async def property_ada_ac(property_id: str) -> bool:
+    """Multi-properti (2026-07-31, permintaan user) - kamar Harmoni TIDAK ada AC (beda dari
+    Pelangi) - dipakai `public_rooms_catalog` supaya daftar fasilitas yang ditampilkan ke
+    tamu tidak mengklaim AC ada padahal tidak (bug nyata ditemukan: daftar fasilitas
+    sebelumnya 1 daftar hardcode dipakai sama rata semua properti). Default True kalau
+    field belum ada - perilaku Pelangi tidak berubah."""
+    p = await db.properties.find_one({"id": property_id}, {"_id": 0, "ada_ac": 1})
+    if not p:
+        return True
+    return p.get("ada_ac", True)
+
+
 async def nama_properti(property_id: str) -> str:
     """Nama tampilan properti untuk dipakai isi variabel WhatsApp Message Template
     (2026-07-26) - fallback ke "kami" kalau properti tidak ditemukan, supaya kalimat

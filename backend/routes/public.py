@@ -58,8 +58,13 @@ async def public_rooms_catalog(properti: Optional[str] = None):
     `properti` (Fase 5) - slug properti dari URL `/book/<slug>`, lihat _resolve_property."""
     property_id = await _resolve_property(properti)
     ada_sarapan = await property_ada_sarapan(property_id)
+    # (2026-07-31) - kamar Harmoni TIDAK ada AC (beda dari Pelangi) - bug nyata ditemukan &
+    # dilaporkan Agus: daftar fasilitas di bawah sebelumnya 1 daftar hardcode dipakai sama
+    # rata semua properti, jadi Harmoni ikut diklaim "AC" padahal tidak ada.
+    ada_ac = await property_ada_ac(property_id)
     rooms = await db.rooms.find(scoped({}, property_id), {"_id": 0}).to_list(500)
     rooms.sort(key=lambda r: (0 if r["tipe"] == "Standard" else 1, int(r["nomor"]) if r["nomor"].isdigit() else 9999))
+    ada_tipe_standard = any(r["tipe"] == "Standard" for r in rooms)
     # Foto & deskripsi per tipe kamar — statis (bukan dari DB) karena semua kamar
     # dalam 1 tipe memakai foto yang sama. File-nya ada di frontend/public/assets/.
     META = {
@@ -73,7 +78,14 @@ async def public_rooms_catalog(properti: Optional[str] = None):
             "image": "/assets/cot-2.webp",
             "size": "5 × 3,5 m",
             "capacity": "2 Dewasa + 1 Anak",
-            "description": "Fasilitas identik dengan Standard Room, namun jauh lebih lapang — cocok untuk keluarga kecil atau honeymoon.",
+            # "identik dengan Standard Room" cuma masuk akal kalau properti ini memang PUNYA
+            # tipe Standard (Pelangi) - Harmoni cuma punya Cottage, referensi ke Standard di
+            # sana jadi membingungkan/salah konteks.
+            "description": (
+                "Fasilitas identik dengan Standard Room, namun jauh lebih lapang — cocok untuk keluarga kecil atau honeymoon."
+                if ada_tipe_standard else
+                "Cottage luas dan nyaman dengan area outdoor — cocok untuk keluarga kecil atau honeymoon."
+            ),
         },
     }
     grouped: Dict[str, Any] = {}
@@ -81,6 +93,7 @@ async def public_rooms_catalog(properti: Optional[str] = None):
         t = r["tipe"]
         if t not in grouped:
             m = META.get(t, {})
+            fasilitas = (["AC"] if ada_ac else []) + ["Wi-Fi gratis", "TV LED", "Kamar mandi dalam", "Air panas", "Handuk & toiletries"]
             grouped[t] = {
                 "tipe": t,
                 "tarif": r["tarif"],  # harga Day Use (flat per 6 jam)
@@ -92,10 +105,7 @@ async def public_rooms_catalog(properti: Optional[str] = None):
                 "size": m.get("size", ""),
                 "capacity": m.get("capacity", ""),
                 "description": m.get("description", ""),
-                "fasilitas": [
-                    "AC", "Wi-Fi gratis", "TV LED", "Kamar mandi dalam",
-                    "Air panas", "Handuk & toiletries",
-                ] + (["Cottage Style", "Area Outdoor"] if t == "Cottage" else []),
+                "fasilitas": fasilitas + (["Cottage Style", "Area Outdoor"] if t == "Cottage" else []),
                 "rooms": [],
             }
         grouped[t]["rooms"].append({"id": r["id"], "nomor": r["nomor"]})
