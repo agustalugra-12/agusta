@@ -12,6 +12,33 @@ import { Search, X, Ban, CreditCard, MessageCircle, Phone, History, Sparkles, Pl
 
 const toLocalInput = (iso) => { const d = new Date(iso); d.setMinutes(d.getMinutes() - d.getTimezoneOffset()); return d.toISOString().slice(0, 16); };
 
+// Tabel siklus diskon loyalitas - SAMA PERSIS dgn DISKON_MEMBER_TABLE (core.py), cuma
+// dipakai di sini utk render visual siklus 10 kedatangan (2026-07-31, "Member
+// Intelligence" fase 1 - permintaan Agus: card member yang hidup, bukan cuma angka
+// datar). Kalau tabel di backend diubah, WAJIB update di sini juga.
+const DISKON_MEMBER_TABLE = { 1: 0, 2: 10, 3: 0, 4: 10, 5: 30, 6: 0, 7: 10, 8: 0, 9: 10, 10: 100 };
+
+function loyaltyStatus(g) {
+  const totalKunjungan = g.total_kunjungan || 0;
+  const daysSince = g.last_visit ? Math.floor((Date.now() - new Date(g.last_visit).getTime()) / 86400000) : null;
+  if (totalKunjungan === 0) return { label: "Tamu Baru", emoji: "🎉", cls: "bg-blue-100 text-blue-700" };
+  if (daysSince !== null && daysSince > 90) return { label: "Jarang Datang", emoji: "😴", cls: "bg-slate-200 text-slate-600" };
+  if (totalKunjungan >= 9) return { label: "VIP", emoji: "💎", cls: "bg-purple-100 text-purple-700" };
+  if (totalKunjungan >= 2) return { label: "Loyal Guest", emoji: "❤️", cls: "bg-rose-100 text-rose-700" };
+  return { label: "Active Member", emoji: "🔥", cls: "bg-orange-100 text-orange-700" };
+}
+
+// Posisi di siklus 10 kedatangan (sama seperti diskon_member_untuk_total_kunjungan di
+// core.py) + reward berikutnya yang belum diraih, buat progress bar "Loyalty Journey".
+function loyaltyCycle(kedatanganKe) {
+  const posisi = ((kedatanganKe - 1) % 10) + 1;
+  let nextPosisi = null, nextReward = 0;
+  for (let p = posisi + 1; p <= 10; p++) {
+    if (DISKON_MEMBER_TABLE[p] > 0) { nextPosisi = p; nextReward = DISKON_MEMBER_TABLE[p]; break; }
+  }
+  return { posisi, nextPosisi, nextReward, sisaMenuju: nextPosisi ? nextPosisi - posisi : null };
+}
+
 const STATUS_OPTIONS = ["Semua", "aktif", "booking_pending", "booking_paid", "checked_in", "cancelled", "no_show"];
 // Label status LIFECYCLE booking (aktif/pending/dst) — beda dari status BAYAR (Belum
 // Bayar/DP/Lunas, lihat STATUS_BAYAR_LABEL di apiClient.js). "booking_paid" cuma berarti
@@ -390,42 +417,79 @@ function TamuTab() {
         </Button>
       </div>
       <div className="space-y-2">
-        {guests.map(g => (
+        {guests.map(g => {
+          const status = loyaltyStatus(g);
+          const cycle = loyaltyCycle(g.kedatangan_ke);
+          return (
           <Card key={g.id} className="border-slate-200" data-testid={`guest-row-${g.id}`}>
-            <CardContent className="p-4 flex flex-wrap items-center gap-4">
-              <div className="min-w-[180px]">
-                <div className="font-bold text-base">{g.nama}</div>
-                <div className="text-xs text-slate-500">{g.no_hp || "-"} • {g.no_identitas || "-"}</div>
-                {(() => {
-                  const varianLain = Object.keys(g.nama_varian || {}).filter((n) => n !== g.nama);
-                  return varianLain.length > 0 ? (
-                    <div className="text-[11px] text-slate-400 mt-0.5" title="Nama lain yang pernah dipakai tamu ini saat booking (nomor HP sama)">
-                      juga tercatat sebagai: {varianLain.join(", ")}
-                    </div>
-                  ) : null;
-                })()}
-              </div>
-              <div className="flex items-center gap-2 text-xs shrink-0">
-                <div className="bg-slate-50 rounded-lg px-2.5 py-1.5"><span className="text-slate-500">Kunjungan </span><span className="font-bold">{g.total_kunjungan || 0}×</span></div>
-                <div className="bg-slate-50 rounded-lg px-2.5 py-1.5"><span className="text-slate-500">Total Trx </span><span className="font-bold">{fmtRp(g.total_transaksi || 0)}</span></div>
-                {g.diskon_persen > 0 ? (
-                  <div className="inline-flex items-center gap-1 bg-amber-100 text-amber-800 rounded-lg px-2.5 py-1.5 font-semibold" data-testid={`guest-member-badge-${g.id}`}>
-                    <Sparkles className="w-3.5 h-3.5" /> Kedatangan ke-{g.kedatangan_ke}: diskon {g.diskon_persen}%
+            <CardContent className="p-4 space-y-3">
+              <div className="flex flex-wrap items-center gap-4">
+                <div className="flex items-center gap-3 min-w-[220px]">
+                  <div className="w-11 h-11 rounded-full bg-blue-700 text-white grid place-items-center font-bold text-base shrink-0">
+                    {(g.nama || "?").trim().charAt(0).toUpperCase()}
                   </div>
-                ) : (
-                  <div className="text-slate-400 px-2.5 py-1.5">Kedatangan ke-{g.kedatangan_ke}: belum ada diskon</div>
-                )}
+                  <div>
+                    <div className="flex items-center gap-1.5">
+                      <span className="font-bold text-base">{g.nama}</span>
+                      <span className={`inline-flex items-center gap-1 text-[10px] font-bold uppercase tracking-wide rounded-full px-2 py-0.5 ${status.cls}`} data-testid={`guest-status-${g.id}`}>
+                        {status.emoji} {status.label}
+                      </span>
+                    </div>
+                    <div className="text-xs text-slate-500">{g.no_hp || "-"} • {g.no_identitas || "-"}</div>
+                    {(() => {
+                      const varianLain = Object.keys(g.nama_varian || {}).filter((n) => n !== g.nama);
+                      return varianLain.length > 0 ? (
+                        <div className="text-[11px] text-slate-400 mt-0.5" title="Nama lain yang pernah dipakai tamu ini saat booking (nomor HP sama)">
+                          juga tercatat sebagai: {varianLain.join(", ")}
+                        </div>
+                      ) : null;
+                    })()}
+                  </div>
+                </div>
+                <div className="flex items-center gap-2 text-xs shrink-0">
+                  <div className="bg-slate-50 rounded-lg px-2.5 py-1.5"><span className="text-slate-500">Kunjungan </span><span className="font-bold">{g.total_kunjungan || 0}×</span></div>
+                  <div className="bg-slate-50 rounded-lg px-2.5 py-1.5"><span className="text-slate-500">Total Belanja </span><span className="font-bold">{fmtRp(g.total_transaksi || 0)}</span></div>
+                  {g.diskon_persen > 0 ? (
+                    <div className="inline-flex items-center gap-1 bg-amber-100 text-amber-800 rounded-lg px-2.5 py-1.5 font-semibold" data-testid={`guest-member-badge-${g.id}`}>
+                      <Sparkles className="w-3.5 h-3.5" /> Kedatangan ke-{g.kedatangan_ke}: diskon {g.diskon_persen}%
+                    </div>
+                  ) : (
+                    <div className="text-slate-400 px-2.5 py-1.5">Kedatangan ke-{g.kedatangan_ke}: belum ada diskon</div>
+                  )}
+                </div>
+                <div className="text-xs text-slate-500 shrink-0">Terakhir: {fmtDateTime(g.last_visit)}</div>
+                <div className="flex gap-2 ml-auto shrink-0">
+                  {g.no_hp && <a href={waLink(g.no_hp)} target="_blank" rel="noreferrer"><Button size="sm" variant="outline"><MessageCircle className="w-3.5 h-3.5 mr-1" /> WA</Button></a>}
+                  {g.no_hp && <a href={`tel:${g.no_hp}`}><Button size="sm" variant="outline"><Phone className="w-3.5 h-3.5 mr-1" /> Telepon</Button></a>}
+                  <Button size="sm" variant="outline" onClick={() => showHistory(g)} data-testid={`hist-${g.id}`}><History className="w-3.5 h-3.5" /></Button>
+                  <Button size="sm" variant="outline" onClick={() => openEditGuest(g)} data-testid={`guest-edit-${g.id}`}><PencilLine className="w-3.5 h-3.5" /></Button>
+                </div>
               </div>
-              <div className="text-xs text-slate-500 shrink-0">Terakhir: {fmtDateTime(g.last_visit)}</div>
-              <div className="flex gap-2 ml-auto shrink-0">
-                {g.no_hp && <a href={waLink(g.no_hp)} target="_blank" rel="noreferrer"><Button size="sm" variant="outline"><MessageCircle className="w-3.5 h-3.5 mr-1" /> WA</Button></a>}
-                {g.no_hp && <a href={`tel:${g.no_hp}`}><Button size="sm" variant="outline"><Phone className="w-3.5 h-3.5 mr-1" /> Telepon</Button></a>}
-                <Button size="sm" variant="outline" onClick={() => showHistory(g)} data-testid={`hist-${g.id}`}><History className="w-3.5 h-3.5" /></Button>
-                <Button size="sm" variant="outline" onClick={() => openEditGuest(g)} data-testid={`guest-edit-${g.id}`}><PencilLine className="w-3.5 h-3.5" /></Button>
+              {/* Loyalty Journey - siklus 10 kedatangan (2026-07-31, "Member Intelligence" fase 1) */}
+              <div className="flex items-center gap-2" data-testid={`guest-loyalty-cycle-${g.id}`}>
+                <div className="flex gap-1">
+                  {Array.from({ length: 10 }, (_, i) => i + 1).map((p) => (
+                    <div
+                      key={p}
+                      title={`Kedatangan ke-${p}${DISKON_MEMBER_TABLE[p] > 0 ? ` — diskon ${DISKON_MEMBER_TABLE[p]}%` : ""}`}
+                      className={`w-4 h-4 rounded-sm shrink-0 ${
+                        p < cycle.posisi ? "bg-blue-300"
+                          : p === cycle.posisi ? "bg-blue-700 ring-2 ring-blue-300"
+                          : DISKON_MEMBER_TABLE[p] > 0 ? "bg-amber-200" : "bg-slate-150 bg-slate-200"
+                      }`}
+                    />
+                  ))}
+                </div>
+                <span className="text-[11px] text-slate-500">
+                  {cycle.nextPosisi
+                    ? `${cycle.sisaMenuju}x lagi menuju diskon ${cycle.nextReward}% (kedatangan ke-${cycle.nextPosisi})`
+                    : "Siklus 10 kedatangan selesai — mulai lagi dari awal"}
+                </span>
               </div>
             </CardContent>
           </Card>
-        ))}
+          );
+        })}
         {guests.length === 0 && <div className="text-slate-500 text-center py-10">Belum ada data tamu</div>}
       </div>
 

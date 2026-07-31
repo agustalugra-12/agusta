@@ -297,6 +297,12 @@ async def checkin_from_booking(bid: str, body: CheckinFromBookingBody = CheckinF
         await db.bookings.update_one({"id": bid}, {"$set": {
             "status": "checked_in", "checked_in_at": now, "checked_in_by": user["nama"],
         }})
+        # (2026-07-31, bug nyata ditemukan sambil kerjakan card member "Total Belanja") -
+        # total_transaksi tamu SEBELUMNYA cuma naik dari checkout Day Use
+        # (routes/checkins.py) - booking Menginap TIDAK PERNAH menambah angka ini sama
+        # sekali, jadi tamu yang mayoritas booking Menginap salah tampil belanja Rp0.
+        if guest_id:
+            await db.guests.update_one({"id": guest_id}, {"$inc": {"total_transaksi": total}})
         await log_activity(user, "checkin_from_booking",
                            f"Check-in tamu {b.get('nama_tamu','')} dari booking {b['kode']} ke kamar {r['nomor']} (menginap, sisa Rp{sisa:,})".replace(",", "."),
                            entity=r["nomor"])
