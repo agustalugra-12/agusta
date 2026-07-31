@@ -14,18 +14,33 @@ async def laporan_pendapatan(from_date: str = Query(...), to_date: str = Query(.
                               user: dict = Depends(get_current_user),
                               property_id: str = Depends(get_active_property)):
     """Pendapatan harian dari booking multi-saluran yang sudah dibayar (payment_status=paid),
-    dikelompokkan per tanggal paid_at. Tidak termasuk pendapatan walk-in (sudah ada di /reports/daily)."""
+    diakui per MALAM inap (accrual/matching principle) — booking yang nginap lintas bulan
+    kebagi proporsional ke tiap bulan sesuai malam yang benar-benar terpakai, bukan numpuk
+    semua di tanggal paid_at. Konsisten dengan /reports/daily. Tidak termasuk pendapatan
+    walk-in (sudah ada di /reports/daily)."""
     start = from_date
     end = to_date + "T23:59:59"
     bks = await db.bookings.find(scoped({
         "payment_status": "paid",
-        "paid_at": {"$gte": start, "$lte": end},
+        "jam_mulai": {"$lte": end},
+        "jam_selesai": {"$gte": start},
         "ota_harga_dikonfirmasi": {"$ne": False},
-    }, property_id), {"_id": 0, "total": 1, "paid_at": 1}).to_list(5000)
+    }, property_id), {"_id": 0, "total": 1, "jam_mulai": 1, "jam_selesai": 1}).to_list(5000)
     by_day: Dict[str, int] = {}
     for b in bks:
-        d = (b.get("paid_at") or "")[:10]
-        by_day[d] = by_day.get(d, 0) + int(b.get("total") or 0)
+        total = int(b.get("total") or 0)
+        jm, js = b.get("jam_mulai"), b.get("jam_selesai")
+        if not jm or not js:
+            continue
+        d0 = datetime.fromisoformat(jm).date()
+        d1 = datetime.fromisoformat(js).date()
+        nights = max(1, (d1 - d0).days)
+        per_night = total / nights
+        for i in range(nights):
+            d = (d0 + timedelta(days=i)).isoformat()
+            if d < from_date or d > to_date:
+                continue
+            by_day[d] = by_day.get(d, 0) + round(per_night)
     return [{"tanggal": d, "pendapatan": by_day[d]} for d in sorted(by_day.keys())]
 
 

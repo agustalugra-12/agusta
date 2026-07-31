@@ -376,19 +376,23 @@ async def report_daily(from_date: str = Query(...), to_date: str = Query(...),
                        property_id: str = Depends(get_active_property)):
     """Return per-day revenue between dates (inclusive). Dates: YYYY-MM-DD.
     "kamar" mencakup walk-in (checkins, dibucket per jam_checkout) DAN booking
-    online/OTA/WhatsApp yang sudah lunas (bookings, dibucket per paid_at — tanggal uang
-    benar-benar masuk, konsisten dengan /laporan-analitik/pendapatan). Tidak ada duplikasi
-    dengan checkins karena booking online/OTA/WA tidak pernah menghasilkan dokumen checkins
-    terpisah di sistem ini (dua alur guest-arrival yang independen)."""
+    online/OTA/WhatsApp yang sudah lunas (bookings) — pendapatan booking menginap
+    diakui per MALAM inap (accrual/matching principle), bukan numpuk semua di tanggal
+    paid_at, supaya booking yang nginap lintas bulan (mis. check-in akhir Juli, checkout
+    pertengahan Agustus) kebagi proporsional ke tiap bulan sesuai malam yang benar-benar
+    terpakai di bulan itu — konsisten dengan /laporan-analitik/pendapatan. Tidak ada
+    duplikasi dengan checkins karena booking online/OTA/WA tidak pernah menghasilkan
+    dokumen checkins terpisah di sistem ini (dua alur guest-arrival yang independen)."""
     start = from_date
     end = to_date + "T23:59:59"
     ci = await db.checkins.find(scoped({"jam_checkout": {"$gte": start, "$lte": end}, "status": "selesai"}, property_id), {"_id": 0}).to_list(5000)
     bk = await db.bookings.find(scoped({
         "source": {"$in": ["ota", "online", "whatsapp"]},
         "payment_status": "paid",
-        "paid_at": {"$gte": start, "$lte": end},
+        "jam_mulai": {"$lte": end},
+        "jam_selesai": {"$gte": start},
         "ota_harga_dikonfirmasi": {"$ne": False},
-    }, property_id), {"_id": 0, "total": 1, "paid_at": 1}).to_list(5000)
+    }, property_id), {"_id": 0, "total": 1, "jam_mulai": 1, "jam_selesai": 1}).to_list(5000)
     ks = await db.kasir.find(scoped({"timestamp": {"$gte": start, "$lte": end}}, property_id), {"_id": 0}).to_list(5000)
     ex = await db.expenses.find(scoped({"tanggal": {"$gte": start, "$lte": end}}, property_id), {"_id": 0}).to_list(5000)
     sv = await db.services.find(scoped({"tanggal": {"$gte": start, "$lte": end}}, property_id), {"_id": 0}).to_list(5000)
@@ -401,9 +405,20 @@ async def report_daily(from_date: str = Query(...), to_date: str = Query(...),
         by_day.setdefault(d, _init())
         by_day[d]["kamar"] += c.get("total", 0)
     for b in bk:
-        d = bucket(b["paid_at"])
-        by_day.setdefault(d, _init())
-        by_day[d]["kamar"] += int(b.get("total") or 0)
+        total = int(b.get("total") or 0)
+        jm, js = b.get("jam_mulai"), b.get("jam_selesai")
+        if not jm or not js:
+            continue
+        d0 = datetime.fromisoformat(jm).date()
+        d1 = datetime.fromisoformat(js).date()
+        nights = max(1, (d1 - d0).days)
+        per_night = total / nights
+        for i in range(nights):
+            d = (d0 + timedelta(days=i)).isoformat()
+            if d < from_date or d > to_date:
+                continue
+            by_day.setdefault(d, _init())
+            by_day[d]["kamar"] += round(per_night)
     for k in ks:
         d = bucket(k["timestamp"])
         by_day.setdefault(d, _init())
