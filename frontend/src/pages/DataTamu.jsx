@@ -212,6 +212,11 @@ export default function DataTamu() {
                           CRM {g.crm_score}
                         </span>
                       )}
+                      {g.peluang_kembali && (
+                        <span className="inline-flex items-center gap-1 text-[10px] font-bold uppercase tracking-wide rounded-full px-2 py-0.5 bg-teal-100 text-teal-700" title="AI Insight - estimasi KASAR/AWAL dari pola kunjungan tamu ini sendiri, bukan prediksi tervalidasi" data-testid={`guest-peluang-kembali-${g.id}`}>
+                          Peluang Kembali ~{g.peluang_kembali.persen}%
+                        </span>
+                      )}
                     </div>
                     <div className="text-xs text-slate-500">{g.no_hp || "-"} • {g.no_identitas || "-"}</div>
                     {(() => {
@@ -275,7 +280,7 @@ export default function DataTamu() {
         <DialogContent className="max-w-2xl">
           <DialogHeader><DialogTitle>Riwayat {history?.guest?.nama}</DialogTitle></DialogHeader>
           <div className="max-h-[28rem] overflow-y-auto space-y-4">
-            {timeline?.preferensi && (timeline.preferensi.tipe_kamar_favorit || timeline.preferensi.hari_biasa_datang || timeline.preferensi.rata_rata_malam_menginap) && (
+            {timeline && (timeline.preferensi?.tipe_kamar_favorit || timeline.preferensi?.hari_biasa_datang || timeline.preferensi?.rata_rata_malam_menginap || timeline.peluang_kembali) && (
               <div className="flex flex-wrap gap-2 text-xs" data-testid="guest-preferensi">
                 {timeline.preferensi.tipe_kamar_favorit && (
                   <div className="bg-indigo-50 text-indigo-700 rounded-lg px-2.5 py-1.5"><span className="text-indigo-400">Tipe favorit </span><span className="font-bold">{timeline.preferensi.tipe_kamar_favorit}</span></div>
@@ -285,6 +290,11 @@ export default function DataTamu() {
                 )}
                 {timeline.preferensi.rata_rata_malam_menginap && (
                   <div className="bg-indigo-50 text-indigo-700 rounded-lg px-2.5 py-1.5"><span className="text-indigo-400">Rata-rata menginap </span><span className="font-bold">{timeline.preferensi.rata_rata_malam_menginap} malam</span></div>
+                )}
+                {timeline.peluang_kembali && (
+                  <div className="bg-teal-50 text-teal-700 rounded-lg px-2.5 py-1.5" title="AI Insight - estimasi KASAR/AWAL dari pola kunjungan tamu ini sendiri, bukan prediksi tervalidasi">
+                    <span className="text-teal-500">Peluang kembali </span><span className="font-bold">~{timeline.peluang_kembali.persen}% ({timeline.peluang_kembali.label})</span>
+                  </div>
                 )}
               </div>
             )}

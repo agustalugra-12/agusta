@@ -277,6 +277,7 @@ async def list_guests(q: Optional[str] = None, user: dict = Depends(get_current_
         crm = hitung_crm_score(it.get("total_kunjungan", 0), it.get("last_visit"), it.get("total_transaksi", 0), avg_transaksi)
         it["crm_score"] = crm["skor"]
         it["crm_label"] = crm["label"]
+        it["peluang_kembali"] = hitung_peluang_kembali(it.get("riwayat_kunjungan"))
     # sort di Python (case-insensitive) - default Mongo sort per byte (huruf besar/kecil/angka
     # tercampur tidak sesuai urutan A-Z yang wajar dilihat orang), aman untuk skala tamu (<=500)
     items.sort(key=lambda g: (g.get("nama") or "").lower())
@@ -460,7 +461,8 @@ async def guest_timeline(guest_id: str, user: dict = Depends(get_current_user),
     # yang benar-benar tersimpan di db (mis. voucher ulang tahun) di `reward_wallet`.
     member_diskon = diskon_member_untuk_total_kunjungan(g.get("total_kunjungan", 0))
     return {"events": events, "preferensi": preferensi, "member_diskon_aktif": member_diskon,
-            "reward_wallet": g.get("reward_wallet", [])}
+            "reward_wallet": g.get("reward_wallet", []),
+            "peluang_kembali": hitung_peluang_kembali(g.get("riwayat_kunjungan"))}
 
 
 def _recompute_last_visit(riwayat: list) -> Optional[str]:
@@ -569,6 +571,9 @@ async def tugas_harian(user: dict = Depends(get_current_user), property_id: str 
         if (g.get("total_kunjungan") or 0) >= 2 and g.get("last_visit") and g["last_visit"] < batas_90_hari
     ]
     tamu_follow_up.sort(key=lambda g: g.get("last_visit") or "")
+    for g in tamu_follow_up:
+        g.update(diskon_member_untuk_total_kunjungan(g.get("total_kunjungan", 0)))
+        g["peluang_kembali"] = hitung_peluang_kembali(g.get("riwayat_kunjungan"))
 
     ulang_tahun = [g for g in tamu_semua if is_ulang_tahun_hari_ini(g.get("tanggal_lahir"), hari_ini)]
 

@@ -417,6 +417,54 @@ def hitung_crm_score(total_kunjungan: int, last_visit: Optional[str], total_tran
     return {"skor": skor, "label": label}
 
 
+def hitung_peluang_kembali(riwayat_kunjungan: Optional[List[Dict[str, Any]]], hari_ini: Optional[str] = None) -> Optional[Dict[str, Any]]:
+    """AI Insight "peluang kembali %" (Member Intelligence Center, 2026-07-31) - ESTIMASI
+    KASAR/AWAL, BUKAN model statistik tervalidasi. Agus diberi tahu & tetap minta dibangun
+    (lihat AskUserQuestion 2026-07-31) - per data saat ini cuma 1 dari 124 tamu Pelangi yang
+    punya >=2 kunjungan sungguhan, jadi fitur ini akan tampil kosong untuk hampir semua
+    tamu - itu SENGAJA, bukan bug (lebih baik kosong daripada nebak dari 1 titik data).
+
+    Rumus: bandingkan berapa hari sejak kunjungan TERAKHIR tamu ini dengan RATA-RATA jarak
+    antar kunjungan tamu ini SENDIRI (bukan dibanding tamu lain - tiap orang punya ritme
+    beda) - makin dekat/pas di titik jarak biasanya, makin tinggi persennya (dia biasanya
+    sudah balik lagi di titik ini); makin jauh terlewat dari situ, mulai turun lagi
+    (kemungkinan sudah tidak akan balik/churn). Return None kalau riwayat <2 titik (tidak
+    ada pola yang bisa dihitung sama sekali)."""
+    tanggal_list = sorted([k["tanggal"] for k in (riwayat_kunjungan or []) if k.get("tanggal")])
+    if len(tanggal_list) < 2:
+        return None
+    hari_ini = hari_ini or now_iso()
+    try:
+        # .date() (bukan datetime penuh) - entri manual cuma "YYYY-MM-DD" (naive), entri
+        # checkin sungguhan pakai ISO+timezone (aware) - kalau disubtract sbg datetime
+        # penuh akan error "can't subtract offset-naive and offset-aware datetimes".
+        # Granularitas hari saja cukup buat rumus ini, jadi aman disamakan ke .date().
+        dt_list = [datetime.fromisoformat(t.replace("Z", "+00:00")).date() for t in tanggal_list]
+        now_dt = datetime.fromisoformat(hari_ini.replace("Z", "+00:00")).date()
+    except Exception:
+        return None
+    gaps = [(dt_list[i + 1] - dt_list[i]).days for i in range(len(dt_list) - 1)]
+    avg_gap = sum(gaps) / len(gaps)
+    if avg_gap <= 0:
+        return None
+    hari_sejak_terakhir = (now_dt - dt_list[-1]).days
+    rasio = hari_sejak_terakhir / avg_gap
+    if rasio <= 1:
+        persen = 30 + rasio * 50  # mendekati siklus kunjungan biasanya -> 30-80%
+    else:
+        kelebihan = rasio - 1
+        persen = max(80 - kelebihan * 50, 15)  # sudah lewat jarak biasa -> turun lagi ke floor 15%
+    persen = round(max(0, min(100, persen)))
+    if persen >= 60:
+        label = "Tinggi"
+    elif persen >= 30:
+        label = "Sedang"
+    else:
+        label = "Rendah"
+    return {"persen": persen, "label": label, "rata_rata_jarak_hari": round(avg_gap),
+            "hari_sejak_kunjungan_terakhir": hari_sejak_terakhir}
+
+
 async def upsert_guest(nama: str, no_hp: str, no_identitas: str, kendaraan: str, property_id: str,
                         count_kunjungan: bool = True, room_nomor: str = "") -> str:
     """Catat/perbarui 1 data tamu di `db.guests` — dipanggil dari SEMUA jalur yang menghasilkan

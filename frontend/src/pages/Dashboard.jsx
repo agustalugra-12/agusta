@@ -296,6 +296,13 @@ export default function Dashboard() {
   };
   const pesanUlangTahunUntuk = (g) =>
     `Halo ${g.nama}! 🎉 Selamat ulang tahun dari kami di Pelangi Homestay. Sebagai apresiasi, kami kasih voucher menginap GRATIS 1 malam untuk 1 kamar standard - tinggal hubungi kami untuk atur jadwalnya ya. Terima kasih sudah jadi tamu setia kami!`;
+  // CRM & Marketing - follow up tamu dorman (Member Intelligence, 2026-07-31). Manual
+  // klik per tamu via wa.me, TIDAK ada broadcast otomatis (permintaan eksplisit Agus,
+  // risiko nomor WA banned).
+  const pesanFollowUpUntuk = (g) =>
+    g.diskon_persen > 0
+      ? `Halo ${g.nama}, kangen nih sudah lama gak mampir ke Pelangi Homestay! Kalau booking lagi sekarang, kamu dapat diskon member ${g.diskon_persen}% (kedatangan ke-${g.kedatangan_ke}). Yuk atur jadwal menginapmu berikutnya 😊`
+      : `Halo ${g.nama}, kangen nih sudah lama gak mampir ke Pelangi Homestay! Yuk atur jadwal menginapmu berikutnya, kami tunggu ya 😊`;
 
   useEffect(() => {
     load();
@@ -679,14 +686,26 @@ export default function Dashboard() {
                 </div>
               )}
               {tugasHarian.tamu_perlu_follow_up.length > 0 && (
-                <div className="border border-slate-200 rounded-lg p-3">
+                <div className="border border-slate-200 rounded-lg p-3 sm:col-span-2">
                   <div className="flex items-center gap-1.5 font-semibold text-slate-700 mb-1.5"><PhoneCall className="w-3.5 h-3.5" /> Follow Up Tamu Lama ({tugasHarian.tamu_perlu_follow_up.length})</div>
-                  {tugasHarian.tamu_perlu_follow_up.slice(0, 5).map((g) => (
-                    <div key={g.id} className="flex items-center justify-between text-xs text-slate-500 py-0.5">
-                      <span>{g.nama} - {g.total_kunjungan}x, terakhir {fmtDate(g.last_visit)}</span>
-                      {g.no_hp && <a href={waLink(g.no_hp)} target="_blank" rel="noreferrer" className="text-blue-600 hover:underline shrink-0 ml-2">WA</a>}
-                    </div>
-                  ))}
+                  <div className="space-y-1">
+                    {tugasHarian.tamu_perlu_follow_up.slice(0, 8).map((g) => (
+                      <div key={g.id} className="flex items-center justify-between text-xs text-slate-500 py-0.5 gap-2">
+                        <span className="truncate">
+                          {g.nama} - {g.total_kunjungan}x, terakhir {fmtDate(g.last_visit)}
+                          {g.peluang_kembali && <span className="text-slate-400"> · peluang kembali ~{g.peluang_kembali.persen}% ({g.peluang_kembali.label})</span>}
+                        </span>
+                        {g.no_hp && (
+                          <a href={waLink(g.no_hp, pesanFollowUpUntuk(g))} target="_blank" rel="noreferrer" className="shrink-0">
+                            <Button size="sm" variant="outline" className="h-6 text-xs px-2"><MessageCircle className="w-3 h-3 mr-1" /> Kirim Pesan</Button>
+                          </a>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                  {tugasHarian.tamu_perlu_follow_up.length > 8 && (
+                    <button onClick={() => nav("/tamu")} className="text-xs text-blue-600 hover:underline mt-1.5">Lihat semua di Data Tamu →</button>
+                  )}
                 </div>
               )}
             </div>
