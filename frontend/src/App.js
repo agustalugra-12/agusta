@@ -20,6 +20,7 @@ import Profil from "@/pages/Profil";
 import KalenderHarga from "@/pages/KalenderHarga";
 import Audit from "@/pages/Audit";
 import DaftarReservasi from "@/pages/DaftarReservasi";
+import DataTamu from "@/pages/DataTamu";
 import OtomasiEmail from "@/pages/OtomasiEmail";
 import SinkronisasiKetersediaan from "@/pages/SinkronisasiKetersediaan";
 import Pembayaran from "@/pages/Pembayaran";
@@ -80,6 +81,7 @@ function AppRoutes() {
         <Route path="/kalender-harga" element={<KalenderHarga />} />
         <Route path="/audit" element={<Audit />} />
         <Route path="/reservasi" element={<DaftarReservasi />} />
+        <Route path="/tamu" element={<DataTamu />} />
         <Route path="/booking-requests" element={<BookingRequests />} />
         <Route path="/otomasi-email" element={<OtomasiEmail />} />
         <Route path="/sinkronisasi-ketersediaan" element={<SinkronisasiKetersediaan />} />

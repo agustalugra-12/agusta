@@ -5,22 +5,24 @@ import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import {
   LayoutDashboard, BedDouble, ShoppingCart, Boxes,
-  Wallet, Sparkles, BarChart3, UserCog, ShieldCheck, LogOut, Menu, HandCoins, DoorOpen, ListChecks, Mail, RefreshCw, CreditCard, MessageSquare, Shuffle, Send, Wand2, Tag, AlertTriangle, Wrench, Inbox, CalendarClock, Gavel, Bell, Ban, BadgeDollarSign, Landmark, Building2,
+  Wallet, Sparkles, BarChart3, UserCog, ShieldCheck, LogOut, Menu, HandCoins, DoorOpen, ListChecks, Mail, RefreshCw, CreditCard, MessageSquare, Shuffle, Send, Wand2, Tag, AlertTriangle, Wrench, Inbox, CalendarClock, Gavel, Bell, Ban, BadgeDollarSign, Landmark, Building2, Users,
 } from "lucide-react";
 import { useState, useEffect } from "react";
 import { playAlertSound, unlockAlertSound } from "@/lib/alertSound";
 
 // Dikelompokkan per seksi (2026-07-24, temuan evaluasi UX: 27 item flat tanpa
 // pengelompokan bikin staf harus memindai seluruh daftar tiap kali cari halaman) - murni
-// penataan visual, tidak mengubah satu pun rute. "Data Tamu" (dulu entri sendiri ke
-// /reservasi?tab=tamu) dilebur jadi tab di dalam halaman Reservasi sendiri (lihat
-// DaftarReservasi.jsx) - konsisten dengan pola tab di halaman lain (mis. Rekening).
+// penataan visual, tidak mengubah satu pun rute. "Data Tamu" sempat dilebur jadi tab di
+// dalam Reservasi (konsisten dgn pola tab halaman lain), tapi dipisah lagi jadi entri
+// sidebar sendiri 2026-07-31 (permintaan Agus - "Member Intelligence" makin berat, perlu
+// lebih mudah ditemukan drpd nyempil sbg tab).
 const navSections = [
   { label: "Operasional", items: [
     { to: "/", label: "Dashboard", icon: LayoutDashboard, exact: true },
     { to: "/kasir", label: "Kasir", icon: ShoppingCart },
     { to: "/ketersediaan", label: "Ketersediaan", icon: DoorOpen, ownerOnly: true },
     { to: "/reservasi", label: "Reservasi", icon: ListChecks },
+    { to: "/tamu", label: "Data Tamu", icon: Users },
     { to: "/booking-requests", label: "Booking Request", icon: Inbox },
     { to: "/pembatalan", label: "Pembatalan", icon: Ban },
     { to: "/rekomendasi-checkin", label: "Rekomendasi Check-in", icon: Wand2, ownerOnly: true },
