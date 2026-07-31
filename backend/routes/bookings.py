@@ -1,7 +1,7 @@
 import asyncio
 from core import *
 from reservation_service import check_room_available, room_locks
-from email_service import generate_voucher_pdf, send_voucher_email, kirim_voucher_wa
+from email_service import generate_voucher_pdf, send_voucher_email, kirim_voucher_wa, get_property_branding
 
 @api.post("/bookings")
 async def create_booking(body: BookingCreate, user: dict = Depends(get_current_user),
@@ -359,7 +359,8 @@ async def mark_paid_manual(bid: str, body: ManualMarkPaidBody, user: dict = Depe
     if b.get("payment_status") != "paid":
         try:
             b_paid = {**b, "status": "booking_paid", "payment_status": "paid"}
-            pdf_bytes = await asyncio.to_thread(generate_voucher_pdf, b_paid)
+            branding = await get_property_branding(b_paid.get("property_id"))
+            pdf_bytes = await asyncio.to_thread(generate_voucher_pdf, b_paid, branding)
             await send_voucher_email(b_paid, pdf_bytes)
             await kirim_voucher_wa(b_paid, pdf_bytes)
         except Exception as e:

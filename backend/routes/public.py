@@ -1,7 +1,7 @@
 import asyncio
 from core import *
 from reservation_service import check_room_available, create_reservation, room_locks
-from email_service import generate_voucher_pdf, send_voucher_email
+from email_service import generate_voucher_pdf, send_voucher_email, get_property_branding
 from routes.push import send_push
 from scheduling_engine import slot_dayuse_aman
 import httpx
@@ -483,7 +483,8 @@ async def resend_voucher_email(bid: str, user: dict = Depends(get_current_user))
         raise HTTPException(404, "Booking tidak ditemukan")
     # generate_voucher_pdf pakai ReportLab (sync/CPU-bound) - to_thread supaya tidak
     # blokir event loop tunggal (2026-07-28, audit performa) selama proses render PDF.
-    pdf_bytes = await asyncio.to_thread(generate_voucher_pdf, b)
+    branding = await get_property_branding(b.get("property_id"))
+    pdf_bytes = await asyncio.to_thread(generate_voucher_pdf, b, branding)
     log_entry = await send_voucher_email(b, pdf_bytes)
     if log_entry["status"] != "Terkirim":
         raise HTTPException(502, log_entry["error"] or "Gagal mengirim voucher")
@@ -497,7 +498,8 @@ async def public_download_voucher_pdf(bid: str, _rl: None = Depends(rate_limiter
         raise HTTPException(404, "Booking tidak ditemukan")
     # generate_voucher_pdf pakai ReportLab (sync/CPU-bound) - to_thread supaya tidak
     # blokir event loop tunggal (2026-07-28, audit performa) selama proses render PDF.
-    pdf_bytes = await asyncio.to_thread(generate_voucher_pdf, b)
+    branding = await get_property_branding(b.get("property_id"))
+    pdf_bytes = await asyncio.to_thread(generate_voucher_pdf, b, branding)
     return StreamingResponse(
         io.BytesIO(pdf_bytes), media_type="application/pdf",
         headers={"Content-Disposition": f'inline; filename="voucher-{b["kode"]}.pdf"'},

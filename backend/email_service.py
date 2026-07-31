@@ -20,7 +20,27 @@ from core import (
     BREVO_API_KEY, BREVO_FROM_EMAIL, BREVO_FROM_NAME, status_bayar_booking,
 )
 
-LOGO_PATH = ROOT_DIR / "assets" / "pelangi-logo.png"
+ASSETS_DIR = ROOT_DIR / "assets"
+DEFAULT_LOGO_FILENAME = "pelangi-logo.png"
+DEFAULT_BRANDING = {"nama": "Pelangi Homestay", "logo_path": ASSETS_DIR / DEFAULT_LOGO_FILENAME}
+
+
+async def get_property_branding(property_id: str | None) -> dict:
+    """Nama + logo voucher/invoice per properti (2026-07-31, permintaan user: invoice
+    Harmoni harus pakai logo Harmoni, bukan logo Pelangi yang sebelumnya hardcode di
+    semua voucher terlepas dari properti booking-nya). `logo_filename` disimpan di
+    `db.properties` (lihat scripts/migrate_multi_property.py pola serupa) - fallback ke
+    logo Pelangi kalau properti tidak ditemukan atau belum diisi field-nya, supaya
+    properti lama/baru yang belum di-setup tetap dapat voucher yang wajar, bukan error."""
+    if not property_id:
+        return DEFAULT_BRANDING
+    p = await db.properties.find_one({"id": property_id}, {"_id": 0, "nama": 1, "logo_filename": 1})
+    if not p:
+        return DEFAULT_BRANDING
+    return {
+        "nama": p.get("nama") or DEFAULT_BRANDING["nama"],
+        "logo_path": ASSETS_DIR / (p.get("logo_filename") or DEFAULT_LOGO_FILENAME),
+    }
 
 # Teks sama persis dengan aturan di hitung_kebijakan_pembatalan (core.py) - kalau kebijakan
 # itu berubah, WAJIB update teks ini juga (sengaja teks statis, bukan dihitung dari fungsi
@@ -64,7 +84,11 @@ def _fmt_tanggal(iso: str) -> str:
         return iso
 
 
-def generate_voucher_pdf(b: dict) -> bytes:
+def generate_voucher_pdf(b: dict, branding: dict | None = None) -> bytes:
+    branding = branding or DEFAULT_BRANDING
+    logo_path = branding["logo_path"]
+    nama_properti_ = branding["nama"]
+
     buf = io.BytesIO()
     c = canvas.Canvas(buf, pagesize=A5)
     w, h = A5
@@ -72,18 +96,18 @@ def generate_voucher_pdf(b: dict) -> bytes:
     logo_size = 16 * mm
     text_x = 15 * mm
 
-    if LOGO_PATH.exists():
+    if logo_path.exists():
         try:
             c.drawImage(
-                ImageReader(str(LOGO_PATH)), 15 * mm, y_top - logo_size,
+                ImageReader(str(logo_path)), 15 * mm, y_top - logo_size,
                 width=logo_size, height=logo_size, mask="auto", preserveAspectRatio=True,
             )
             text_x = 15 * mm + logo_size + 4 * mm
         except Exception as e:
-            logger.warning(f"Gagal muat logo untuk voucher PDF ({LOGO_PATH}): {e}")
+            logger.warning(f"Gagal muat logo untuk voucher PDF ({logo_path}): {e}")
 
     c.setFont("Helvetica-Bold", 16)
-    c.drawString(text_x, y_top - 6 * mm, "Pelangi Homestay")
+    c.drawString(text_x, y_top - 6 * mm, nama_properti_)
     c.setFont("Helvetica", 9)
     c.drawString(text_x, y_top - 12 * mm, "Voucher / Bukti Reservasi")
 
@@ -126,7 +150,7 @@ def generate_voucher_pdf(b: dict) -> bytes:
 
     y -= 5 * mm
     c.setFont("Helvetica-Oblique", 8)
-    c.drawString(15 * mm, y, "Mohon tunjukkan voucher ini saat kedatangan. Terima kasih telah memilih Pelangi Homestay.")
+    c.drawString(15 * mm, y, f"Mohon tunjukkan voucher ini saat kedatangan. Terima kasih telah memilih {nama_properti_}.")
 
     y -= 10 * mm
     c.line(15 * mm, y, w - 15 * mm, y)
@@ -155,7 +179,8 @@ def generate_voucher_pdf(b: dict) -> bytes:
     return buf.getvalue()
 
 
-def _voucher_email_html(b: dict) -> str:
+def _voucher_email_html(b: dict, branding: dict) -> str:
+    nama_properti_ = branding["nama"]
     sb = status_bayar_booking(b)
     sisa_html = (
         f"<p><b>Status: DP diterima.</b> Sisa <b>{_fmt_rp(sb['sisa_tagihan'])}</b> harap dilunasi saat check-in di lokasi.</p>"
@@ -165,11 +190,11 @@ def _voucher_email_html(b: dict) -> str:
     return f"""
     <div style="font-family:sans-serif;max-width:480px;margin:0 auto;color:#222">
       <h2 style="margin-bottom:4px">Terima kasih, {b.get('nama_tamu', 'Tamu')}!</h2>
-      <p>Reservasi Anda di <b>Pelangi Homestay</b> dengan kode <b>{b.get('kode', '')}</b> sudah dikonfirmasi.</p>
+      <p>Reservasi Anda di <b>{nama_properti_}</b> dengan kode <b>{b.get('kode', '')}</b> sudah dikonfirmasi.</p>
       <p>Kamar {b.get('room_nomor', '')} ({b.get('room_tipe', '')}) — Check-in {_fmt_tanggal(b.get('jam_mulai', ''))}.</p>
       {sisa_html}
       <p>Voucher/bukti reservasi terlampir dalam bentuk PDF. Mohon tunjukkan voucher ini saat kedatangan.</p>
-      <p style="margin-top:24px">Sampai jumpa!<br/>Pelangi Homestay</p>
+      <p style="margin-top:24px">Sampai jumpa!<br/>{nama_properti_}</p>
     </div>
     """
 
@@ -197,11 +222,12 @@ async def send_voucher_email(b: dict, pdf_bytes: bytes) -> dict:
     elif not b.get("email"):
         log_entry["error"] = "Booking tidak punya alamat email tamu"
     else:
+        branding = await get_property_branding(b.get("property_id"))
         payload = {
             "sender": {"name": BREVO_FROM_NAME, "email": BREVO_FROM_EMAIL},
             "to": [{"email": b["email"], "name": b.get("nama_tamu") or "Tamu"}],
-            "subject": f"Voucher Reservasi {b['kode']} - Pelangi Homestay",
-            "htmlContent": _voucher_email_html(b),
+            "subject": f"Voucher Reservasi {b['kode']} - {branding['nama']}",
+            "htmlContent": _voucher_email_html(b, branding),
             "attachment": [{
                 "content": base64.b64encode(pdf_bytes).decode(),
                 "name": f"voucher-{b['kode']}.pdf",
@@ -233,11 +259,11 @@ async def send_voucher_email(b: dict, pdf_bytes: bytes) -> dict:
     return log_entry
 
 
-def _voucher_wa_caption(b: dict) -> str:
+def _voucher_wa_caption(b: dict, branding: dict) -> str:
     sb = status_bayar_booking(b)
     tipe_label = "Menginap" if b.get("tipe") == "menginap" else "Day Use"
     baris = [
-        f"Halo {b.get('nama_tamu', 'Tamu')}! Booking Anda di *Pelangi Homestay* sudah *dikonfirmasi*.",
+        f"Halo {b.get('nama_tamu', 'Tamu')}! Booking Anda di *{branding['nama']}* sudah *dikonfirmasi*.",
         "",
         f"Kode Booking: *{b.get('kode', '')}*",
         f"Tipe: {tipe_label}",
@@ -271,9 +297,10 @@ async def kirim_voucher_wa(b: dict, pdf_bytes: bytes) -> dict:
         log_entry["error"] = "Booking tidak punya nomor WhatsApp tamu"
     else:
         from routes.pesan_whatsapp import _kirim_dokumen_via_provider
+        branding = await get_property_branding(b.get("property_id"))
         ok, err = await _kirim_dokumen_via_provider(
             b["no_hp"], f"voucher-{b['kode']}.pdf", "application/pdf",
-            base64.b64encode(pdf_bytes).decode(), _voucher_wa_caption(b),
+            base64.b64encode(pdf_bytes).decode(), _voucher_wa_caption(b, branding),
         )
         if ok:
             log_entry["status"] = "Terkirim"
