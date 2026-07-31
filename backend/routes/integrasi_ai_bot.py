@@ -141,6 +141,23 @@ async def ai_bot_ketersediaan(
     return {"tanggal": tanggal, "ketersediaan": out}
 
 
+@api.get("/integrasi-ai-bot/menu")
+async def ai_bot_menu(property_id: str = Depends(verifikasi_ai_bot_key)):
+    """Menu makanan/minuman kasir - LIVE dari data kasir PMS (db.products), SATU sumber
+    kebenaran yang sama dipakai halaman Kasir staf, BUKAN salinan terpisah yang bisa basi
+    (2026-08-01, permintaan Agus - pengetahuan menu ai-chat-bot sebelumnya data seed/demo
+    yang sama sekali tidak sinkron dengan menu kasir asli). Cuma produk `aktif:true` yang
+    disertakan (produk nonaktif/dihapus staf tidak boleh muncul ke tamu). `stok` disertakan
+    apa adanya supaya AI bisa jujur bilang jumlah tersisa atau "stok terbatas"/habis -
+    JANGAN dibulatkan/disamarkan di sini, biar AI sendiri yang putuskan cara menyampaikan
+    berdasar aturan di prompt-nya."""
+    produk = await db.products.find(
+        scoped({"aktif": True}, property_id),
+        {"_id": 0, "nama": 1, "kategori": 1, "harga": 1, "stok": 1},
+    ).sort("kategori", 1).to_list(500)
+    return {"menu": produk}
+
+
 class AiBotTiketIn(BaseModel):
     tipe: str  # complaint | maintenance (divalidasi di buat_issue)
     deskripsi: str
