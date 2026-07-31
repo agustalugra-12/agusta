@@ -13,6 +13,7 @@ import { ExtraBedSelector } from "@/components/ExtraBedSelector";
 import {
   BedDouble, Wifi, Snowflake, Tv, Droplets, Bath, Trees, CheckCircle2, XCircle,
   Calendar, Clock, User, Phone, IdCard, Car, Users as UsersIcon, Building2, ArrowRight, Mail, Ban, AlertTriangle,
+  FileText,
 } from "lucide-react";
 
 // API client tanpa auth (untuk endpoint /api/public/*)
@@ -25,6 +26,16 @@ const fmtRp = (n) => "Rp " + Number(n || 0).toLocaleString("id-ID");
 // create booking, nilai ini murni untuk ringkasan tampilan sebelum submit.
 const DEFAULT_PRICING_CONFIG = { service_fee_pct: 0.03, extra_bed_price: 50000, extra_bed_max: 2, breakfast_price: 25000 };
 const CS_WHATSAPP = "0851-1945-9269";
+// Nomor WA per properti (2026-07-31) - sebelumnya CS_WHATSAPP dipakai apa adanya di semua
+// tempat (CTA Menginap, kontak CS, pembatalan), jadi tamu Harmoni diarahkan ke nomor
+// Pelangi. `property_slug` ("harmoni") datang dari URL /book/:propertySlug ATAU field
+// baru di respons /public/bookings/{id} (lihat routes/public.py) - properti yang belum
+// terdaftar di sini fallback ke CS_WHATSAPP (Pelangi, perilaku lama).
+const PROPERTY_WHATSAPP = { harmoni: "0851-6894-1258" };
+const csWhatsappFor = (propertySlugOrBooking) => {
+  const slug = typeof propertySlugOrBooking === "string" ? propertySlugOrBooking : propertySlugOrBooking?.property_slug;
+  return PROPERTY_WHATSAPP[slug] || CS_WHATSAPP;
+};
 const CS_EMAIL = "pelangihomestay9@gmail.com";
 const JAM_OPERASIONAL = "07.00 – 22.00 WITA";
 // Disimpan begitu booking dibuat, dipakai SuccessView sebagai fallback kalau URL /book/sukses
@@ -538,7 +549,7 @@ function BookingForm() {
                     </div>
                     <Button asChild data-testid="pb-menginap-wa" className="w-full h-12 rounded-full bg-teal-deep hover:bg-teal-deep/90 text-cream text-base font-bold">
                       <a
-                        href={waLink(CS_WHATSAPP, `Halo, saya ingin booking Menginap di Pelangi Homestay.\nKamar: ${selectedRooms.length === 1 ? `${selectedRooms[0].tipe} (Kamar ${selectedRooms[0].nomor})` : `${selectedRooms.length} kamar (${selectedRooms.map(r => r.tipe).join(", ")})`}\nCheck-in: ${tanggal}\nCheck-out: ${checkoutDate}\nJumlah tamu: ${form.jumlah_tamu}${denganSarapan ? "\nDengan sarapan" : ""}\nNama: ${form.nama_tamu || "-"}`)}
+                        href={waLink(csWhatsappFor(propertySlug), `Halo, saya ingin booking Menginap.\nKamar: ${selectedRooms.length === 1 ? `${selectedRooms[0].tipe} (Kamar ${selectedRooms[0].nomor})` : `${selectedRooms.length} kamar (${selectedRooms.map(r => r.tipe).join(", ")})`}\nCheck-in: ${tanggal}\nCheck-out: ${checkoutDate}\nJumlah tamu: ${form.jumlah_tamu}${denganSarapan ? "\nDengan sarapan" : ""}\nNama: ${form.nama_tamu || "-"}`)}
                         target="_blank" rel="noreferrer"
                       >
                         Chat Admin via WhatsApp <ArrowRight className="w-4 h-4 ml-2" />
@@ -624,11 +635,11 @@ function BookingForm() {
             <a href={`mailto:${CS_EMAIL}`} className="hover:text-teal-deep">{CS_EMAIL}</a>
           </p>
           <a
-            href={waLink(CS_WHATSAPP, "Halo, saya ingin bertanya tentang booking di Pelangi Homestay.")}
+            href={waLink(csWhatsappFor(propertySlug), "Halo, saya ingin bertanya tentang booking.")}
             target="_blank" rel="noreferrer"
             className="inline-flex items-center gap-1.5 text-leaf hover:text-teal-deep font-semibold"
           >
-            <Phone className="w-3.5 h-3.5" /> Chat Admin/CS: {CS_WHATSAPP}
+            <Phone className="w-3.5 h-3.5" /> Chat Admin/CS: {csWhatsappFor(propertySlug)}
           </a>
         </footer>
       </main>
@@ -700,89 +711,57 @@ function CountdownBebasBiaya({ bk }) {
   );
 }
 
-function BatalkanPesananDialog({ bk, open, onOpenChange, onCancelled }) {
-  const [sent, setSent] = useState(false);
-  const [submitting, setSubmitting] = useState(false);
-  const [hasil, setHasil] = useState(null);
-  const [noHpKonfirmasi, setNoHpKonfirmasi] = useState("");
+// Pembatalan HANYA lewat WhatsApp sejak 2026-07-31 (keputusan bisnis Agus: "tidak ada
+// jalur lain") - dialog ini DULU eksekusi pembatalan mandiri otomatis (POST .../batalkan,
+// dimatikan di routes/public.py), sekarang cuma menjelaskan kebijakan & mengarahkan tamu
+// chat admin - staf yang approve manual lewat jalur AI WhatsApp yang sudah ada
+// (routes/pembatalan.py), sama seperti kalau tamu chat AI langsung.
+function BatalkanPesananDialog({ bk, open, onOpenChange }) {
   const policy = calcCancelPolicy(bk);
 
-  const ajukan = async () => {
-    if (!noHpKonfirmasi.trim()) {
-      toast.error("Masukkan nomor WhatsApp yang dipakai saat booking untuk konfirmasi");
-      return;
-    }
-    setSubmitting(true);
-    try {
-      const { data } = await PUBLIC_API.post(`/public/bookings/${bk.id}/batalkan`, { no_hp_konfirmasi: noHpKonfirmasi.trim() });
-      setHasil(data);
-      setSent(true);
-      const { data: updated } = await PUBLIC_API.get(`/public/bookings/${bk.id}`);
-      onCancelled?.(updated);
-    } catch (e) {
-      toast.error(e?.response?.data?.detail || "Gagal membatalkan pesanan");
-    } finally {
-      setSubmitting(false);
-    }
-  };
-
   return (
-    <Dialog open={open} onOpenChange={(o) => { onOpenChange(o); if (!o) setSent(false); }}>
+    <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
         <DialogHeader>
           <DialogTitle data-testid="batalkan-dialog-title">Batalkan Pesanan {bk.kode}</DialogTitle>
         </DialogHeader>
-        {!sent ? (
-          <div className="space-y-3 text-sm text-left">
-            <div className="bg-slate-50 border border-slate-200 rounded-lg p-3 text-xs space-y-1.5">
-              <p className="font-semibold text-slate-700">Kebijakan Pembatalan</p>
-              <p className="text-slate-600">
-                Gratis (refund 100%) jika dibatalkan lebih dari 3 hari (H-3) sebelum check-in.
-                Kurang dari itu (H-2 s/d hari check-in) dikenakan biaya 50% dari total tagihan. Tidak ada refund untuk tamu yang tidak datang tanpa pembatalan (No Show).
-              </p>
-            </div>
-            <div className="flex justify-between items-center bg-white border border-slate-200 rounded-lg p-3">
-              <div>
-                <div className="text-xs text-slate-500">Status waktu ini</div>
-                <div className="font-semibold" data-testid="batalkan-status-waktu">{policy.label}</div>
-              </div>
-              <div className="text-right">
-                <div className="text-xs text-slate-500">Biaya Pembatalan</div>
-                <div className={`font-bold ${policy.gratis ? "text-emerald-600" : "text-red-600"}`} data-testid="batalkan-biaya">
-                  {policy.gratis ? "Gratis" : fmtRp(policy.biaya)}
-                </div>
-              </div>
-            </div>
-            {policy.gratis && <CountdownBebasBiaya bk={bk} />}
-            <div className="space-y-1.5">
-              <Label htmlFor="batalkan-no-hp">Nomor WhatsApp saat booking (untuk konfirmasi)</Label>
-              <Input
-                id="batalkan-no-hp" data-testid="batalkan-no-hp-input"
-                placeholder="08xxxxxxxxxx" value={noHpKonfirmasi}
-                onChange={(e) => setNoHpKonfirmasi(e.target.value)}
-              />
-            </div>
-          </div>
-        ) : (
-          <div className="space-y-2 text-sm text-left" data-testid="batalkan-terkirim">
-            <p className="text-emerald-700 bg-emerald-50 border border-emerald-200 rounded p-3">
-              Booking <b>{bk.kode}</b> sudah dibatalkan.
-              {hasil?.cancel_fee > 0 ? ` Biaya pembatalan ${fmtRp(hasil.cancel_fee)}.` : " Tidak ada biaya pembatalan."}
-              {hasil?.refund_amount > 0 && ` Refund ${fmtRp(hasil.refund_amount)} akan diproses tim kami secara manual.`}
+        <div className="space-y-3 text-sm text-left">
+          <div className="bg-slate-50 border border-slate-200 rounded-lg p-3 text-xs space-y-1.5">
+            <p className="font-semibold text-slate-700">Kebijakan Pembatalan</p>
+            <p className="text-slate-600">
+              Gratis (refund 100%) jika dibatalkan lebih dari 3 hari (H-3) sebelum check-in.
+              Kurang dari itu (H-2 s/d hari check-in) dikenakan biaya 50% dari total tagihan. Tidak ada refund untuk tamu yang tidak datang tanpa pembatalan (No Show).
             </p>
           </div>
-        )}
+          <div className="flex justify-between items-center bg-white border border-slate-200 rounded-lg p-3">
+            <div>
+              <div className="text-xs text-slate-500">Status waktu ini</div>
+              <div className="font-semibold" data-testid="batalkan-status-waktu">{policy.label}</div>
+            </div>
+            <div className="text-right">
+              <div className="text-xs text-slate-500">Biaya Pembatalan</div>
+              <div className={`font-bold ${policy.gratis ? "text-emerald-600" : "text-red-600"}`} data-testid="batalkan-biaya">
+                {policy.gratis ? "Gratis" : fmtRp(policy.biaya)}
+              </div>
+            </div>
+          </div>
+          {policy.gratis && <CountdownBebasBiaya bk={bk} />}
+          <p className="text-slate-600">
+            Pembatalan booking hanya bisa diproses lewat WhatsApp - chat admin kami di
+            bawah, sebutkan kode booking <b>{bk.kode}</b>, tim kami akan proses secepatnya.
+          </p>
+        </div>
         <DialogFooter>
-          {!sent ? (
-            <>
-              <Button variant="ghost" onClick={() => onOpenChange(false)}>Tutup</Button>
-              <Button data-testid="batalkan-ajukan" onClick={ajukan} disabled={submitting} className="bg-red-600 hover:bg-red-700">
-                {submitting ? "Membatalkan…" : "Batalkan Pesanan"}
-              </Button>
-            </>
-          ) : (
-            <Button data-testid="batalkan-selesai" onClick={() => onOpenChange(false)} className="bg-teal-deep hover:bg-teal-deep/90">Tutup</Button>
-          )}
+          <Button variant="ghost" onClick={() => onOpenChange(false)}>Tutup</Button>
+          <Button asChild className="bg-emerald-600 hover:bg-emerald-700">
+            <a
+              data-testid="batalkan-chat-wa"
+              href={waLink(csWhatsappFor(bk), `Halo, saya ingin membatalkan booking ${bk.kode}.`)}
+              target="_blank" rel="noreferrer"
+            >
+              Chat Admin via WhatsApp
+            </a>
+          </Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
@@ -1049,6 +1028,16 @@ function SuccessView({ bookingId: bookingIdFromUrl }) {
             </div>
           )}
           {isPaid && (
+            <a
+              data-testid="pb-lihat-voucher"
+              href={`${process.env.REACT_APP_BACKEND_URL}/api/public/bookings/${bk.id}/voucher.pdf`}
+              target="_blank" rel="noreferrer"
+              className="print:hidden inline-flex items-center justify-center gap-2 w-full px-4 h-12 rounded-md bg-teal-deep hover:bg-teal-deep/90 text-white text-base font-bold"
+            >
+              <FileText className="w-4 h-4" /> Lihat Voucher Booking
+            </a>
+          )}
+          {isPaid && (
             <p className="text-xs text-slate-500">
               {isDp
                 ? `Mohon tunjukkan nomor booking saat kedatangan dan lunasi sisa ${fmtRp(bk.sisa_tagihan)} di lokasi.`
@@ -1083,7 +1072,7 @@ function SuccessView({ bookingId: bookingIdFromUrl }) {
           <Link to="/book" className="print:hidden block text-sm text-teal-deep hover:underline">Buat booking lain</Link>
         </CardContent>
       </Card>
-      <BatalkanPesananDialog bk={bk} open={cancelOpen} onOpenChange={setCancelOpen} onCancelled={setBk} />
+      <BatalkanPesananDialog bk={bk} open={cancelOpen} onOpenChange={setCancelOpen} />
       {isFailed && <RetryBayarDialog bk={bk} open={retryOpen} onOpenChange={setRetryOpen} channels={channels} />}
     </div>
   );

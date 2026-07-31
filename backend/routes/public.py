@@ -315,71 +315,19 @@ async def public_create_booking(body: PublicBookingCreate, properti: Optional[st
 
 @api.post("/public/bookings/{bid}/batalkan")
 async def public_batalkan_booking(bid: str, body: CancelWithFeeBody = CancelWithFeeBody(), _rl: None = Depends(rate_limiter(10, 60))):
-    """Pembatalan mandiri SUNGGUHAN oleh tamu (bukan cuma 'ajukan permintaan') — otomatis
-    penuh tanpa approval staf, sesuai keputusan bisnis yang dikonfirmasi user 2026-07-11.
-    Refund uang (kalau ada) tetap harus ditransfer manual oleh staf — sistem cuma
-    menghitung & mencatat nominalnya (refund_amount), tidak memproses transfer sungguhan.
-
-    Kebijakan (`hitung_kebijakan_pembatalan` di core.py) SAMA dengan jalur AI WhatsApp
-    (disatukan 2026-07-19, keputusan user "samakan semua channel") - sebelumnya di sini
-    pakai aturan berbeda per tipe day_use/menginap (24/72 jam, biaya 10%), sekarang SAMA
-    persis: H-7 s/d H-3 = refund 100%, H-2 s/d hari check-in = biaya 50%, tidak dibedakan
-    tipe lagi.
-    """
-    b = await db.bookings.find_one({"id": bid})
-    if not b:
-        raise HTTPException(404, "Booking tidak ditemukan")
-    verifikasi_pemilik_booking(b.get("no_hp"), body.no_hp_konfirmasi)
-    if b.get("status") not in ("aktif", "booking_pending", "booking_paid"):
-        raise HTTPException(400, f"Booking tidak dapat dibatalkan (status: {b.get('status')})")
-
-    policy = hitung_kebijakan_pembatalan(b["jam_mulai"])
-    is_paid = b.get("payment_status") == "paid"
-    paid = int(b.get("amount_due") or 0) if is_paid else 0
-    biaya = round(paid * policy["biaya_persen"] / 100)
-    refund = paid - biaya
-
-    now = now_iso()
-    update_fields = {
-        "status": "cancelled", "cancelled_at": now, "cancelled_by": "guest_self_service",
-        "cancel_reason": body.alasan or "Dibatalkan mandiri oleh tamu",
-        "cancel_fee": biaya, "refund_amount": refund,
-    }
-    if is_paid:
-        update_fields["payment_status"] = "refunded" if refund > 0 else "forfeited"
-    await db.bookings.update_one({"id": bid}, {"$set": update_fields})
-    await log_availability_change(b["room_id"], b.get("room_tipe", ""), 1, "booking_dibatalkan_mandiri", b.get("property_id"), booking_id=b["id"])
-    await db.audit_log.insert_one({
-        "id": str(uuid.uuid4()), "user_id": None, "username": "guest_self_service",
-        "action": "cancel_self_service",
-        "detail": f"Tamu batalkan mandiri {b['kode']}: biaya Rp{biaya:,}, {'refund Rp' + format(refund, ',') if refund > 0 else 'tidak ada refund'}".replace(",", "."),
-        "entity": b.get("room_nomor", ""), "timestamp": now,
-    })
-
-    # Notifikasi konfirmasi ke tamu via WhatsApp (best-effort — pakai webhook yang sama
-    # dengan bot WhatsApp, kalau staf sudah konfigurasi; kalau belum, cukup dilewati saja).
-    try:
-        # Tamu batalkan lewat WEB (bukan chat WA) - TIDAK ADA sesi WA aktif sama sekali,
-        # jadi SELALU di luar jendela 24 jam Meta (2026-07-26) - WAJIB template.
-        from routes.pesan_whatsapp import _kirim_dengan_alert
-        pesan = (
-            f"Booking {b['kode']} sudah dibatalkan. "
-            + (f"Biaya pembatalan Rp{biaya:,}.".replace(",", ".") if biaya else "Tidak ada biaya pembatalan.")
-            + (f" Refund Rp{refund:,} akan diproses staf kami.".replace(",", ".") if refund > 0 else "")
-        )
-        refund_str = f"{refund:,}".replace(",", ".") if refund > 0 else "0"
-        await _kirim_dengan_alert(
-            b["no_hp"], pesan, konteks=f"batal mandiri via web {b['kode']}",
-            template_name="pembatalan_disetujui_v1",
-            template_params=[b.get("nama_tamu", "Tamu"), b["kode"], refund_str, policy["label"]],
-        )
-    except Exception:
-        pass
-
-    return {
-        "ok": True, "booking_kode": b["kode"], "cancel_fee": biaya, "refund_amount": refund,
-        "policy_label": policy["label"], "gratis": policy["gratis"],
-    }
+    """DIMATIKAN sejak 2026-07-31 (keputusan bisnis Agus: "pembatalan hanya lewat WA, tidak
+    ada jalur lain") - endpoint ini DULU (2026-07-11) melakukan pembatalan mandiri
+    SUNGGUHAN otomatis tanpa approval staf, sekarang SELALU menolak & mengarahkan tamu ke
+    WhatsApp (jalur `ajukan_pembatalan_ai`/`pembatalan.py` yang tetap butuh approval staf
+    manual). Endpoint TIDAK dihapus total (biar link lama yang mungkin masih tersimpan
+    staf/tamu tidak 404 membingungkan) - sengaja jadi guard eksplisit, bukan cuma dicabut
+    diam-diam dari frontend, supaya panggilan API langsung pun tetap tidak bisa membatalkan
+    otomatis lagi."""
+    raise HTTPException(
+        400,
+        "Pembatalan booking sekarang hanya bisa lewat WhatsApp - silakan chat admin kami "
+        "untuk mengajukan pembatalan, tim kami akan proses secepatnya.",
+    )
 
 
 @api.post("/public/bookings/{bid}/retry-bayar")
@@ -452,6 +400,11 @@ async def public_get_booking(bid: str, _rl: None = Depends(rate_limiter(30, 60))
     # halaman /book/sukses & voucher, karena payment_status mentah cuma tahu "paid" (gateway
     # settlement) tanpa peduli itu DP atau bayar penuh.
     safe.update(status_bayar_booking(b))
+    # property_slug (2026-07-31) - halaman sukses/pembatalan publik (PublicBook.jsx) perlu
+    # tahu properti booking ini utk arahkan tamu ke nomor WA yang BENAR (Pelangi vs Harmoni),
+    # bukan hardcode 1 nomor Pelangi utk semua properti seperti sebelumnya.
+    prop = await db.properties.find_one({"id": b.get("property_id")}, {"_id": 0, "slug": 1})
+    safe["property_slug"] = (prop or {}).get("slug")
     # Kalau booking ini bagian dari GRUP (>1 kamar dibayar dalam 1 checkout), sertakan kamar
     # lain dalam grup yang sama supaya halaman sukses bisa menampilkan semuanya sekaligus,
     # bukan cuma kamar yang kebetulan ada di URL.
