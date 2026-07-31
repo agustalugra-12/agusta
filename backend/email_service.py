@@ -305,7 +305,7 @@ async def kirim_voucher_wa(b: dict, pdf_bytes: bytes) -> dict:
         ok, err = await _kirim_dokumen_via_provider(
             b["no_hp"], f"voucher-{b['kode']}.pdf", "application/pdf",
             base64.b64encode(pdf_bytes).decode(), _voucher_wa_caption(b, branding),
-            url=voucher_url,
+            url=voucher_url, property_id=b.get("property_id"),
         )
         if ok:
             log_entry["status"] = "Terkirim"

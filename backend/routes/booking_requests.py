@@ -146,6 +146,7 @@ async def _auto_reject_penuh(doc: Dict[str, Any]) -> None:
         doc["no_hp"], pesan, konteks=f"auto-tolak booking penuh {doc['id']}",
         template_name="menginap_ditolak_v1",
         template_params=[doc["nama_tamu"], nama_prop, doc["tanggal_checkin"]],
+        property_id=doc["property_id"],
     )
 
 
@@ -241,7 +242,7 @@ async def _coba_auto_approve_day_use(doc: Dict[str, Any]) -> None:
             # tidak perlu template, tetap pakai wrapper alert supaya staf tahu kalau WAHA
             # down/gagal kirim (2026-07-26, lihat _kirim_dengan_alert).
             from routes.pesan_whatsapp import _kirim_dengan_alert
-            await _kirim_dengan_alert(doc["no_hp"], pesan, konteks=f"auto-approve day use {doc['id']}")
+            await _kirim_dengan_alert(doc["no_hp"], pesan, konteks=f"auto-approve day use {doc['id']}", property_id=doc["property_id"])
         except Exception:
             # Bug nyata ditemukan & diperbaiki (2026-07-26): kalau Tripay gagal SETELAH
             # booking asli sudah terlanjur dibuat, booking itu sebelumnya dibiarkan
@@ -354,7 +355,7 @@ async def _coba_auto_approve_menginap(doc: Dict[str, Any]) -> None:
                         # Kirim SAAT ITU JUGA (same-turn dgn permintaan tamu) - selalu
                         # dalam jendela 24 jam, tidak perlu template.
                         from routes.pesan_whatsapp import _kirim_dengan_alert
-                        await _kirim_dengan_alert(doc["no_hp"], pesan, konteks=f"kamar penuh day-use, tunggu jam {jam_str} ({doc['id']})")
+                        await _kirim_dengan_alert(doc["no_hp"], pesan, konteks=f"kamar penuh day-use, tunggu jam {jam_str} ({doc['id']})", property_id=doc["property_id"])
                     await db.booking_requests.update_one({"id": doc["id"]}, {"$set": {
                         "auto_retry_dayuse": True, "updated_at": now_iso(),
                     }})
@@ -445,6 +446,7 @@ async def _coba_auto_approve_menginap(doc: Dict[str, Any]) -> None:
                 doc["no_hp"], pesan, konteks=f"auto-approve menginap {doc['id']}",
                 template_name="menginap_disetujui_v1",
                 template_params=[doc["nama_tamu"], nama_prop, tanggal_str, total_str, trx.get("checkout_url") or ""],
+                property_id=doc["property_id"],
             )
         except Exception:
             # Sama seperti _coba_auto_approve_day_use (bug nyata ditemukan & diperbaiki
@@ -840,6 +842,7 @@ async def approve_booking_request(rid: str, body: BookingRequestApprove, user: d
                     req["no_hp"], pesan, konteks=f"approve booking request {rid}",
                     template_name="menginap_disetujui_v1",
                     template_params=[req["nama_tamu"], nama_prop, tanggal_str, total_str, trx.get("checkout_url") or ""],
+                    property_id=property_id,
                 )
             except Exception as e:
                 logging.getLogger("booking_requests").warning(f"Gagal kirim link bayar ke {req['no_hp']}: {e}")
@@ -889,6 +892,7 @@ async def reject_booking_request(rid: str, body: BookingRequestReject, user: dic
                 req["no_hp"], pesan, konteks=f"reject booking request {rid}",
                 template_name="menginap_ditolak_v1",
                 template_params=[req["nama_tamu"], nama_prop, req.get("tanggal_checkin", "")],
+                property_id=property_id,
             )
         except Exception as e:
             logging.getLogger("booking_requests").warning(f"Gagal kirim pesan tolak ke {req['no_hp']}: {e}")

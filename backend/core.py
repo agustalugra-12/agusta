@@ -268,6 +268,17 @@ async def nama_properti(property_id: str) -> str:
     return (p or {}).get("nama") or "kami"
 
 
+async def property_slug_for(property_id: str) -> Optional[str]:
+    """Slug properti (`db.properties.slug`, mis. "pelangi-homestay"/"harmoni") - dipakai
+    routes/pesan_whatsapp.py meneruskan `property_slug` ke relay ai-chat-bot supaya
+    notifikasi (approve/tolak booking, pembatalan, voucher) tahu bot/channel WA MANA yang
+    benar kalau tamu belum pernah chat AI sama sekali (2026-07-31, bug nyata ditemukan:
+    tanpa ini, fallback selalu hardcode Cloud API nomor Pelangi, salah utk tamu Harmoni).
+    None kalau properti tidak ditemukan - caller wajib toleransi (jangan gagal total)."""
+    p = await db.properties.find_one({"id": property_id}, {"_id": 0, "slug": 1})
+    return (p or {}).get("slug")
+
+
 async def log_activity(user: dict, action: str, detail: str = "", entity: str = ""):
     """AuditLogger — dipanggil di semua route yang mengubah data (stok kamar, reservasi,
     pengguna, dst). Tiap panggilan menulis satu dokumen `AuditLog` ke collection `audit_log`.

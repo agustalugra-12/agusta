@@ -442,6 +442,7 @@ async def kirim_slip_gaji_wa(pid: str, user: dict = Depends(require_owner),
     ok, err = await _kirim_dokumen_via_provider(
         s["no_hp"], f"slip-gaji-{p['periode']}.pdf", "application/pdf",
         base64.b64encode(pdf_bytes).decode("ascii"), caption,
+        property_id=property_id,
     )
     await log_activity(
         user, "kirim_slip_gaji_wa",

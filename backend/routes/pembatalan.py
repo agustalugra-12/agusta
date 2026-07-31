@@ -162,6 +162,7 @@ async def approve_cancellation_request(booking_id: str, user: dict = Depends(get
             b["no_hp"], pesan, konteks=f"approve pembatalan {b['kode']}",
             template_name="pembatalan_disetujui_v1",
             template_params=[b["nama_tamu"], b["kode"], refund_str, policy["label"]],
+            property_id=b["property_id"],
         )
     except Exception as e:
         logging.getLogger("pembatalan").warning(f"Gagal kirim notif approve ke {b['no_hp']}: {e}")
@@ -191,6 +192,7 @@ async def reject_cancellation_request(booking_id: str, body: CancelWithFeeBody =
             b["no_hp"], pesan, konteks=f"reject pembatalan {b['kode']}",
             template_name="pembatalan_ditolak_v1",
             template_params=[b["nama_tamu"], b["kode"], body.alasan or "belum memenuhi kebijakan pembatalan"],
+            property_id=b["property_id"],
         )
     except Exception as e:
         logging.getLogger("pembatalan").warning(f"Gagal kirim notif tolak ke {b['no_hp']}: {e}")
@@ -235,6 +237,7 @@ async def mark_refund_sent(booking_id: str, user: dict = Depends(get_current_use
                 b["no_hp"], pesan, konteks=f"refund terkirim {b['kode']}",
                 template_name="refund_terkirim_v1",
                 template_params=[b["nama_tamu"], b["kode"], refund_str],
+                property_id=b["property_id"],
             )
         except Exception as e:
             logging.getLogger("pembatalan").warning(f"Gagal kirim konfirmasi refund ke {b['no_hp']}: {e}")
@@ -243,7 +246,7 @@ async def mark_refund_sent(booking_id: str, user: dict = Depends(get_current_use
         try:
             # Tidak ada template khusus utk kasus tanpa-refund (jarang terjadi) - tetap
             # dapat manfaat alert-kalau-gagal dari _kirim_dengan_alert.
-            await _kirim_dengan_alert(b["no_hp"], pesan, konteks=f"batal tanpa refund {b['kode']}")
+            await _kirim_dengan_alert(b["no_hp"], pesan, konteks=f"batal tanpa refund {b['kode']}", property_id=b["property_id"])
         except Exception as e:
             logging.getLogger("pembatalan").warning(f"Gagal kirim konfirmasi refund ke {b['no_hp']}: {e}")
     return {"ok": True}
