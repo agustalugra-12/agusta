@@ -349,28 +349,36 @@ function BookingForm() {
                         <p className="text-sm text-teal-deep/75 leading-relaxed">{c.description}</p>
                       )}
                       {bookingTipe === "menginap" && (
-                        <div className="grid grid-cols-2 gap-2" data-testid={`pb-sarapan-pilihan-${c.tipe}`}>
-                          <button
-                            type="button"
-                            data-testid={`pb-harga-tanpa-sarapan-${c.tipe}`}
-                            onClick={() => setDenganSarapan(false)}
-                            className={`p-2.5 rounded-lg border-2 text-left transition-colors ${!denganSarapan ? "border-teal-deep bg-teal-deep/8" : "border-teal-deep/15 hover:border-teal-deep/30"}`}
-                          >
-                            <div className="text-[9px] uppercase tracking-wider text-teal-deep/60 font-semibold">Tanpa Sarapan</div>
-                            <div className="font-bold text-teal-deep">{fmtRp(c.tarif_menginap)}</div>
-                            <div className="text-[9px] text-teal-deep/50">/ malam</div>
-                          </button>
-                          <button
-                            type="button"
-                            data-testid={`pb-harga-dengan-sarapan-${c.tipe}`}
-                            onClick={() => setDenganSarapan(true)}
-                            className={`p-2.5 rounded-lg border-2 text-left transition-colors ${denganSarapan ? "border-teal-deep bg-teal-deep/8" : "border-teal-deep/15 hover:border-teal-deep/30"}`}
-                          >
-                            <div className="text-[9px] uppercase tracking-wider text-teal-deep/60 font-semibold">Dengan Sarapan</div>
-                            <div className="font-bold text-teal-deep">{fmtRp(c.tarif_menginap + pricingConfig.breakfast_price)}</div>
-                            <div className="text-[9px] text-teal-deep/50">/ malam</div>
-                          </button>
-                        </div>
+                        c.ada_sarapan ? (
+                          <div className="grid grid-cols-2 gap-2" data-testid={`pb-sarapan-pilihan-${c.tipe}`}>
+                            <button
+                              type="button"
+                              data-testid={`pb-harga-tanpa-sarapan-${c.tipe}`}
+                              onClick={() => setDenganSarapan(false)}
+                              className={`p-2.5 rounded-lg border-2 text-left transition-colors ${!denganSarapan ? "border-teal-deep bg-teal-deep/8" : "border-teal-deep/15 hover:border-teal-deep/30"}`}
+                            >
+                              <div className="text-[9px] uppercase tracking-wider text-teal-deep/60 font-semibold">Tanpa Sarapan</div>
+                              <div className="font-bold text-teal-deep">{fmtRp(c.tarif_menginap)}</div>
+                              <div className="text-[9px] text-teal-deep/50">/ malam</div>
+                            </button>
+                            <button
+                              type="button"
+                              data-testid={`pb-harga-dengan-sarapan-${c.tipe}`}
+                              onClick={() => setDenganSarapan(true)}
+                              className={`p-2.5 rounded-lg border-2 text-left transition-colors ${denganSarapan ? "border-teal-deep bg-teal-deep/8" : "border-teal-deep/15 hover:border-teal-deep/30"}`}
+                            >
+                              <div className="text-[9px] uppercase tracking-wider text-teal-deep/60 font-semibold">Dengan Sarapan</div>
+                              <div className="font-bold text-teal-deep">{fmtRp(c.tarif_menginap + pricingConfig.breakfast_price)}</div>
+                              <div className="text-[9px] text-teal-deep/50">/ malam</div>
+                            </button>
+                          </div>
+                        ) : (
+                          // Harmoni tidak menyediakan sarapan sama sekali (2026-07-31) - 1 harga saja, tanpa toggle.
+                          <div className="text-right">
+                            <div className="font-display text-2xl font-bold text-teal-deep">{fmtRp(c.tarif_menginap)}</div>
+                            <div className="text-[10px] uppercase tracking-wider text-teal-deep/60">/ malam</div>
+                          </div>
+                        )
                       )}
                       <div className="flex flex-wrap gap-2">
                         {c.fasilitas.map((f) => {
@@ -475,7 +483,7 @@ function BookingForm() {
                     </div>
                   ))}
                 </FieldIcon>
-                {bookingTipe === "menginap" && (
+                {bookingTipe === "menginap" && (catalog[0]?.ada_sarapan ?? true) && (
                   <div>
                     <Label className="text-xs font-semibold uppercase tracking-wider text-teal-deep/60 mb-1.5 block">Paket Kamar</Label>
                     <button

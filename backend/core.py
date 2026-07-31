@@ -235,6 +235,19 @@ async def property_butuh_reddoorz(property_id: str) -> bool:
     return p.get("butuh_sinkron_reddoorz", True)
 
 
+async def property_ada_sarapan(property_id: str) -> bool:
+    """Multi-properti (2026-07-31, permintaan user) - Harmoni TIDAK menyediakan sarapan
+    sama sekali (beda dari Pelangi yang punya opsi 'dengan sarapan' +BREAKFAST_PRICE/malam)
+    - jadi opsi/harga sarapan TIDAK BOLEH ditawarkan/dihitung untuk properti yang field ini
+    False. Default True kalau field belum ada di dokumen properti (properti lama/belum
+    pernah di-toggle, atau properti baru yang belum eksplisit dimatikan) - PERILAKU HARI
+    INI TIDAK BERUBAH untuk Pelangi sampai owner eksplisit mematikannya."""
+    p = await db.properties.find_one({"id": property_id}, {"_id": 0, "ada_sarapan": 1})
+    if not p:
+        return True
+    return p.get("ada_sarapan", True)
+
+
 async def nama_properti(property_id: str) -> str:
     """Nama tampilan properti untuk dipakai isi variabel WhatsApp Message Template
     (2026-07-26) - fallback ke "kami" kalau properti tidak ditemukan, supaya kalimat

@@ -48,13 +48,17 @@ async def create_booking(body: BookingCreate, user: dict = Depends(get_current_u
             await check_room_available(rid, start, end, property_id)
             rooms.append(r)
 
+        # Harmoni tidak menyediakan sarapan sama sekali (2026-07-31, permintaan user) - paksa
+        # False di sini kalau staf tidak pakai tarif_override manual (yang tetap bisa
+        # dipakai staf utk kasus khusus, itu keputusan staf sendiri, bukan otomatis).
+        dengan_sarapan_efektif = bool(body.dengan_sarapan) and await property_ada_sarapan(property_id)
         group_id = str(uuid.uuid4()) if len(rooms) > 1 else None
         created = []
         for r in rooms:
             if body.tarif_override:
                 unit_tarif = body.tarif_override
             elif body.tipe == "menginap":
-                unit_tarif = int(r["tarif_menginap"]) + (BREAKFAST_PRICE if body.dengan_sarapan else 0)
+                unit_tarif = int(r["tarif_menginap"]) + (BREAKFAST_PRICE if dengan_sarapan_efektif else 0)
             else:
                 unit_tarif = int(r["tarif"])
             kode = f"BK-{datetime.now().strftime('%Y%m%d%H%M%S')}-{uuid.uuid4().hex[:4].upper()}"
@@ -86,7 +90,7 @@ async def create_booking(body: BookingCreate, user: dict = Depends(get_current_u
                 "no_identitas": body.no_identitas, "kendaraan": body.kendaraan, "jumlah_tamu": body.jumlah_tamu,
                 "jam_mulai": start.isoformat(), "jam_selesai": end.isoformat(),
                 "catatan": body.catatan, "status": "aktif",
-                "dengan_sarapan": bool(body.dengan_sarapan) if body.tipe == "menginap" else False,
+                "dengan_sarapan": dengan_sarapan_efektif if body.tipe == "menginap" else False,
                 "subtotal": subtotal, "service_fee": service_fee, "total": total,
                 "diskon_member_persen": diskon_persen, "diskon_member_rp": diskon_rp, "kedatangan_ke": kedatangan_ke,
                 "source": "walk_in",

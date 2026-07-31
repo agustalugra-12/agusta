@@ -109,18 +109,21 @@ async def ai_bot_ketersediaan(
 
     q: Dict[str, Any] = {"tipe": tipe} if tipe else {}
     semua_kamar = await db.rooms.find(scoped(q, property_id), {"_id": 0, "tipe": 1, "tarif": 1, "tarif_menginap": 1}).to_list(500)
+    # Harmoni tidak menyediakan sarapan sama sekali (2026-07-31, permintaan user) - field
+    # tarif_menginap_dengan_sarapan HANYA disertakan kalau propertinya memang menyediakan,
+    # supaya AI tidak menawarkan/mengarang opsi sarapan yang tidak nyata ada.
+    ada_sarapan = await property_ada_sarapan(property_id)
     per_tipe: Dict[str, Dict[str, Any]] = {}
     for r in semua_kamar:
-        per_tipe.setdefault(r["tipe"], {
-            "tarif_day_use": r["tarif"], "tarif_menginap": r["tarif_menginap"],
+        item = {"tarif_day_use": r["tarif"], "tarif_menginap": r["tarif_menginap"], "kamar_tersedia": 0}
+        if ada_sarapan:
             # (2026-07-31, permintaan user) - AI sebelumnya tidak pernah tahu harga
             # menginap+sarapan sama sekali (cuma tarif_menginap tanpa sarapan), jadi tidak
             # bisa menjawab benar kalau tamu tanya "kalau dengan sarapan berapa?". Dihitung
             # di sini (SATU sumber kebenaran, sama dgn calc_tagihan/generate_voucher_pdf),
             # bukan ditebak/dihitung ulang oleh AI sendiri.
-            "tarif_menginap_dengan_sarapan": r["tarif_menginap"] + BREAKFAST_PRICE,
-            "kamar_tersedia": 0,
-        })
+            item["tarif_menginap_dengan_sarapan"] = r["tarif_menginap"] + BREAKFAST_PRICE
+        per_tipe.setdefault(r["tipe"], item)
     for r in hasil["rooms"]:
         if r["tipe"] in per_tipe:
             per_tipe[r["tipe"]]["kamar_tersedia"] += 1

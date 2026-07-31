@@ -57,6 +57,7 @@ async def public_rooms_catalog(properti: Optional[str] = None):
 
     `properti` (Fase 5) - slug properti dari URL `/book/<slug>`, lihat _resolve_property."""
     property_id = await _resolve_property(properti)
+    ada_sarapan = await property_ada_sarapan(property_id)
     rooms = await db.rooms.find(scoped({}, property_id), {"_id": 0}).to_list(500)
     rooms.sort(key=lambda r: (0 if r["tipe"] == "Standard" else 1, int(r["nomor"]) if r["nomor"].isdigit() else 9999))
     # Foto & deskripsi per tipe kamar — statis (bukan dari DB) karena semua kamar
@@ -84,6 +85,9 @@ async def public_rooms_catalog(properti: Optional[str] = None):
                 "tipe": t,
                 "tarif": r["tarif"],  # harga Day Use (flat per 6 jam)
                 "tarif_menginap": r["tarif_menginap"],  # harga Menginap per malam, tanpa sarapan
+                # (2026-07-31) - Harmoni tidak menyediakan sarapan sama sekali, beda dari
+                # Pelangi - frontend pakai ini utk sembunyikan toggle "dengan sarapan".
+                "ada_sarapan": ada_sarapan,
                 "image": m.get("image", ""),
                 "size": m.get("size", ""),
                 "capacity": m.get("capacity", ""),
@@ -254,13 +258,18 @@ async def public_create_booking(body: PublicBookingCreate, properti: Optional[st
     # campur Standard+Cottage sekaligus minta extra bed).
     if extra_bed_qty > 0 and any(r.get("tipe") != "Cottage" for r in rooms):
         raise HTTPException(400, "Extra bed hanya tersedia untuk tipe kamar Cottage, tidak bisa dipesan untuk Standard")
+    # Harmoni tidak menyediakan sarapan sama sekali (2026-07-31, permintaan user - beda dari
+    # Pelangi) - paksa False di sini (satu tempat, sebelum harga & data booking dibentuk)
+    # supaya TIDAK MUNGKIN kepungut biaya sarapan utk properti yang tidak menyediakannya,
+    # apa pun yang tamu kirim di body (typo/manipulasi payload).
+    dengan_sarapan_efektif = body.dengan_sarapan and await property_ada_sarapan(property_id)
     group_id = str(uuid.uuid4()) if len(rooms) > 1 else None
     created = []
     try:
         for r in rooms:
             harga_override = None
             if body.tipe == "menginap":
-                tarif_per_malam = r["tarif_menginap"] + (BREAKFAST_PRICE if body.dengan_sarapan else 0)
+                tarif_per_malam = r["tarif_menginap"] + (BREAKFAST_PRICE if dengan_sarapan_efektif else 0)
                 subtotal = tarif_per_malam * nights + extra_bed_qty * EXTRA_BED_PRICE * nights
                 service_fee = round(subtotal * SERVICE_FEE_PCT)
                 total = subtotal + service_fee
@@ -275,7 +284,7 @@ async def public_create_booking(body: PublicBookingCreate, properti: Optional[st
                 "catatan": body.catatan,
                 "created_by": body.nama_tamu,
                 "tipe": body.tipe,
-                "dengan_sarapan": body.dengan_sarapan,
+                "dengan_sarapan": dengan_sarapan_efektif,
             }
             booking = await create_reservation(data, property_id, source="online", harga_override=harga_override)
             if group_id:
