@@ -230,6 +230,28 @@ async def checkout(checkin_id: str, body: CheckoutIn, user: dict = Depends(get_c
     return res
 
 # ---- Guests ----
+@api.get("/guests/stats")
+async def guests_stats(user: dict = Depends(get_current_user),
+                       property_id: str = Depends(get_active_property)):
+    """Dashboard Member (Member Intelligence Center, 2026-07-31) - KPI agregat di atas
+    db.guests untuk halaman Data Tamu. HARUS didaftarkan sebelum "/guests" polos di
+    bawah supaya tidak ketiban rute lain (meski di sini aman karena path-nya beda)."""
+    guests = await db.guests.find(scoped({}, property_id), {"_id": 0}).to_list(5000)
+    total_member = len(guests)
+    repeat_guest = sum(1 for g in guests if (g.get("total_kunjungan") or 0) >= 2)
+    revenue_member = sum(int(g.get("total_transaksi") or 0) for g in guests)
+    reward_aktif = sum(1 for g in guests if diskon_member_untuk_total_kunjungan(g.get("total_kunjungan", 0)).get("diskon_persen", 0) > 0)
+    batas_90_hari = (datetime.now(timezone.utc) - timedelta(days=90)).date().isoformat()
+    tidak_datang_90_hari = sum(1 for g in guests if g.get("last_visit") and g["last_visit"] < batas_90_hari)
+    return {
+        "total_member": total_member,
+        "repeat_guest": repeat_guest,
+        "revenue_member": revenue_member,
+        "reward_aktif": reward_aktif,
+        "tidak_datang_90_hari": tidak_datang_90_hari,
+    }
+
+
 @api.get("/guests")
 async def list_guests(q: Optional[str] = None, user: dict = Depends(get_current_user),
                       property_id: str = Depends(get_active_property)):
@@ -298,6 +320,130 @@ async def guest_history(guest_id: str, user: dict = Depends(get_current_user),
                         property_id: str = Depends(get_active_property)):
     items = await db.checkins.find(scoped({"guest_id": guest_id}, property_id), {"_id": 0}).sort("jam_checkin", -1).to_list(500)
     return items
+
+
+_HARI_ID = ["Senin", "Selasa", "Rabu", "Kamis", "Jumat", "Sabtu", "Minggu"]
+
+
+def _parse_dt(s: Optional[str]) -> Optional[datetime]:
+    if not s:
+        return None
+    try:
+        return datetime.fromisoformat(s.replace("Z", "+00:00"))
+    except Exception:
+        return None
+
+
+@api.get("/guests/{guest_id}/timeline")
+async def guest_timeline(guest_id: str, user: dict = Depends(get_current_user),
+                         property_id: str = Depends(get_active_property)):
+    """Guest Timeline (Member Intelligence Center, 2026-07-31) - riwayat kronologis
+    terpadu 1 tamu: booking dibuat -> dibayar -> check-in -> check-out -> kunjungan
+    manual (migrasi kartu lama). `db.bookings` TIDAK punya field `guest_id` (cuma
+    no_hp/no_identitas), jadi dicocokkan lewat phone_variants() (varian 62xxx/0xxx,
+    lihat core.py) + no_identitas persis - sama seperti cara pembatalan/self-service
+    tamu memverifikasi kepemilikan booking. `db.checkins` sudah punya `guest_id`
+    langsung. Sekalian menghitung "Preferensi" - MURNI statistik deskriptif dari
+    histori asli (tipe kamar favorit, hari biasa datang, rata-rata malam menginap),
+    BUKAN prediksi - sengaja tidak membangun skor/prediksi "peluang kembali" dulu
+    karena volume data tamu saat ini masih terlalu kecil untuk itu jujur/berguna."""
+    g = await db.guests.find_one(scoped({"id": guest_id}, property_id), {"_id": 0})
+    if not g:
+        raise HTTPException(404, "Data tamu tidak ditemukan")
+
+    or_clauses = []
+    if g.get("no_hp"):
+        or_clauses.append({"no_hp": {"$in": list(phone_variants(g["no_hp"]))}})
+    if g.get("no_identitas"):
+        or_clauses.append({"no_identitas": g["no_identitas"]})
+    bookings = []
+    if or_clauses:
+        bookings = await db.bookings.find(scoped({"$or": or_clauses}, property_id), {"_id": 0}).to_list(500)
+    checkins = await db.checkins.find(scoped({"guest_id": guest_id}, property_id), {"_id": 0}).to_list(500)
+
+    events = []
+    for b in bookings:
+        label_kamar = f"kamar {b.get('room_nomor', '-')}"
+        if b.get("created_at"):
+            events.append({
+                "waktu": b["created_at"], "jenis": "booking_dibuat",
+                "label": f"Booking {b.get('tipe', '')} dibuat - {label_kamar}",
+                "ref_id": b.get("id"),
+            })
+        if b.get("paid_at"):
+            events.append({
+                "waktu": b["paid_at"], "jenis": "pembayaran",
+                "label": f"Pembayaran diterima - Rp{int(b.get('total', 0)):,}".replace(",", "."),
+                "ref_id": b.get("id"),
+            })
+        # Check-in Menginap TIDAK pernah bikin dokumen db.checkins (itu cuma untuk Day
+        # Use, lihat routes/bookings.py checkin_from_booking) - satu-satunya jejak
+        # check-in Menginap yang ada cuma checked_in_at di booking ini sendiri, jadi
+        # diambil dari sini, bukan dari koleksi checkins.
+        if b.get("tipe") == "menginap" and b.get("checked_in_at"):
+            events.append({
+                "waktu": b["checked_in_at"], "jenis": "checkin",
+                "label": f"Check-in {label_kamar} (menginap)",
+                "ref_id": b.get("id"),
+            })
+    for c in checkins:
+        label_kamar = f"kamar {c.get('room_nomor', '-')}"
+        if c.get("jam_checkin"):
+            events.append({
+                "waktu": c["jam_checkin"], "jenis": "checkin",
+                "label": f"Check-in {label_kamar} ({c.get('room_tipe', '')})",
+                "ref_id": c.get("id"),
+            })
+        if c.get("jam_checkout"):
+            events.append({
+                "waktu": c["jam_checkout"], "jenis": "checkout",
+                "label": f"Check-out {label_kamar} - Rp{int(c.get('total', 0)):,}".replace(",", "."),
+                "ref_id": c.get("id"),
+            })
+    for k in (g.get("riwayat_kunjungan") or []):
+        events.append({
+            "waktu": k.get("tanggal"), "jenis": "kunjungan_manual",
+            "label": f"Kunjungan tercatat (migrasi kartu lama) - kamar {k.get('room_nomor', '-')}",
+            "ref_id": k.get("id"),
+        })
+
+    events = [e for e in events if e.get("waktu")]
+    events.sort(key=lambda e: e["waktu"], reverse=True)
+
+    tipe_counter: Dict[str, int] = {}
+    hari_counter: Dict[str, int] = {}
+    durasi_malam: List[int] = []
+    for c in checkins:
+        # db.checkins isinya SELALU Day Use (menginap tidak pernah insert ke sini) -
+        # jadi cukup hitung tipe kamar & hari kedatangan, tanpa durasi menginap.
+        tipe_kamar = c.get("room_tipe")
+        if tipe_kamar:
+            tipe_counter[tipe_kamar] = tipe_counter.get(tipe_kamar, 0) + 1
+        dt_in = _parse_dt(c.get("jam_checkin"))
+        if dt_in:
+            hari = _HARI_ID[dt_in.weekday()]
+            hari_counter[hari] = hari_counter.get(hari, 0) + 1
+    for b in bookings:
+        if b.get("tipe") != "menginap":
+            continue
+        tipe_kamar = b.get("room_tipe")
+        if tipe_kamar:
+            tipe_counter[tipe_kamar] = tipe_counter.get(tipe_kamar, 0) + 1
+        dt_mulai = _parse_dt(b.get("jam_mulai"))
+        if dt_mulai:
+            hari = _HARI_ID[dt_mulai.weekday()]
+            hari_counter[hari] = hari_counter.get(hari, 0) + 1
+        dt_selesai = _parse_dt(b.get("jam_selesai"))
+        if dt_mulai and dt_selesai and dt_selesai > dt_mulai:
+            durasi_malam.append(max(1, round((dt_selesai - dt_mulai).total_seconds() / 86400)))
+
+    preferensi = {
+        "tipe_kamar_favorit": max(tipe_counter, key=tipe_counter.get) if tipe_counter else None,
+        "hari_biasa_datang": max(hari_counter, key=hari_counter.get) if hari_counter else None,
+        "rata_rata_malam_menginap": round(sum(durasi_malam) / len(durasi_malam), 1) if durasi_malam else None,
+    }
+
+    return {"events": events, "preferensi": preferensi}
 
 
 def _recompute_last_visit(riwayat: list) -> Optional[str]:

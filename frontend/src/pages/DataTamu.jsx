@@ -6,7 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
-import { MessageCircle, Phone, History, Sparkles, Plus, PencilLine, Trash2 } from "lucide-react";
+import { MessageCircle, Phone, History, Sparkles, Plus, PencilLine, Trash2, Users, Repeat, Wallet, Gift, Clock } from "lucide-react";
 
 // (2026-07-31, permintaan Agus) - "Data Tamu" dipindah jadi halaman/sidebar sendiri,
 // LEPAS dari Reservasi (sebelumnya cuma tab di dalam DaftarReservasi.jsx - riwayat
@@ -44,10 +44,14 @@ function loyaltyCycle(kedatanganKe) {
 const emptyGuestForm = { nama: "", no_hp: "", no_identitas: "", kendaraan: "" };
 const emptyKunjunganManual = { tanggal: new Date().toISOString().slice(0, 10), room_nomor: "", catatan: "" };
 
+const TIMELINE_ICON = { booking_dibuat: "🗓️", pembayaran: "💳", checkin: "🔑", checkout: "🚪", kunjungan_manual: "📇" };
+
 export default function DataTamu() {
   const [q, setQ] = useState("");
   const [guests, setGuests] = useState([]);
+  const [stats, setStats] = useState(null);
   const [history, setHistory] = useState(null);
+  const [timeline, setTimeline] = useState(null);
   const [formOpen, setFormOpen] = useState(false);
   const [editingGuest, setEditingGuest] = useState(null);
   const [guestForm, setGuestForm] = useState(emptyGuestForm);
@@ -60,12 +64,20 @@ export default function DataTamu() {
     const { data } = await api.get("/guests", { params: q ? { q } : {} });
     setGuests(data);
   };
-  useEffect(() => { load(); }, []);
+  const loadStats = async () => {
+    const { data } = await api.get("/guests/stats");
+    setStats(data);
+  };
+  useEffect(() => { load(); loadStats(); }, []);
   useEffect(() => { const t = setTimeout(load, 300); return () => clearTimeout(t); }, [q]);
 
   const showHistory = async (g) => {
-    const { data } = await api.get(`/guests/${g.id}/history`);
-    setHistory({ guest: g, items: data });
+    const [{ data: items }, { data: tl }] = await Promise.all([
+      api.get(`/guests/${g.id}/history`),
+      api.get(`/guests/${g.id}/timeline`),
+    ]);
+    setHistory({ guest: g, items });
+    setTimeline(tl);
     setKunjunganManualOpen(false);
     setKunjunganManualForm(emptyKunjunganManual);
   };
@@ -79,7 +91,7 @@ export default function DataTamu() {
       setKunjunganManualOpen(false);
       setKunjunganManualForm(emptyKunjunganManual);
       toast.success("Kunjungan manual ditambahkan");
-      load();
+      load(); loadStats();
     } catch (e) { toast.error(e?.response?.data?.detail || "Gagal menambahkan"); }
     finally { setSavingKunjungan(false); }
   };
@@ -90,7 +102,7 @@ export default function DataTamu() {
       const { data: updatedGuest } = await api.delete(`/guests/${history.guest.id}/kunjungan-manual/${entryId}`);
       setHistory((h) => ({ ...h, guest: updatedGuest }));
       toast.success("Dihapus");
-      load();
+      load(); loadStats();
     } catch (e) { toast.error(e?.response?.data?.detail || "Gagal menghapus"); }
   };
 
@@ -127,6 +139,33 @@ export default function DataTamu() {
         <h1 className="text-3xl sm:text-4xl font-extrabold">Tamu &amp; Member.</h1>
         <p className="text-slate-500 mt-1">Riwayat kedatangan, loyalitas, dan data kontak semua tamu.</p>
       </div>
+
+      {/* Dashboard Member - KPI agregat (Member Intelligence Center, 2026-07-31) */}
+      {stats && (
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3" data-testid="dashboard-member-kpi">
+          <Card className="border-slate-200"><CardContent className="p-4 flex items-center gap-3">
+            <div className="w-9 h-9 rounded-lg bg-blue-100 text-blue-700 grid place-items-center shrink-0"><Users className="w-4.5 h-4.5" /></div>
+            <div><div className="text-xl font-extrabold leading-tight">{stats.total_member}</div><div className="text-xs text-slate-500">Total Member</div></div>
+          </CardContent></Card>
+          <Card className="border-slate-200"><CardContent className="p-4 flex items-center gap-3">
+            <div className="w-9 h-9 rounded-lg bg-rose-100 text-rose-700 grid place-items-center shrink-0"><Repeat className="w-4.5 h-4.5" /></div>
+            <div><div className="text-xl font-extrabold leading-tight">{stats.repeat_guest}</div><div className="text-xs text-slate-500">Repeat Guest</div></div>
+          </CardContent></Card>
+          <Card className="border-slate-200"><CardContent className="p-4 flex items-center gap-3">
+            <div className="w-9 h-9 rounded-lg bg-emerald-100 text-emerald-700 grid place-items-center shrink-0"><Wallet className="w-4.5 h-4.5" /></div>
+            <div><div className="text-xl font-extrabold leading-tight">{fmtRp(stats.revenue_member)}</div><div className="text-xs text-slate-500">Revenue Member</div></div>
+          </CardContent></Card>
+          <Card className="border-slate-200"><CardContent className="p-4 flex items-center gap-3">
+            <div className="w-9 h-9 rounded-lg bg-amber-100 text-amber-700 grid place-items-center shrink-0"><Gift className="w-4.5 h-4.5" /></div>
+            <div><div className="text-xl font-extrabold leading-tight">{stats.reward_aktif}</div><div className="text-xs text-slate-500">Reward Aktif</div></div>
+          </CardContent></Card>
+          <Card className="border-slate-200"><CardContent className="p-4 flex items-center gap-3">
+            <div className="w-9 h-9 rounded-lg bg-slate-200 text-slate-600 grid place-items-center shrink-0"><Clock className="w-4.5 h-4.5" /></div>
+            <div><div className="text-xl font-extrabold leading-tight">{stats.tidak_datang_90_hari}</div><div className="text-xs text-slate-500">Tidak Datang &gt;90 Hari</div></div>
+          </CardContent></Card>
+        </div>
+      )}
+
       <div className="flex flex-col sm:flex-row gap-3">
         <Input data-testid="search-guest" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Cari nama, HP, atau No KTP..." className="h-12 flex-1" />
         <Button data-testid="guest-add-btn" onClick={openAddGuest} className="h-12 gap-1.5 bg-blue-700 hover:bg-blue-800 shrink-0">
@@ -214,6 +253,19 @@ export default function DataTamu() {
         <DialogContent className="max-w-2xl">
           <DialogHeader><DialogTitle>Riwayat {history?.guest?.nama}</DialogTitle></DialogHeader>
           <div className="max-h-[28rem] overflow-y-auto space-y-4">
+            {timeline?.preferensi && (timeline.preferensi.tipe_kamar_favorit || timeline.preferensi.hari_biasa_datang || timeline.preferensi.rata_rata_malam_menginap) && (
+              <div className="flex flex-wrap gap-2 text-xs" data-testid="guest-preferensi">
+                {timeline.preferensi.tipe_kamar_favorit && (
+                  <div className="bg-indigo-50 text-indigo-700 rounded-lg px-2.5 py-1.5"><span className="text-indigo-400">Tipe favorit </span><span className="font-bold">{timeline.preferensi.tipe_kamar_favorit}</span></div>
+                )}
+                {timeline.preferensi.hari_biasa_datang && (
+                  <div className="bg-indigo-50 text-indigo-700 rounded-lg px-2.5 py-1.5"><span className="text-indigo-400">Biasa datang hari </span><span className="font-bold">{timeline.preferensi.hari_biasa_datang}</span></div>
+                )}
+                {timeline.preferensi.rata_rata_malam_menginap && (
+                  <div className="bg-indigo-50 text-indigo-700 rounded-lg px-2.5 py-1.5"><span className="text-indigo-400">Rata-rata menginap </span><span className="font-bold">{timeline.preferensi.rata_rata_malam_menginap} malam</span></div>
+                )}
+              </div>
+            )}
             <div>
               <div className="flex items-center justify-between mb-2">
                 <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">
@@ -286,6 +338,22 @@ export default function DataTamu() {
                   </div>
                 ))}
                 {(history?.items || []).length === 0 && <div className="text-slate-400 text-center py-3 text-sm">Tidak ada transaksi Day Use tercatat</div>}
+              </div>
+            </div>
+
+            <div>
+              <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">Guest Timeline</p>
+              <div className="space-y-1.5" data-testid="guest-timeline">
+                {(timeline?.events || []).map((e, i) => (
+                  <div key={`${e.jenis}-${e.ref_id}-${i}`} className="flex items-center gap-2 text-sm border border-slate-200 rounded-lg px-3 py-1.5">
+                    <span className="shrink-0">{TIMELINE_ICON[e.jenis] || "•"}</span>
+                    <span className="text-slate-400 text-xs shrink-0 w-36">{fmtDateTime(e.waktu)}</span>
+                    <span className="flex-1">{e.label}</span>
+                  </div>
+                ))}
+                {(timeline?.events || []).length === 0 && (
+                  <div className="text-slate-400 text-center py-3 text-sm">Belum ada riwayat</div>
+                )}
               </div>
             </div>
           </div>
