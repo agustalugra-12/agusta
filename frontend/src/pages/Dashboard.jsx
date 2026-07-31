@@ -1,7 +1,7 @@
 import { useEffect, useState, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
-import api, { fmtRp, fmtDate, statusLabel, statusColor, bookingConfirmationWaLink, statusBayarOf, STATUS_BAYAR_LABEL, STATUS_BAYAR_BADGE_CLASS } from "@/lib/apiClient";
+import api, { fmtRp, fmtDate, statusLabel, statusColor, bookingConfirmationWaLink, statusBayarOf, STATUS_BAYAR_LABEL, STATUS_BAYAR_BADGE_CLASS, waLink } from "@/lib/apiClient";
 import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid } from "recharts";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -15,6 +15,7 @@ import { useAuth } from "@/context/AuthContext";
 import {
   BedDouble, AlertTriangle, Hourglass, Clock, Wallet,
   CalendarRange, Users as UsersIcon, Sparkles, Wrench, Calendar, MessageCircle, X, Inbox, Check, Percent,
+  Gift, ListChecks, LogIn, LogOut, PhoneCall,
 } from "lucide-react";
 import { SetujuiDialog, TolakDialog, ActionRequiredRedDoorz } from "@/pages/BookingRequests";
 import { PembatalanAlert } from "@/pages/Pembatalan";
@@ -69,6 +70,8 @@ export default function Dashboard() {
   const [bookings, setBookings] = useState([]);
   const [bookingRequests, setBookingRequests] = useState([]); // waiting_approval — supaya owner/resepsionis lihat langsung dari Dashboard, tidak perlu buka halaman terpisah
   const [kedatanganHarian, setKedatanganHarian] = useState([]); // grafik kedatangan tamu 30 hari (2026-07-21, permintaan user)
+  const [ulangTahun, setUlangTahun] = useState([]); // tamu ulang tahun hari ini (Member Intelligence, 2026-07-31)
+  const [tugasHarian, setTugasHarian] = useState(null); // AI Daily Assistant - daftar tugas resepsionis hari ini
   const [brief, setBrief] = useState(null);
   const [briefLoading, setBriefLoading] = useState(true);
   const isOwner = user?.role === "owner";
@@ -246,14 +249,18 @@ export default function Dashboard() {
 
   const load = async () => {
     try {
-      const [s, r, c, b, br, kd] = await Promise.all([
+      const [s, r, c, b, br, kd, ut, th] = await Promise.all([
         api.get("/reports/summary"),
         api.get("/rooms"),
         api.get("/checkins", { params: { status: "aktif" } }),
         api.get("/bookings"),
         api.get("/booking-requests", { params: { status: "waiting_approval" } }),
         api.get("/reports/kedatangan-harian"),
+        api.get("/guests/ulang-tahun-hari-ini"),
+        api.get("/dashboard/tugas-harian"),
       ]);
+      setUlangTahun(ut.data);
+      setTugasHarian(th.data);
       // tampilkan semua booking yang menempati kamar: aktif, booking_pending, booking_paid
       // sync_status waiting_reddoorz_* (Tahap 2 Modul Reservasi) — booking Menginap dari
       // Booking Request yang belum diinput/disinkron manual ke PMS RedDoorz TETAP memblokir
@@ -275,6 +282,20 @@ export default function Dashboard() {
     } catch (e) { console.error(e); }
     finally { setBriefLoading(false); }
   };
+
+  // Kasih voucher ulang tahun (Member Intelligence, 2026-07-31) - staf klik manual,
+  // TIDAK otomatis (hadiah nyata/berdampak uang). Pengiriman pesan JUGA manual lewat
+  // WhatsApp pribadi staf (waLink) - Agus eksplisit menolak broadcast otomatis krn
+  // risiko nomor WA kena banned.
+  const kasihVoucherUlangTahun = async (g) => {
+    try {
+      await api.post(`/guests/${g.id}/reward-wallet/voucher-ulang-tahun`);
+      toast.success(`Voucher ulang tahun diberikan ke ${g.nama}`);
+      setUlangTahun((list) => list.map((x) => x.id === g.id ? { ...x, sudah_dapat_voucher_tahun_ini: true } : x));
+    } catch (e) { toast.error(e?.response?.data?.detail || "Gagal memberi voucher"); }
+  };
+  const pesanUlangTahunUntuk = (g) =>
+    `Halo ${g.nama}! 🎉 Selamat ulang tahun dari kami di Pelangi Homestay. Sebagai apresiasi, kami kasih voucher menginap GRATIS 1 malam untuk 1 kamar standard - tinggal hubungi kami untuk atur jadwalnya ya. Terima kasih sudah jadi tamu setia kami!`;
 
   useEffect(() => {
     load();
@@ -583,6 +604,94 @@ export default function Dashboard() {
             <div className="font-semibold text-amber-800">{nearDue.length - overtime.length} tamu mendekati batas 6 jam</div>
           </div>
         </div>
+      )}
+
+      {/* Notif Ulang Tahun (Member Intelligence, 2026-07-31) - kirim pesan & kasih
+          voucher SELALU manual lewat tombol staf, tidak ada broadcast otomatis */}
+      {ulangTahun.length > 0 && (
+        <div data-testid="ulang-tahun-alert" className="rounded-xl bg-pink-50 border border-pink-200 p-4">
+          <div className="flex items-start gap-3 mb-3">
+            <Gift className="w-5 h-5 text-pink-600 mt-0.5 shrink-0" />
+            <div className="text-sm">
+              <div className="font-semibold text-pink-900">{ulangTahun.length} tamu ulang tahun hari ini 🎉</div>
+              <div className="text-pink-700">Kirim ucapan & tawarkan voucher menginap gratis (1 malam, 1 kamar standard).</div>
+            </div>
+          </div>
+          <div className="space-y-2">
+            {ulangTahun.map((g) => (
+              <div key={g.id} data-testid={`ulang-tahun-${g.id}`} className="flex items-center justify-between gap-3 bg-white border border-pink-100 rounded-lg p-2.5 text-sm">
+                <div>
+                  <div className="font-semibold">{g.nama}</div>
+                  <div className="text-xs text-slate-500">{g.no_hp || "-"}</div>
+                </div>
+                <div className="flex gap-2 shrink-0">
+                  {g.no_hp && (
+                    <a href={waLink(g.no_hp, pesanUlangTahunUntuk(g))} target="_blank" rel="noreferrer">
+                      <Button size="sm" variant="outline"><MessageCircle className="w-3.5 h-3.5 mr-1" /> Kirim Pesan</Button>
+                    </a>
+                  )}
+                  <Button size="sm" className="bg-pink-600 hover:bg-pink-700" disabled={g.sudah_dapat_voucher_tahun_ini}
+                    onClick={() => kasihVoucherUlangTahun(g)} data-testid={`kasih-voucher-${g.id}`}>
+                    <Gift className="w-3.5 h-3.5 mr-1" /> {g.sudah_dapat_voucher_tahun_ini ? "Voucher Sudah Diberi" : "Kasih Voucher"}
+                  </Button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* AI Daily Assistant (Member Intelligence, 2026-07-31) - daftar tugas resepsionis
+          hari ini, deterministik dari data yang sudah ada (bukan generate GPT) */}
+      {tugasHarian && (
+        tugasHarian.kedatangan_menginap_hari_ini.length + tugasHarian.keberangkatan_menginap_hari_ini.length
+          + tugasHarian.day_use_sedang_berlangsung.length + tugasHarian.tamu_perlu_follow_up.length > 0
+      ) && (
+        <Card className="border-slate-200" data-testid="tugas-harian-card">
+          <CardContent className="p-4 sm:p-5">
+            <div className="flex items-center gap-2 mb-3">
+              <ListChecks className="w-4.5 h-4.5 text-indigo-600" />
+              <div className="font-semibold">Tugas Hari Ini</div>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
+              {tugasHarian.kedatangan_menginap_hari_ini.length > 0 && (
+                <div className="border border-slate-200 rounded-lg p-3">
+                  <div className="flex items-center gap-1.5 font-semibold text-slate-700 mb-1.5"><LogIn className="w-3.5 h-3.5" /> Kedatangan Menginap ({tugasHarian.kedatangan_menginap_hari_ini.length})</div>
+                  {tugasHarian.kedatangan_menginap_hari_ini.map((b) => (
+                    <div key={b.id} className="text-xs text-slate-500 py-0.5">{b.nama_tamu} - kamar {b.room_nomor}</div>
+                  ))}
+                </div>
+              )}
+              {tugasHarian.keberangkatan_menginap_hari_ini.length > 0 && (
+                <div className="border border-slate-200 rounded-lg p-3">
+                  <div className="flex items-center gap-1.5 font-semibold text-slate-700 mb-1.5"><LogOut className="w-3.5 h-3.5" /> Keberangkatan Menginap ({tugasHarian.keberangkatan_menginap_hari_ini.length})</div>
+                  {tugasHarian.keberangkatan_menginap_hari_ini.map((b) => (
+                    <div key={b.id} className="text-xs text-slate-500 py-0.5">{b.nama_tamu} - kamar {b.room_nomor}</div>
+                  ))}
+                </div>
+              )}
+              {tugasHarian.day_use_sedang_berlangsung.length > 0 && (
+                <div className="border border-slate-200 rounded-lg p-3">
+                  <div className="flex items-center gap-1.5 font-semibold text-slate-700 mb-1.5"><Clock className="w-3.5 h-3.5" /> Day Use Berlangsung ({tugasHarian.day_use_sedang_berlangsung.length})</div>
+                  {tugasHarian.day_use_sedang_berlangsung.map((c) => (
+                    <div key={c.id} className="text-xs text-slate-500 py-0.5">{c.nama_tamu} - kamar {c.room_nomor}</div>
+                  ))}
+                </div>
+              )}
+              {tugasHarian.tamu_perlu_follow_up.length > 0 && (
+                <div className="border border-slate-200 rounded-lg p-3">
+                  <div className="flex items-center gap-1.5 font-semibold text-slate-700 mb-1.5"><PhoneCall className="w-3.5 h-3.5" /> Follow Up Tamu Lama ({tugasHarian.tamu_perlu_follow_up.length})</div>
+                  {tugasHarian.tamu_perlu_follow_up.slice(0, 5).map((g) => (
+                    <div key={g.id} className="flex items-center justify-between text-xs text-slate-500 py-0.5">
+                      <span>{g.nama} - {g.total_kunjungan}x, terakhir {fmtDate(g.last_visit)}</span>
+                      {g.no_hp && <a href={waLink(g.no_hp)} target="_blank" rel="noreferrer" className="text-blue-600 hover:underline shrink-0 ml-2">WA</a>}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </CardContent>
+        </Card>
       )}
 
       {/* Status cards */}

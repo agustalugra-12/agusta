@@ -266,8 +266,17 @@ async def list_guests(q: Optional[str] = None, user: dict = Depends(get_current_
             {"no_identitas": {"$regex": q_escaped, "$options": "i"}},
         ]}
     items = await db.guests.find(scoped(query, property_id), {"_id": 0}).to_list(500)
+    # Rata-rata total_transaksi SELURUH tamu di properti (bukan cuma hasil filter q) -
+    # dipakai komponen monetary CRM Score, supaya skor tetap stabil terlepas dari
+    # pencarian yang sedang aktif.
+    semua_transaksi = await db.guests.find(scoped({}, property_id), {"total_transaksi": 1, "_id": 0}).to_list(5000)
+    nilai_transaksi = [g.get("total_transaksi", 0) for g in semua_transaksi]
+    avg_transaksi = sum(nilai_transaksi) / len(nilai_transaksi) if nilai_transaksi else 0
     for it in items:
         it.update(diskon_member_untuk_total_kunjungan(it.get("total_kunjungan", 0)))
+        crm = hitung_crm_score(it.get("total_kunjungan", 0), it.get("last_visit"), it.get("total_transaksi", 0), avg_transaksi)
+        it["crm_score"] = crm["skor"]
+        it["crm_label"] = crm["label"]
     # sort di Python (case-insensitive) - default Mongo sort per byte (huruf besar/kecil/angka
     # tercampur tidak sesuai urutan A-Z yang wajar dilihat orang), aman untuk skala tamu (<=500)
     items.sort(key=lambda g: (g.get("nama") or "").lower())
@@ -286,7 +295,9 @@ async def create_guest(body: GuestCreate, user: dict = Depends(get_current_user)
     doc = {
         "id": str(uuid.uuid4()), "nama": body.nama.strip(),
         "no_hp": body.no_hp.strip(), "no_identitas": body.no_identitas.strip(), "kendaraan": body.kendaraan.strip(),
+        "tanggal_lahir": body.tanggal_lahir.strip(),
         "total_kunjungan": 0, "total_transaksi": 0, "last_visit": None, "created_at": now_iso(),
+        "reward_wallet": [],
         "property_id": property_id,
     }
     await db.guests.insert_one(doc)
@@ -443,12 +454,131 @@ async def guest_timeline(guest_id: str, user: dict = Depends(get_current_user),
         "rata_rata_malam_menginap": round(sum(durasi_malam) / len(durasi_malam), 1) if durasi_malam else None,
     }
 
-    return {"events": events, "preferensi": preferensi}
+    # Reward Wallet (Member Intelligence, 2026-07-31) - diskon member SAAT INI dihitung
+    # ulang (bukan disimpan) dari total_kunjungan (siklus 10, lihat DISKON_MEMBER_TABLE) -
+    # ditampilkan sebagai 1 reward "aktif" di sini kalau > 0%, DIGABUNG dengan voucher
+    # yang benar-benar tersimpan di db (mis. voucher ulang tahun) di `reward_wallet`.
+    member_diskon = diskon_member_untuk_total_kunjungan(g.get("total_kunjungan", 0))
+    return {"events": events, "preferensi": preferensi, "member_diskon_aktif": member_diskon,
+            "reward_wallet": g.get("reward_wallet", [])}
 
 
 def _recompute_last_visit(riwayat: list) -> Optional[str]:
     tanggal_list = [k["tanggal"] for k in riwayat if k.get("tanggal")]
     return max(tanggal_list) if tanggal_list else None
+
+
+@api.post("/guests/{guest_id}/reward-wallet/voucher-ulang-tahun")
+async def beri_voucher_ulang_tahun(guest_id: str, user: dict = Depends(get_current_user),
+                                   property_id: str = Depends(get_active_property)):
+    """Hadiah ulang tahun (keputusan bisnis Agus, 2026-07-31): "setiap yang ulang tahun
+    mendapat vocer menginap gratis 1x dan 1 kamar" - voucher DISIMPAN di reward_wallet
+    tamu (bukan otomatis dipotong dari harga), staf yang menerapkannya manual saat tamu
+    booking/check-in (isi tarif_override=0 lalu tandai voucher ini "terpakai" di sini).
+    Diberi lewat tombol staf di Dashboard (bukan otomatis) & dijaga 1x per tahun kalender
+    supaya tidak dobel-klik."""
+    g = await db.guests.find_one(scoped({"id": guest_id}, property_id))
+    if not g:
+        raise HTTPException(404, "Data tamu tidak ditemukan")
+    tahun_ini = now_iso()[:4]
+    wallet = list(g.get("reward_wallet") or [])
+    sudah_ada = any(r.get("jenis") == "voucher_ulang_tahun" and r.get("tahun") == tahun_ini for r in wallet)
+    if sudah_ada:
+        raise HTTPException(400, f"Voucher ulang tahun {tahun_ini} untuk tamu ini sudah pernah diberikan")
+    entry = {
+        "id": str(uuid.uuid4()), "jenis": "voucher_ulang_tahun",
+        "label": "Voucher Menginap Gratis (Ulang Tahun)",
+        "deskripsi": "Gratis menginap 1x, 1 kamar standard",
+        "tahun": tahun_ini, "status": "aktif",
+        "diberikan_oleh": user["nama"], "created_at": now_iso(),
+        "used_at": None, "catatan_pakai": "",
+    }
+    await db.guests.update_one({"id": guest_id}, {"$push": {"reward_wallet": entry}})
+    await log_activity(user, "beri_voucher_ulang_tahun", f"Voucher ulang tahun {tahun_ini} untuk {g['nama']}")
+    return entry
+
+
+@api.post("/guests/{guest_id}/reward-wallet/{reward_id}/pakai")
+async def pakai_reward_wallet(guest_id: str, reward_id: str, body: RewardPakaiIn,
+                              user: dict = Depends(get_current_user),
+                              property_id: str = Depends(get_active_property)):
+    """Tandai 1 reward di wallet sebagai sudah dipakai (staf menerapkan diskon/gratisnya
+    manual saat booking/check-in - lihat catatan di endpoint pemberian voucher di atas,
+    fungsi ini murni pencatatan supaya reward tidak terlihat "masih bisa dipakai" lagi)."""
+    g = await db.guests.find_one(scoped({"id": guest_id}, property_id))
+    if not g:
+        raise HTTPException(404, "Data tamu tidak ditemukan")
+    wallet = list(g.get("reward_wallet") or [])
+    target = next((r for r in wallet if r.get("id") == reward_id), None)
+    if not target:
+        raise HTTPException(404, "Reward tidak ditemukan")
+    if target.get("status") == "terpakai":
+        raise HTTPException(400, "Reward ini sudah ditandai terpakai sebelumnya")
+    await db.guests.update_one(
+        {"id": guest_id, "reward_wallet.id": reward_id},
+        {"$set": {"reward_wallet.$.status": "terpakai", "reward_wallet.$.used_at": now_iso(),
+                  "reward_wallet.$.catatan_pakai": body.catatan, "reward_wallet.$.dipakai_oleh": user["nama"]}}
+    )
+    await log_activity(user, "pakai_reward_wallet", f"Reward '{target.get('label')}' dipakai untuk {g['nama']}")
+    return {"ok": True}
+
+
+@api.get("/guests/ulang-tahun-hari-ini")
+async def guests_ulang_tahun_hari_ini(user: dict = Depends(get_current_user),
+                                      property_id: str = Depends(get_active_property)):
+    """Notif Dashboard utama (Member Intelligence, 2026-07-31) - daftar tamu yang hari
+    ini ulang tahun (cocok bulan+tanggal di `tanggal_lahir`). Dipakai utk tombol "Kirim
+    Pesan" (WA manual via waLink, TIDAK ada broadcast otomatis - risiko WA banned per
+    keputusan Agus) & "Kasih Voucher"."""
+    hari_ini = now_iso()
+    guests = await db.guests.find(scoped({"tanggal_lahir": {"$nin": ["", None]}}, property_id), {"_id": 0}).to_list(5000)
+    hasil = [g for g in guests if is_ulang_tahun_hari_ini(g.get("tanggal_lahir"), hari_ini)]
+    for g in hasil:
+        tahun_ini = hari_ini[:4]
+        g["sudah_dapat_voucher_tahun_ini"] = any(
+            r.get("jenis") == "voucher_ulang_tahun" and r.get("tahun") == tahun_ini for r in (g.get("reward_wallet") or [])
+        )
+    return hasil
+
+
+@api.get("/dashboard/tugas-harian")
+async def tugas_harian(user: dict = Depends(get_current_user), property_id: str = Depends(get_active_property)):
+    """AI Daily Assistant (Member Intelligence Center, 2026-07-31) - daftar tugas
+    resepsionis hari ini. SENGAJA deterministik (query DB biasa), BUKAN teks yang
+    di-generate GPT - lebih murah, tidak ada risiko halusinasi, dan datanya sendiri
+    sudah cukup jelas tanpa perlu dibungkus prosa AI. "AI" di sini maksudnya asisten
+    otomatis yang menyiapkan daftar, bukan pemanggilan model bahasa."""
+    hari_ini = now_iso()[:10]
+    batas_90_hari = (datetime.now(timezone.utc) - timedelta(days=90)).date().isoformat()
+
+    kedatangan_menginap = await db.bookings.find(scoped({
+        "tipe": "menginap", "status": {"$in": ["aktif", "booking_paid"]},
+        "jam_mulai": {"$regex": f"^{hari_ini}"},
+    }, property_id), {"_id": 0}).to_list(200)
+
+    keberangkatan_menginap = await db.bookings.find(scoped({
+        "tipe": "menginap", "status": "checked_in",
+        "jam_selesai": {"$regex": f"^{hari_ini}"},
+    }, property_id), {"_id": 0}).to_list(200)
+
+    day_use_berlangsung = await db.checkins.find(scoped({"status": "aktif"}, property_id), {"_id": 0}).to_list(200)
+
+    tamu_semua = await db.guests.find(scoped({}, property_id), {"_id": 0}).to_list(5000)
+    tamu_follow_up = [
+        g for g in tamu_semua
+        if (g.get("total_kunjungan") or 0) >= 2 and g.get("last_visit") and g["last_visit"] < batas_90_hari
+    ]
+    tamu_follow_up.sort(key=lambda g: g.get("last_visit") or "")
+
+    ulang_tahun = [g for g in tamu_semua if is_ulang_tahun_hari_ini(g.get("tanggal_lahir"), hari_ini)]
+
+    return {
+        "kedatangan_menginap_hari_ini": kedatangan_menginap,
+        "keberangkatan_menginap_hari_ini": keberangkatan_menginap,
+        "day_use_sedang_berlangsung": day_use_berlangsung,
+        "tamu_perlu_follow_up": tamu_follow_up[:20],
+        "ulang_tahun_hari_ini": ulang_tahun,
+    }
 
 
 @api.post("/guests/{guest_id}/kunjungan-manual")

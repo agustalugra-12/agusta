@@ -41,7 +41,15 @@ function loyaltyCycle(kedatanganKe) {
   return { posisi, nextPosisi, nextReward, sisaMenuju: nextPosisi ? nextPosisi - posisi : null };
 }
 
-const emptyGuestForm = { nama: "", no_hp: "", no_identitas: "", kendaraan: "" };
+const emptyGuestForm = { nama: "", no_hp: "", no_identitas: "", kendaraan: "", tanggal_lahir: "" };
+
+// Badge warna CRM/VIP Score (0-100, rumus di backend hitung_crm_score - core.py)
+function crmScoreBadgeCls(label) {
+  if (label === "VIP Utama") return "bg-purple-100 text-purple-700";
+  if (label === "Loyal") return "bg-rose-100 text-rose-700";
+  if (label === "Reguler") return "bg-blue-100 text-blue-700";
+  return "bg-slate-200 text-slate-600";
+}
 const emptyKunjunganManual = { tanggal: new Date().toISOString().slice(0, 10), room_nomor: "", catatan: "" };
 
 const TIMELINE_ICON = { booking_dibuat: "🗓️", pembayaran: "💳", checkin: "🔑", checkout: "🚪", kunjungan_manual: "📇" };
@@ -96,6 +104,15 @@ export default function DataTamu() {
     finally { setSavingKunjungan(false); }
   };
 
+  const pakaiReward = async (rewardId) => {
+    if (!window.confirm("Tandai reward ini sudah dipakai tamu? (pastikan diskon/gratisnya sudah diterapkan manual saat booking/check-in)")) return;
+    try {
+      await api.post(`/guests/${history.guest.id}/reward-wallet/${rewardId}/pakai`, {});
+      setTimeline((t) => ({ ...t, reward_wallet: t.reward_wallet.map((r) => r.id === rewardId ? { ...r, status: "terpakai" } : r) }));
+      toast.success("Reward ditandai terpakai");
+    } catch (e) { toast.error(e?.response?.data?.detail || "Gagal menandai"); }
+  };
+
   const hapusKunjunganManual = async (entryId) => {
     if (!window.confirm("Hapus catatan kunjungan manual ini?")) return;
     try {
@@ -107,7 +124,7 @@ export default function DataTamu() {
   };
 
   const openAddGuest = () => { setEditingGuest(null); setGuestForm(emptyGuestForm); setFormOpen(true); };
-  const openEditGuest = (g) => { setEditingGuest(g); setGuestForm({ nama: g.nama, no_hp: g.no_hp || "", no_identitas: g.no_identitas || "", kendaraan: g.kendaraan || "" }); setFormOpen(true); };
+  const openEditGuest = (g) => { setEditingGuest(g); setGuestForm({ nama: g.nama, no_hp: g.no_hp || "", no_identitas: g.no_identitas || "", kendaraan: g.kendaraan || "", tanggal_lahir: g.tanggal_lahir || "" }); setFormOpen(true); };
 
   const saveGuest = async () => {
     if (!guestForm.nama.trim()) { toast.error("Nama wajib diisi"); return; }
@@ -190,6 +207,11 @@ export default function DataTamu() {
                       <span className={`inline-flex items-center gap-1 text-[10px] font-bold uppercase tracking-wide rounded-full px-2 py-0.5 ${status.cls}`} data-testid={`guest-status-${g.id}`}>
                         {status.emoji} {status.label}
                       </span>
+                      {typeof g.crm_score === "number" && (
+                        <span className={`inline-flex items-center gap-1 text-[10px] font-bold uppercase tracking-wide rounded-full px-2 py-0.5 ${crmScoreBadgeCls(g.crm_label)}`} title="CRM Score (0-100) - gabungan frekuensi, kebaruan kunjungan, dan nilai belanja" data-testid={`guest-crm-score-${g.id}`}>
+                          CRM {g.crm_score}
+                        </span>
+                      )}
                     </div>
                     <div className="text-xs text-slate-500">{g.no_hp || "-"} • {g.no_identitas || "-"}</div>
                     {(() => {
@@ -266,6 +288,40 @@ export default function DataTamu() {
                 )}
               </div>
             )}
+
+            {/* Reward Wallet (Member Intelligence, 2026-07-31) - diskon member yang lagi
+                aktif (dihitung ulang tiap saat dari siklus 10 kedatangan) + voucher yang
+                benar-benar tersimpan (mis. voucher ulang tahun) */}
+            {timeline && (timeline.member_diskon_aktif?.diskon_persen > 0 || (timeline.reward_wallet || []).length > 0) && (
+              <div>
+                <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">Reward Wallet</p>
+                <div className="space-y-1.5">
+                  {timeline.member_diskon_aktif?.diskon_persen > 0 && (
+                    <div className="flex items-center justify-between text-sm border border-amber-200 bg-amber-50 rounded-lg px-3 py-2">
+                      <div className="flex items-center gap-2"><Sparkles className="w-3.5 h-3.5 text-amber-600" /> Diskon Member {timeline.member_diskon_aktif.diskon_persen}% (kedatangan ke-{timeline.member_diskon_aktif.kedatangan_ke})</div>
+                      <span className="text-[10px] font-semibold uppercase px-1.5 py-0.5 rounded bg-amber-200 text-amber-800 shrink-0">Aktif Otomatis</span>
+                    </div>
+                  )}
+                  {(timeline.reward_wallet || []).map((r) => (
+                    <div key={r.id} className="flex items-center justify-between text-sm border border-slate-200 rounded-lg px-3 py-2" data-testid={`reward-wallet-${r.id}`}>
+                      <div className="flex items-center gap-2">
+                        <Gift className="w-3.5 h-3.5 text-pink-600" />
+                        <div>
+                          <div>{r.label}</div>
+                          <div className="text-xs text-slate-400">{r.deskripsi}</div>
+                        </div>
+                      </div>
+                      {r.status === "terpakai" ? (
+                        <span className="text-[10px] font-semibold uppercase px-1.5 py-0.5 rounded bg-slate-200 text-slate-600 shrink-0">Terpakai</span>
+                      ) : (
+                        <Button size="sm" variant="outline" className="h-7 text-xs shrink-0" onClick={() => pakaiReward(r.id)} data-testid={`pakai-reward-${r.id}`}>Tandai Terpakai</Button>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
             <div>
               <div className="flex items-center justify-between mb-2">
                 <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">
@@ -378,9 +434,15 @@ export default function DataTamu() {
                 <Input data-testid="guest-form-ktp" value={guestForm.no_identitas} onChange={(e) => setGuestForm((f) => ({ ...f, no_identitas: e.target.value }))} className="mt-1.5" />
               </div>
             </div>
-            <div>
-              <Label>Kendaraan</Label>
-              <Input data-testid="guest-form-kendaraan" value={guestForm.kendaraan} onChange={(e) => setGuestForm((f) => ({ ...f, kendaraan: e.target.value }))} placeholder="Plat nomor (opsional)" className="mt-1.5" />
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <Label>Kendaraan</Label>
+                <Input data-testid="guest-form-kendaraan" value={guestForm.kendaraan} onChange={(e) => setGuestForm((f) => ({ ...f, kendaraan: e.target.value }))} placeholder="Plat nomor (opsional)" className="mt-1.5" />
+              </div>
+              <div>
+                <Label>Tanggal Lahir</Label>
+                <Input type="date" data-testid="guest-form-tanggal-lahir" value={guestForm.tanggal_lahir} onChange={(e) => setGuestForm((f) => ({ ...f, tanggal_lahir: e.target.value }))} className="mt-1.5" />
+              </div>
             </div>
             {!editingGuest && <p className="text-xs text-slate-500">Isi minimal salah satu: No HP atau No KTP.</p>}
           </div>

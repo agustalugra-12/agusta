@@ -360,6 +360,63 @@ def terapkan_diskon_member(subtotal: int, diskon_persen: int) -> Dict[str, int]:
     return {"subtotal": subtotal - diskon_rp, "diskon_rp": diskon_rp}
 
 
+def is_ulang_tahun_hari_ini(tanggal_lahir: Optional[str], hari_ini: Optional[str] = None) -> bool:
+    """Cocokkan bulan+tanggal saja (tahun lahir tidak relevan buat notif ulang tahun
+    tahunan) - `tanggal_lahir`/`hari_ini` format "YYYY-MM-DD". Dipakai Dashboard utama
+    (notif + tombol kirim pesan manual, Member Intelligence 2026-07-31) & AI Daily
+    Assistant."""
+    if not tanggal_lahir or len(tanggal_lahir) < 10:
+        return False
+    hari_ini = hari_ini or now_iso()
+    return tanggal_lahir[5:10] == hari_ini[5:10]
+
+
+def hitung_crm_score(total_kunjungan: int, last_visit: Optional[str], total_transaksi: int,
+                     avg_transaksi_property: float, hari_ini: Optional[str] = None) -> Dict[str, Any]:
+    """CRM/VIP Score (0-100) - Member Intelligence Center, 2026-07-31. Rumus DIUSULKAN,
+    murni dari data histori yang sudah ada (bukan prediksi) - kombinasi 3 komponen,
+    tiap komponen dibatasi (capped) supaya tidak ada 1 faktor yang mendominasi:
+      - Frekuensi (maks 40): total_kunjungan / 10 (siklus loyalitas yg sudah ada),
+        dibatasi di 1.0 -> 40 poin penuh begitu sudah 10x kunjungan seumur hidup.
+      - Kebaruan/recency (maks 30): kapan terakhir datang - <=30 hari lalu = 30 poin
+        penuh, <=90 hari = 15 poin, >90 hari (ambang "Jarang Datang" yg sudah dipakai
+        di badge loyalitas) = 0.
+      - Nilai belanja/monetary (maks 30): total_transaksi tamu ini dibanding RATA-RATA
+        total_transaksi semua tamu di properti yang sama (bukan angka absolut, supaya
+        adil antara Pelangi & Harmoni yang beda skala harga) - 2x rata-rata ke atas =
+        30 poin penuh.
+    Bobot ini usulan awal, TUNGGU konfirmasi Agus kalau mau diubah - jangan dianggap
+    final/mengikat sampai dikonfirmasi."""
+    hari_ini = hari_ini or now_iso()
+    frekuensi_poin = min((total_kunjungan or 0) / 10, 1.0) * 40
+
+    recency_poin = 0
+    if last_visit:
+        try:
+            hari_sejak = (datetime.fromisoformat(hari_ini.replace("Z", "+00:00")) - datetime.fromisoformat(last_visit.replace("Z", "+00:00"))).days
+            if hari_sejak <= 30:
+                recency_poin = 30
+            elif hari_sejak <= 90:
+                recency_poin = 15
+        except Exception:
+            pass
+
+    monetary_poin = 0
+    if avg_transaksi_property > 0:
+        monetary_poin = min((total_transaksi or 0) / avg_transaksi_property / 2, 1.0) * 30
+
+    skor = round(frekuensi_poin + recency_poin + monetary_poin)
+    if skor >= 80:
+        label = "VIP Utama"
+    elif skor >= 50:
+        label = "Loyal"
+    elif skor >= 20:
+        label = "Reguler"
+    else:
+        label = "Baru/Jarang"
+    return {"skor": skor, "label": label}
+
+
 async def upsert_guest(nama: str, no_hp: str, no_identitas: str, kendaraan: str, property_id: str,
                         count_kunjungan: bool = True, room_nomor: str = "") -> str:
     """Catat/perbarui 1 data tamu di `db.guests` — dipanggil dari SEMUA jalur yang menghasilkan
@@ -646,12 +703,17 @@ class GuestCreate(BaseModel):
     no_hp: str = ""
     no_identitas: str = ""
     kendaraan: str = ""
+    tanggal_lahir: str = ""  # YYYY-MM-DD, opsional - dipakai utk notif ulang tahun (Member Intelligence)
 
 class GuestUpdate(BaseModel):
     nama: Optional[str] = None
     no_hp: Optional[str] = None
     no_identitas: Optional[str] = None
     kendaraan: Optional[str] = None
+    tanggal_lahir: Optional[str] = None
+
+class RewardPakaiIn(BaseModel):
+    catatan: str = ""
 
 class KunjunganManualIn(BaseModel):
     """2026-07-24, permintaan user - migrasi riwayat kartu member kertas lama supaya tamu
