@@ -30,6 +30,10 @@ mongo_url = os.environ['MONGO_URL']
 client = AsyncIOMotorClient(mongo_url)
 db = client[os.environ['DB_NAME']]
 
+# Dipakai email_service.py (2026-07-31, Fonnte) - link publik ke voucher PDF supaya bisa
+# dikirim sbg TEKS lewat channel yang tidak support attachment (paket Fonnte Agus).
+PUBLIC_API_BASE_URL = os.environ.get("PUBLIC_API_BASE_URL", "https://api.pelangihomestay.com")
+
 JWT_ALGO = "HS256"
 # Wajib diisi lewat env var, TANPA fallback (2026-07-27, audit keamanan) - default lama
 # "change-me" bikin server tetap nyala pakai kunci JWT yang bisa ditebak siapa saja kalau

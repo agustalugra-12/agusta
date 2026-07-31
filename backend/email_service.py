@@ -16,7 +16,7 @@ from reportlab.lib.utils import ImageReader
 from reportlab.pdfgen import canvas
 
 from core import (
-    db, os, uuid, now_iso, parse_iso, timezone, timedelta, ROOT_DIR,
+    db, os, uuid, now_iso, parse_iso, timezone, timedelta, ROOT_DIR, PUBLIC_API_BASE_URL,
     BREVO_API_KEY, BREVO_FROM_EMAIL, BREVO_FROM_NAME, status_bayar_booking,
 )
 
@@ -298,9 +298,14 @@ async def kirim_voucher_wa(b: dict, pdf_bytes: bytes) -> dict:
     else:
         from routes.pesan_whatsapp import _kirim_dokumen_via_provider
         branding = await get_property_branding(b.get("property_id"))
+        # url (2026-07-31, Fonnte) - endpoint publik voucher.pdf (routes/public.py) yang
+        # sama dipakai sbg link teks kalau channel tamu tidak support attachment (paket
+        # Fonnte Agus) - lihat _send_wa_document_smart di ai-chat-bot.
+        voucher_url = f"{PUBLIC_API_BASE_URL}/api/public/bookings/{b['id']}/voucher.pdf"
         ok, err = await _kirim_dokumen_via_provider(
             b["no_hp"], f"voucher-{b['kode']}.pdf", "application/pdf",
             base64.b64encode(pdf_bytes).decode(), _voucher_wa_caption(b, branding),
+            url=voucher_url,
         )
         if ok:
             log_entry["status"] = "Terkirim"

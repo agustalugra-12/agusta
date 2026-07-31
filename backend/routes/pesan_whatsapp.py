@@ -75,12 +75,18 @@ async def _kirim_via_provider(no_hp: str, pesan: str, template_name: Optional[st
         return False, f"Gagal menghubungi provider: {e}"
 
 
-async def _kirim_dokumen_via_provider(no_hp: str, filename: str, mimetype: str, data_base64: str, caption: str = "") -> tuple[bool, Optional[str]]:
+async def _kirim_dokumen_via_provider(no_hp: str, filename: str, mimetype: str, data_base64: str, caption: str = "",
+                                       url: str = "") -> tuple[bool, Optional[str]]:
     """Kirim FILE (PDF slip gaji, voucher, dst) lewat provider yang sama dengan
     _kirim_via_provider - dipakai routes/payroll.py & email_service.py. Endpoint dokumen
     diturunkan dari `webhook_url` yang sudah dikonfigurasi (ganti segmen path terakhir
     "send-message" -> "send-document") supaya tidak perlu field konfigurasi terpisah -
-    kedua endpoint ada di server ai-chat-bot yang sama, kredensial `api_key` sama."""
+    kedua endpoint ada di server ai-chat-bot yang sama, kredensial `api_key` sama.
+
+    `url` (2026-07-31, opsional) - link publik ke dokumen yang sama, diteruskan apa
+    adanya ke relay ai-chat-bot supaya channel yang tidak support attachment (mis.
+    paket Fonnte Agus) bisa kirim link teks sbg gantinya - lihat email_service.py
+    kirim_voucher_wa utk contoh pengisiannya."""
     cfg = await db.webhook_config.find_one({})
     if not cfg or not cfg.get("aktif") or not cfg.get("webhook_url") or not cfg.get("api_key"):
         return False, "Webhook belum dikonfigurasi/aktif"
@@ -90,7 +96,8 @@ async def _kirim_dokumen_via_provider(no_hp: str, filename: str, mimetype: str, 
             resp = await http.post(
                 doc_url,
                 headers={"Authorization": f"Bearer {cfg['api_key']}"},
-                json={"to": no_hp, "filename": filename, "mimetype": mimetype, "data_base64": data_base64, "caption": caption},
+                json={"to": no_hp, "filename": filename, "mimetype": mimetype, "data_base64": data_base64,
+                      "caption": caption, "url": url},
             )
         if resp.status_code >= 400:
             return False, f"Provider merespons HTTP {resp.status_code}: {resp.text[:200]}"
