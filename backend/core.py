@@ -541,32 +541,24 @@ async def upsert_guest(nama: str, no_hp: str, no_identitas: str, kendaraan: str,
 
 
 async def push_sync_event(data_type: str, detail: str) -> None:
-    """Dorong notifikasi perubahan data Pelangi PMS ke bot WhatsApp (Sinkronisasi Data
-    PMS) — best-effort, tidak boleh menggagalkan aksi utama (booking/checkin/dst) kalau
-    provider bot sedang bermasalah. Satu kali retry otomatis; kegagalan dicatat ke
-    `wa_connection_log` supaya bisa dipantau di halaman Sinkronisasi Data PMS.
-    """
-    cfg = await db.webhook_config.find_one({})
-    if not cfg or not cfg.get("aktif") or not cfg.get("webhook_url") or not cfg.get("api_key"):
-        return
-    import httpx
-    payload = {"event": "pms_data_sync", "data_type": data_type, "detail": detail, "waktu": now_iso()}
-    for attempt in range(2):  # 1x percobaan awal + 1x retry
-        try:
-            async with httpx.AsyncClient(timeout=8) as http:
-                resp = await http.post(cfg["webhook_url"], headers={"Authorization": f"Bearer {cfg['api_key']}"}, json=payload)
-            if resp.status_code < 400:
-                await db.sync_data_pms_log.insert_one({
-                    "id": str(uuid.uuid4()), "data_type": data_type, "detail": detail,
-                    "ok": True, "waktu": now_iso(),
-                })
-                return
-        except Exception:
-            pass
+    """Catat perubahan data Pelangi PMS ke log Sinkronisasi Data PMS (`sync_data_pms_log`)
+    - best-effort, tidak boleh menggagalkan aksi utama (booking/checkin/dst).
+
+    Bug nyata ditemukan & diperbaiki 2026-07-31 (lewat laporan Agus soal AI kirim info
+    payment berulang - investigasi ini bukan penyebabnya, tapi ditemukan sepanjang jalan):
+    fungsi ini SEBELUMNYA benar-benar mem-POST payload `{event, data_type, detail, waktu}`
+    ke `webhook_config.webhook_url` - URL YANG SAMA dipakai `_kirim_via_provider` (PMS) utk
+    kirim pesan ke TAMU lewat relay ai-chat-bot `/send-message`, yang skema bodinya WAJIB
+    `{to, message}`. Payload event-sync ini TIDAK PERNAH cocok dgn skema itu (tidak ada
+    field `to`/`message` sama sekali) - jadi SETIAP panggilan (setiap booking/checkin/ubah
+    harga) selalu gagal 422, 2x percobaan, tidak pernah sekali pun berhasil sejak awal (373
+    entri gagal di `sync_data_pms_log` sebelum fix ini). Tidak ada apa pun di sisi
+    ai-chat-bot yang pernah menangani event "pms_data_sync" - jadi mematikan pemanggilan
+    HTTP ini TIDAK mengubah perilaku nyata apa pun (tidak ada yang pernah benar-benar
+    tersambung), cuma menghentikan percobaan yang pasti gagal & noise log."""
     await db.sync_data_pms_log.insert_one({
-        "id": str(uuid.uuid4()), "data_type": data_type,
-        "detail": f"Gagal mendorong sinkron setelah 2 percobaan: {detail}",
-        "ok": False, "waktu": now_iso(),
+        "id": str(uuid.uuid4()), "data_type": data_type, "detail": detail,
+        "ok": True, "waktu": now_iso(),
     })
 
 def calc_tagihan(tarif_dasar: int, jam_checkin: datetime, jam_checkout: datetime, overtime_manual: Optional[int] = None):
