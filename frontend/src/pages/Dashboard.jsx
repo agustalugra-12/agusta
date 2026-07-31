@@ -163,10 +163,31 @@ export default function Dashboard() {
     try {
       if (quickForm.tipe === "day_use") {
         const jamIso = quickForm.jam_checkin ? new Date(quickForm.jam_checkin).toISOString() : undefined;
-        // (2026-07-31, keputusan bisnis Agus) - tarif dasar Day Use WAJIB lunas di depan
-        // saat check-in (bukan lagi ditunda sampai checkout) - jumlah dari quickEst.total
-        // (sudah termasuk service fee 3%), sama persis dgn perhitungan backend.
+        // (2026-07-31, keputusan bisnis Agus) - tarif dasar Day Use WAJIB lunas di depan.
+        // jumlah dari quickEst.total (sudah termasuk service fee 3%), sama persis dgn
+        // perhitungan backend.
         const totalPerKamar = quickEst.total;
+        // (2026-07-31, permintaan Agus: "buat day use seperti itu [Menginap] juga") -
+        // Day Use jg dipakai utk tamu yg datang langsung tapi mau booking TANGGAL LAIN.
+        // Kalau tanggal check-in yg dipilih BUKAN hari ini: jangan langsung /checkins
+        // (itu langsung menempati kamar SEKARANG) - buat sbg booking biasa (lunas
+        // dibayar), kamar baru ditempati nanti lewat "Check-in Tamu" pas tamu benar2
+        // datang (endpoint yg sama sudah menangani konversi booking Day Use -> checkins,
+        // lihat checkin_from_booking di routes/bookings.py).
+        const dayUseIsToday = quickForm.jam_checkin && quickForm.jam_checkin.slice(0, 10) === todayLocal();
+        if (!dayUseIsToday) {
+          const { data } = await api.post("/bookings", {
+            room_ids: roomIds, tipe: "day_use", nama_tamu: quickForm.nama_tamu, no_hp: quickForm.no_hp,
+            no_identitas: quickForm.no_identitas, kendaraan: quickForm.kendaraan,
+            jumlah_tamu: Number(quickForm.jumlah_tamu) || 1, catatan: quickForm.catatan,
+            jam_mulai: jamIso, tarif_override: harga,
+            pembayaran: [{ metode: quickForm.metode_bayar, jumlah: totalPerKamar }],
+          });
+          const bks = isGroup ? data.bookings : [data];
+          toast.success(isGroup ? `Day Use lunas untuk ${bks.length} kamar, dijadwalkan check-in ${quickForm.jam_checkin.slice(0, 10)}` : `Day Use lunas, dijadwalkan check-in ${quickForm.jam_checkin.slice(0, 10)}`);
+          setQuickBookRooms([]); cancelMultiSelect(); load();
+          return;
+        }
         const { data } = await api.post("/checkins", {
           room_ids: roomIds, nama_tamu: quickForm.nama_tamu, no_hp: quickForm.no_hp,
           no_identitas: quickForm.no_identitas, kendaraan: quickForm.kendaraan,
@@ -856,6 +877,9 @@ export default function Dashboard() {
               <div className="col-span-2">
                 <Label>Jam Check-In</Label>
                 <Input data-testid="q-jam" type="datetime-local" value={quickForm.jam_checkin} onChange={(e) => setQuickForm(f => ({ ...f, jam_checkin: e.target.value }))} />
+                {quickForm.jam_checkin && quickForm.jam_checkin.slice(0, 10) !== todayLocal() && (
+                  <p className="text-[10px] text-amber-600 mt-1">Tanggal lain (bukan hari ini) - kamar TIDAK langsung ditandai terisi, tamu di-check-in nanti pas benar-benar datang.</p>
+                )}
                 {slotWarnings.map((w) => (
                   <div key={w.room_nomor} data-testid={`q-slot-warning-${w.room_nomor}`} className="mt-2 flex items-start gap-2 text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-md p-2.5">
                     <AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" />

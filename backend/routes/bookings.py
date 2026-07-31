@@ -320,7 +320,12 @@ async def checkin_from_booking(bid: str, body: CheckinFromBookingBody = CheckinF
                            entity=r["nomor"])
         return {"ok": True, "booking_kode": b["kode"], "remaining": sisa}
 
-    # Buat checkin doc (day_use)
+    # Buat checkin doc (day_use) - (2026-07-31, keputusan bisnis Agus "bayar di depan
+    # semua", berlaku Day Use booking utk tanggal lain juga) - tarif_dasar/total/
+    # pembayaran WAJIB dibawa dari booking aslinya (yang sudah lunas dibayar saat
+    # dibuat), BUKAN direset ke 0/tarif kamar saat ini - kalau tidak, uang yang sudah
+    # dikumpulkan staf saat booking dibuat jadi seolah belum dibayar sama sekali di sini,
+    # dan checkout nanti akan salah minta bayar penuh lagi dari awal.
     trx_no = f"CI-{datetime.now().strftime('%Y%m%d%H%M%S')}-{uuid.uuid4().hex[:4].upper()}"
     ci_doc = {
         "id": str(uuid.uuid4()),
@@ -332,13 +337,14 @@ async def checkin_from_booking(bid: str, body: CheckinFromBookingBody = CheckinF
         "kendaraan": b.get("kendaraan", ""),
         "jumlah_tamu": b.get("jumlah_tamu", 1),
         "room_id": b["room_id"], "room_nomor": r["nomor"], "room_tipe": r["tipe"],
-        "tarif_dasar": int(r["tarif"]),
+        "tarif_dasar": int(b.get("subtotal") or r["tarif"]),
         "jam_checkin": now, "jam_checkout": None,
-        "durasi_jam": 0, "overtime_jam": 0, "biaya_tambahan": 0, "total": 0,
+        "durasi_jam": 0, "overtime_jam": 0, "biaya_tambahan": 0,
+        "subtotal": int(b.get("subtotal") or 0), "service_fee": int(b.get("service_fee") or 0), "total": total,
         "status": "aktif",
-        "catatan": f"Dari booking {b['kode']}. Sudah dibayar Rp{paid:,}/Rp{total:,}. Sisa Rp{sisa:,}".replace(",", "."),
+        "catatan": f"Dari booking {b['kode']}.".strip(),
         "foto_identitas_url": "",
-        "pembayaran": [],
+        "pembayaran": list(b.get("pembayaran") or []),
         "from_booking_id": b["id"], "from_booking_kode": b["kode"],
         "booking_paid": paid, "booking_remaining": sisa,
         "petugas_checkin": user["nama"], "petugas_checkin_id": user["id"],
