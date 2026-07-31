@@ -52,6 +52,7 @@ const calcCancelFeePolicy = (jamMulaiIso) => {
 const emptyQuickForm = (tarif) => ({
   tipe: "day_use", nama_tamu: "", no_hp: "", no_identitas: "", kendaraan: "", jumlah_tamu: 1,
   jam_checkin: nowLocalDateTime(), malam: 1, harga: tarif ?? 0, catatan: "",
+  metode_bayar: "tunai", // (2026-07-31) tarif dasar Day Use WAJIB lunas di depan, lihat submitQuickBook
 });
 
 export default function Dashboard() {
@@ -157,11 +158,16 @@ export default function Dashboard() {
     try {
       if (quickForm.tipe === "day_use") {
         const jamIso = quickForm.jam_checkin ? new Date(quickForm.jam_checkin).toISOString() : undefined;
+        // (2026-07-31, keputusan bisnis Agus) - tarif dasar Day Use WAJIB lunas di depan
+        // saat check-in (bukan lagi ditunda sampai checkout) - jumlah dari quickEst.total
+        // (sudah termasuk service fee 3%), sama persis dgn perhitungan backend.
+        const totalPerKamar = quickEst.total;
         const { data } = await api.post("/checkins", {
           room_ids: roomIds, nama_tamu: quickForm.nama_tamu, no_hp: quickForm.no_hp,
           no_identitas: quickForm.no_identitas, kendaraan: quickForm.kendaraan,
           jumlah_tamu: Number(quickForm.jumlah_tamu) || 1, catatan: quickForm.catatan,
           jam_checkin: jamIso, tarif_override: harga,
+          pembayaran: [{ metode: quickForm.metode_bayar, jumlah: totalPerKamar * roomIds.length }],
         });
         toast.success(isGroup ? `Check-in berhasil untuk ${data.checkins.length} kamar` : `Check-in berhasil • ${data.trx_no}`);
       } else {
@@ -833,14 +839,28 @@ export default function Dashboard() {
               <Input data-testid="q-harga" type="number" min="0" value={quickForm.harga} onChange={(e) => setQuickForm(f => ({ ...f, harga: e.target.value }))} />
             </div>
             <div className="col-span-2"><Label>Catatan</Label><Textarea value={quickForm.catatan} onChange={(e) => setQuickForm(f => ({ ...f, catatan: e.target.value }))} rows={2} /></div>
+            {quickForm.tipe === "day_use" && (
+              <div className="col-span-2">
+                <Label>Metode Bayar (tarif dasar, wajib lunas sekarang)</Label>
+                <select data-testid="q-metode-bayar" value={quickForm.metode_bayar} onChange={(e) => setQuickForm(f => ({ ...f, metode_bayar: e.target.value }))} className="w-full h-10 rounded-md border border-slate-300 px-3 bg-white mt-1.5">
+                  <option value="tunai">Tunai</option>
+                  <option value="qris">QRIS</option>
+                  <option value="transfer">Transfer</option>
+                  <option value="edc">EDC/Kartu</option>
+                </select>
+              </div>
+            )}
             <div data-testid="q-est-summary" className="col-span-2 rounded-lg bg-blue-50 border border-blue-200 p-3 text-sm space-y-1">
               <div className="flex justify-between"><span className="text-slate-600">Subtotal{quickForm.tipe === "menginap" ? ` (${quickEst.nights} malam)` : ""}{quickBookRooms.length > 1 ? " / kamar" : ""}</span><b>{fmtRp(quickEst.subtotal)}</b></div>
               <div className="flex justify-between"><span className="text-slate-600">Service Fee (3%){quickBookRooms.length > 1 ? " / kamar" : ""}</span><b>{fmtRp(quickEst.service_fee)}</b></div>
-              <div className="flex justify-between text-base pt-1 border-t border-blue-200 mt-1"><span className="font-bold">Estimasi Total{quickBookRooms.length > 1 ? " / kamar" : ""}</span><b className="text-blue-700">{fmtRp(quickEst.total)}</b></div>
+              <div className="flex justify-between text-base pt-1 border-t border-blue-200 mt-1">
+                <span className="font-bold">{quickForm.tipe === "day_use" ? "Dibayar Sekarang" : "Estimasi Total"}{quickBookRooms.length > 1 ? " / kamar" : ""}</span>
+                <b className="text-blue-700">{fmtRp(quickEst.total)}</b>
+              </div>
               {quickBookRooms.length > 1 && (
                 <div className="flex justify-between text-base pt-1 border-t border-blue-300 mt-1"><span className="font-bold">Total {quickBookRooms.length} Kamar</span><b className="text-blue-800">{fmtRp(quickEst.total * quickBookRooms.length)}</b></div>
               )}
-              {quickForm.tipe === "day_use" && <p className="text-[10px] text-slate-500">*Belum termasuk overtime setelah 6 jam.</p>}
+              {quickForm.tipe === "day_use" && <p className="text-[10px] text-slate-500">*Tarif dasar 6 jam ini lunas sekarang. Kalau tamu extend/overtime, ditagih terpisah saat checkout.</p>}
             </div>
           </div>
           <DialogFooter>

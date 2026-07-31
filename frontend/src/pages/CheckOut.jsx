@@ -52,7 +52,9 @@ export default function CheckOut() {
   const load = async () => {
     const { data } = await api.get(`/checkins/${checkinId}`);
     setCi(data);
-    if (data.preview) setPays([{ metode: "tunai", jumlah: data.preview.total }]);
+    // (2026-07-31) tarif dasar sudah lunas saat check-in - default pembayaran checkout
+    // cuma sisa/overtime-nya (sisa_dibayar dari backend), BUKAN total tagihan penuh lagi.
+    if (data.preview) setPays([{ metode: "tunai", jumlah: data.preview.sisa_dibayar }]);
   };
   useEffect(() => { load(); }, [checkinId]);
 
@@ -72,16 +74,21 @@ export default function CheckOut() {
     return { durasi_jam: hours.toFixed(2), overtime_jam: ot, biaya_tambahan: biaya, subtotal, service_fee: serviceFee, total: subtotal + serviceFee };
   })();
   const total = localCalc ? localCalc.total : (preview?.total || 0);
+  // (2026-07-31) tarif dasar SUDAH lunas dibayar saat check-in (ci.pembayaran) - yang
+  // perlu ditagih SEKARANG cuma selisihnya (biasanya = biaya extend/overtime, Rp0 kalau
+  // tidak ada overtime sama sekali).
+  const sudahDibayarSaatCheckin = (ci?.pembayaran || []).reduce((a, p) => a + (Number(p.jumlah) || 0), 0);
+  const sisaDitagih = Math.max(0, total - sudahDibayarSaatCheckin);
 
-  // Sync default payment amount when total recalculated and user has the default single 'tunai' row at 0
+  // Sync default payment amount when sisa recalculated and user has the default single 'tunai' row at 0
   useEffect(() => {
     if (pays.length === 1 && pays[0].metode === "tunai" && (pays[0].jumlah === 0 || pays[0].jumlah === "0")) {
-      setPays([{ metode: "tunai", jumlah: total }]);
+      setPays([{ metode: "tunai", jumlah: sisaDitagih }]);
     }
-  }, [total, pays]);
+  }, [sisaDitagih, pays]);
 
   const totalPay = pays.reduce((a, p) => a + (Number(p.jumlah) || 0), 0);
-  const kurang = total - totalPay;
+  const kurang = sisaDitagih - totalPay;
 
   const submit = async () => {
     if (kurang > 0) { toast.error(`Pembayaran kurang ${fmtRp(kurang)}`); return; }
@@ -174,15 +181,22 @@ export default function CheckOut() {
               <p className="text-xs text-amber-600 mt-1">Override aktif — tulis alasannya di kolom Catatan di bawah (tersimpan di struk &amp; riwayat, penting kalau tamu komplain soal tagihan nanti).</p>
             )}
           </div>
+          <div className="rounded-xl bg-slate-100 border border-slate-200 p-4 text-sm space-y-1">
+            <div className="flex justify-between"><span className="text-slate-600">Total Tagihan (tarif dasar + overtime)</span><b>{fmtRp(total)}</b></div>
+            <div className="flex justify-between text-emerald-700"><span>Sudah dibayar saat Check-In</span><b>-{fmtRp(sudahDibayarSaatCheckin)}</b></div>
+          </div>
           <div className="rounded-xl bg-blue-700 text-white p-5 flex items-center justify-between">
             <div>
-              <div className="text-xs uppercase tracking-wider opacity-80">Total Tagihan</div>
-              <div className="text-3xl font-extrabold">{fmtRp(total)}</div>
+              <div className="text-xs uppercase tracking-wider opacity-80">
+                {sisaDitagih > 0 ? "Sisa Dibayar Sekarang (Extend/Overtime)" : "Sisa Dibayar Sekarang"}
+              </div>
+              <div className="text-3xl font-extrabold">{fmtRp(sisaDitagih)}</div>
+              {sisaDitagih === 0 && <div className="text-xs opacity-80 mt-1">Tidak ada overtime — tamu bisa langsung checkout tanpa bayar lagi.</div>}
             </div>
           </div>
 
           <div>
-            <Label>Metode Pembayaran (split payment didukung)</Label>
+            <Label>Metode Pembayaran (split payment didukung){sisaDitagih === 0 ? " — opsional, tidak ada tagihan" : ""}</Label>
             <div className="space-y-2 mt-2">
               {pays.map((p, idx) => (
                 <div key={idx} className="grid grid-cols-[1fr_1fr_auto] gap-2">
@@ -200,7 +214,7 @@ export default function CheckOut() {
               <Button data-testid="add-payment" variant="outline" type="button" onClick={() => setPays(ps => [...ps, { metode: "transfer", jumlah: 0 }])}>+ Tambah Metode</Button>
             </div>
             <div className="mt-3 text-sm">
-              Total Bayar: <span className="font-bold">{fmtRp(totalPay)}</span> {" • "}
+              Dibayar Sekarang: <span className="font-bold">{fmtRp(totalPay)}</span> {" • "}
               {kurang > 0 ? <span className="text-red-600 font-semibold">Kurang {fmtRp(kurang)}</span> : <span className="text-emerald-700 font-semibold">Lunas {kurang < 0 ? `(Kembalian ${fmtRp(-kurang)})` : ""}</span>}
             </div>
           </div>

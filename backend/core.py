@@ -672,6 +672,10 @@ class CheckinCreate(BaseModel):
     foto_identitas_url: Optional[str] = ""
     jam_checkin: Optional[str] = None  # ISO datetime; default = now
     tarif_override: Optional[int] = None  # staf boleh set harga custom, beda dari tarif dasar kamar
+    # (2026-07-31, keputusan bisnis Agus: "semua payment di lakukan di depan kecuali
+    # extend/overtime") - tarif dasar (6 jam) WAJIB dibayar lunas saat check-in, sama pola
+    # shape dgn CheckoutIn.pembayaran [{"metode":"tunai","jumlah":100000}].
+    pembayaran: List[Dict[str, Any]] = []
 
 class CheckoutIn(BaseModel):
     pembayaran: List[Dict[str, Any]] = []  # [{"metode":"tunai","jumlah":100000}]
