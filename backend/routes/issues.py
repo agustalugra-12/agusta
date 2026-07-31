@@ -15,7 +15,7 @@ ISSUE_PRIORITAS = {"rendah", "normal", "tinggi"}
 
 async def buat_issue(tipe: str, deskripsi: str, user: dict, property_id: str, room_id: Optional[str] = None,
                      room_nomor: str = "", nama_tamu: str = "", prioritas: str = "normal",
-                     teknisi: str = "", estimasi_selesai: Optional[str] = None) -> Dict[str, Any]:
+                     teknisi: str = "", estimasi_selesai: Optional[str] = None, no_hp: str = "") -> Dict[str, Any]:
     """Logika insert bersama — dipakai endpoint POST /issues (staf manual) DAN klasifikasi
     otomatis AI WhatsApp (routes/pesan_whatsapp.py) supaya audit log & push notif konsisten
     dari kedua jalur, tidak ada logika ganda yang bisa saling menyimpang."""
@@ -40,6 +40,7 @@ async def buat_issue(tipe: str, deskripsi: str, user: dict, property_id: str, ro
         "status": "open",
         "catatan_penyelesaian": "",
         "nama_tamu": (nama_tamu or "").strip(),
+        "no_hp": (no_hp or "").strip(),
         "prioritas": prioritas,
         "teknisi": (teknisi or "").strip(),
         "estimasi_selesai": estimasi_selesai,

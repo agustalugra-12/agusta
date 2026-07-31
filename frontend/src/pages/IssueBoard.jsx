@@ -164,7 +164,12 @@ export default function IssueBoard({ tipe, title, subtitle }) {
                   <span className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded-full ${STATUS_CLS[it.status]}`}>{STATUS_LABEL[it.status]}</span>
                 </div>
               </div>
-              {(tipe === "complaint" || tipe === "service_request") && it.nama_tamu && <div className="text-xs text-slate-500">Tamu: <b>{it.nama_tamu}</b></div>}
+              {(tipe === "complaint" || tipe === "service_request") && it.nama_tamu && (
+                <div className="text-xs text-slate-500">
+                  Tamu: <b>{it.nama_tamu}</b>
+                  {it.no_hp && <> — <a href={`https://wa.me/${it.no_hp}`} target="_blank" rel="noreferrer" className="text-emerald-600 hover:underline">{it.no_hp}</a></>}
+                </div>
+              )}
               <p className="text-sm text-slate-700">{it.deskripsi}</p>
               {tipe === "maintenance" && (it.teknisi || it.estimasi_selesai) && (
                 <div className="text-xs text-slate-500 space-y-0.5">
