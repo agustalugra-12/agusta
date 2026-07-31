@@ -14,15 +14,24 @@ export default function Rooms() {
   const isOwner = user?.role === "owner";
   const [rooms, setRooms] = useState([]);
   const [edit, setEdit] = useState(null);
-  const [form, setForm] = useState({ nomor: "", tipe: "Standard", tarif: 120000, tarif_menginap: 150000 });
+  const [form, setForm] = useState({ nomor: "", tipe: "Standard", tarif: 100000, tarif_menginap: 150000 });
+  // BREAKFAST_PRICE (core.py) - dipakai HANYA utk pratinjau "dengan sarapan" di form/tabel
+  // (dihitung, bukan field tersimpan sendiri - lihat status_bayar_booking/generate_voucher_pdf
+  // yg menghitungnya sama persis saat booking sungguhan dibuat). Diambil dari endpoint publik
+  // /public/pricing-config (sudah ada, dipakai PublicBook.jsx) supaya tidak dobel-hardcode
+  // angka yang bisa beda sendiri dari core.py kalau constant-nya diubah.
+  const [breakfastPrice, setBreakfastPrice] = useState(25000);
   const [foto, setFoto] = useState({ foto_urls: [], foto_utama: "" });
   const [uploading, setUploading] = useState(false);
   const fileInputRef = useRef(null);
 
   const load = async () => { const { data } = await api.get("/rooms"); setRooms(data); };
   useEffect(() => { load(); }, []);
+  useEffect(() => {
+    api.get("/public/pricing-config").then(({ data }) => setBreakfastPrice(data.breakfast_price)).catch(() => {});
+  }, []);
 
-  const openNew = () => { setForm({ nomor: "", tipe: "Standard", tarif: 120000, tarif_menginap: 150000 }); setFoto({ foto_urls: [], foto_utama: "" }); setEdit("new"); };
+  const openNew = () => { setForm({ nomor: "", tipe: "Standard", tarif: 100000, tarif_menginap: 150000 }); setFoto({ foto_urls: [], foto_utama: "" }); setEdit("new"); };
   const openEdit = (r) => { setForm({ nomor: r.nomor, tipe: r.tipe, tarif: r.tarif, tarif_menginap: r.tarif_menginap }); setFoto({ foto_urls: r.foto_urls || [], foto_utama: r.foto_utama || "" }); setEdit(r); };
 
   const save = async () => {
@@ -85,7 +94,8 @@ export default function Rooms() {
                 <th className="text-left p-3">Nomor</th>
                 <th className="text-left p-3">Tipe</th>
                 <th className="text-left p-3">Tarif Day Use</th>
-                <th className="text-left p-3">Tarif Menginap</th>
+                <th className="text-left p-3">Tarif Menginap (tanpa sarapan)</th>
+                <th className="text-left p-3">Tarif Menginap (dengan sarapan)</th>
                 <th className="text-left p-3">Status</th>
                 {isOwner && <th className="text-right p-3">Aksi</th>}
               </tr>
@@ -97,6 +107,7 @@ export default function Rooms() {
                   <td className="p-3">{r.tipe}</td>
                   <td className="p-3">{fmtRp(r.tarif)}</td>
                   <td className="p-3">{fmtRp(r.tarif_menginap)}</td>
+                  <td className="p-3 text-slate-500">{fmtRp(r.tarif_menginap + breakfastPrice)}</td>
                   <td className="p-3">
                     <span className="inline-flex items-center gap-1.5 px-2 py-1 rounded-md text-xs font-medium" style={{ background: statusColor(r.status) + "22", color: statusColor(r.status) }}>
                       <span className="w-2 h-2 rounded-full" style={{ background: statusColor(r.status) }} />
@@ -123,13 +134,16 @@ export default function Rooms() {
             <div><Label>Nomor</Label><Input data-testid="room-nomor" value={form.nomor} onChange={(e) => setForm(f => ({ ...f, nomor: e.target.value }))} /></div>
             <div>
               <Label>Tipe</Label>
-              <select data-testid="room-tipe" value={form.tipe} onChange={(e) => setForm(f => ({ ...f, tipe: e.target.value, tarif: e.target.value === "Cottage" ? 140000 : 120000, tarif_menginap: e.target.value === "Cottage" ? 200000 : 150000 }))} className="w-full h-10 rounded-md border border-slate-300 px-3 bg-white">
+              <select data-testid="room-tipe" value={form.tipe} onChange={(e) => setForm(f => ({ ...f, tipe: e.target.value, tarif: e.target.value === "Cottage" ? 120000 : 100000, tarif_menginap: e.target.value === "Cottage" ? 200000 : 150000 }))} className="w-full h-10 rounded-md border border-slate-300 px-3 bg-white">
                 <option value="Standard">Standard</option>
                 <option value="Cottage">Cottage</option>
               </select>
             </div>
             <div><Label>Tarif Day Use (per 6 jam)</Label><Input data-testid="room-tarif" type="number" value={form.tarif} onChange={(e) => setForm(f => ({ ...f, tarif: e.target.value }))} /></div>
             <div><Label>Tarif Menginap (per malam, tanpa sarapan)</Label><Input data-testid="room-tarif-menginap" type="number" value={form.tarif_menginap} onChange={(e) => setForm(f => ({ ...f, tarif_menginap: e.target.value }))} /></div>
+            <p className="text-xs text-slate-500" data-testid="room-tarif-dengan-sarapan-preview">
+              Tarif Menginap dengan sarapan (otomatis, +{fmtRp(breakfastPrice)}/malam): <b>{fmtRp(Number(form.tarif_menginap || 0) + breakfastPrice)}</b>
+            </p>
 
             {edit !== "new" && (
               <div>
