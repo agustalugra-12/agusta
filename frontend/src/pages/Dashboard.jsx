@@ -52,7 +52,12 @@ const calcCancelFeePolicy = (jamMulaiIso) => {
 const emptyQuickForm = (tarif) => ({
   tipe: "day_use", nama_tamu: "", no_hp: "", no_identitas: "", kendaraan: "", jumlah_tamu: 1,
   jam_checkin: nowLocalDateTime(), malam: 1, harga: tarif ?? 0, catatan: "",
-  metode_bayar: "tunai", // (2026-07-31) tarif dasar Day Use WAJIB lunas di depan, lihat submitQuickBook
+  metode_bayar: "tunai", // (2026-07-31) tarif dasar WAJIB lunas di depan, lihat submitQuickBook
+  // (2026-07-31, permintaan Agus) - Quick Book juga dipakai utk tamu yang datang LANGSUNG
+  // ke lokasi tapi mau booking utk TANGGAL LAIN (bukan cuma "sekarang") - tanggal_mulai
+  // dipakai khusus Menginap (Day Use sudah punya jam_checkin sendiri yang bisa dimundurkan
+  // ke tanggal lain juga). Default hari ini.
+  tanggal_mulai: todayLocal(),
 });
 
 export default function Dashboard() {
@@ -171,21 +176,48 @@ export default function Dashboard() {
         });
         toast.success(isGroup ? `Check-in berhasil untuk ${data.checkins.length} kamar` : `Check-in berhasil • ${data.trx_no}`);
       } else {
+        // (2026-07-31, keputusan bisnis Agus: "iya bayar di depan semua") - walk-in
+        // Menginap via Quick Book sekarang WAJIB lunas + check-in beneran di tempat,
+        // sama seperti Day Use. Sebelumnya cuma PUT status kamar manual - TIDAK PERNAH
+        // lewat /bookings/{id}/checkin, jadi upsert_guest(count_kunjungan=True) &
+        // total_transaksi tidak pernah kepanggil - tamu walk-in Menginap via jalur ini
+        // kedatangannya tidak pernah kehitung sama sekali (bug nyata, ditemukan 2026-07-31).
+        const isToday = quickForm.tanggal_mulai === todayLocal();
+        if (isToday && !quickForm.no_hp.trim()) { toast.error("Nomor HP wajib diisi untuk check-in Menginap"); return; }
         const nights = Math.max(1, Number(quickForm.malam) || 1);
-        const start = new Date();
+        // Jam mulai 12:00 lokal (WITA/WIB, sama pola dgn PublicBook.jsx) kalau tanggal
+        // lain (bukan sekarang juga) - kalau hari ini, pakai jam sekarang beneran.
+        const start = isToday ? new Date() : new Date(`${quickForm.tanggal_mulai}T12:00:00`);
         const end = new Date(start);
         end.setDate(end.getDate() + nights);
+        // pembayaran dikirim SEKALIAN saat bikin booking (bukan panggilan mark-paid-manual
+        // terpisah - endpoint itu khusus alur booking_pending, Quick Book selalu mulai
+        // "aktif", lihat catatan di create_booking/routes/bookings.py). Jumlah dari
+        // quickEst.total (belum tentu final persis kalau ada diskon member - sama
+        // keterbatasan yg sudah diterima di jalur Day Use, staf sesuaikan fisik kalau beda).
+        const totalPerKamarMenginap = quickEst.total;
         const { data } = await api.post("/bookings", {
           room_ids: roomIds, tipe: "menginap", nama_tamu: quickForm.nama_tamu, no_hp: quickForm.no_hp,
           no_identitas: quickForm.no_identitas, kendaraan: quickForm.kendaraan,
           jumlah_tamu: Number(quickForm.jumlah_tamu) || 1, catatan: quickForm.catatan,
           jam_mulai: start.toISOString(), jam_selesai: end.toISOString(), tarif_override: harga,
+          pembayaran: [{ metode: quickForm.metode_bayar, jumlah: totalPerKamarMenginap }],
         });
         const bks = isGroup ? data.bookings : [data];
-        await Promise.all(bks.map((bk) => api.put(`/rooms/${bk.room_id}/status`, {
-          status: "menginap", nama_tamu: quickForm.nama_tamu, catatan: quickForm.catatan,
-        })));
-        toast.success(isGroup ? `Booking menginap dibuat untuk ${bks.length} kamar, semua ditandai terisi` : "Booking menginap dibuat, kamar ditandai terisi");
+        // Lunas sudah tercatat sekalian saat create (di atas) - check-in SUNGGUHAN (kamar
+        // jadi terisi, kedatangan kehitung) HANYA kalau tamu benar2 datang hari ini.
+        // Booking utk tanggal lain tetap "aktif"+lunas, di-check-in nanti lewat tombol
+        // "Check-in Tamu" saat tamu tiba (sudah ada di dialog detail booking).
+        if (isToday) {
+          for (const bk of bks) {
+            await api.post(`/bookings/${bk.id}/checkin`, { no_hp: quickForm.no_hp });
+          }
+        }
+        toast.success(
+          isToday
+            ? (isGroup ? `Menginap lunas + check-in untuk ${bks.length} kamar` : "Menginap lunas, tamu sudah check-in")
+            : (isGroup ? `Menginap lunas untuk ${bks.length} kamar, dijadwalkan check-in ${quickForm.tanggal_mulai}` : `Menginap lunas, dijadwalkan check-in ${quickForm.tanggal_mulai}`)
+        );
       }
       setQuickBookRooms([]); cancelMultiSelect(); load();
     } catch (e) { toast.error(e?.response?.data?.detail || "Gagal"); }
@@ -832,41 +864,52 @@ export default function Dashboard() {
                 ))}
               </div>
             ) : (
-              <div className="col-span-2"><Label>Jumlah Malam</Label><Input data-testid="q-malam" type="number" min="1" value={quickForm.malam} onChange={(e) => setQuickForm(f => ({ ...f, malam: e.target.value }))} /></div>
+              <>
+                <div>
+                  <Label>Tanggal Check-In</Label>
+                  <Input data-testid="q-tanggal-mulai" type="date" min={todayLocal()} value={quickForm.tanggal_mulai} onChange={(e) => setQuickForm(f => ({ ...f, tanggal_mulai: e.target.value }))} />
+                  {quickForm.tanggal_mulai !== todayLocal() && (
+                    <p className="text-[10px] text-amber-600 mt-1">Tanggal lain (bukan hari ini) - kamar TIDAK langsung ditandai terisi, tamu di-check-in nanti pas benar-benar datang.</p>
+                  )}
+                </div>
+                <div><Label>Jumlah Malam</Label><Input data-testid="q-malam" type="number" min="1" value={quickForm.malam} onChange={(e) => setQuickForm(f => ({ ...f, malam: e.target.value }))} /></div>
+              </>
             )}
             <div className="col-span-2">
               <Label>{quickForm.tipe === "day_use" ? "Harga (per 6 jam)" : "Harga per Malam"}{quickBookRooms.length > 1 ? " — per kamar" : ""}</Label>
               <Input data-testid="q-harga" type="number" min="0" value={quickForm.harga} onChange={(e) => setQuickForm(f => ({ ...f, harga: e.target.value }))} />
             </div>
             <div className="col-span-2"><Label>Catatan</Label><Textarea value={quickForm.catatan} onChange={(e) => setQuickForm(f => ({ ...f, catatan: e.target.value }))} rows={2} /></div>
-            {quickForm.tipe === "day_use" && (
-              <div className="col-span-2">
-                <Label>Metode Bayar (tarif dasar, wajib lunas sekarang)</Label>
-                <select data-testid="q-metode-bayar" value={quickForm.metode_bayar} onChange={(e) => setQuickForm(f => ({ ...f, metode_bayar: e.target.value }))} className="w-full h-10 rounded-md border border-slate-300 px-3 bg-white mt-1.5">
-                  <option value="tunai">Tunai</option>
-                  <option value="qris">QRIS</option>
-                  <option value="transfer">Transfer</option>
-                  <option value="edc">EDC/Kartu</option>
-                </select>
-              </div>
-            )}
+            {/* (2026-07-31, keputusan bisnis Agus "bayar di depan semua") - berlaku Day Use
+                MAUPUN Menginap walk-in via Quick Book sekarang, bukan cuma Day Use lagi. */}
+            <div className="col-span-2">
+              <Label>Metode Bayar (wajib lunas sekarang)</Label>
+              <select data-testid="q-metode-bayar" value={quickForm.metode_bayar} onChange={(e) => setQuickForm(f => ({ ...f, metode_bayar: e.target.value }))} className="w-full h-10 rounded-md border border-slate-300 px-3 bg-white mt-1.5">
+                <option value="tunai">Tunai</option>
+                <option value="qris">QRIS</option>
+                <option value="transfer">Transfer</option>
+                <option value="edc">EDC/Kartu</option>
+              </select>
+            </div>
             <div data-testid="q-est-summary" className="col-span-2 rounded-lg bg-blue-50 border border-blue-200 p-3 text-sm space-y-1">
               <div className="flex justify-between"><span className="text-slate-600">Subtotal{quickForm.tipe === "menginap" ? ` (${quickEst.nights} malam)` : ""}{quickBookRooms.length > 1 ? " / kamar" : ""}</span><b>{fmtRp(quickEst.subtotal)}</b></div>
               <div className="flex justify-between"><span className="text-slate-600">Service Fee (3%){quickBookRooms.length > 1 ? " / kamar" : ""}</span><b>{fmtRp(quickEst.service_fee)}</b></div>
               <div className="flex justify-between text-base pt-1 border-t border-blue-200 mt-1">
-                <span className="font-bold">{quickForm.tipe === "day_use" ? "Dibayar Sekarang" : "Estimasi Total"}{quickBookRooms.length > 1 ? " / kamar" : ""}</span>
+                <span className="font-bold">Dibayar Sekarang{quickBookRooms.length > 1 ? " / kamar" : ""}</span>
                 <b className="text-blue-700">{fmtRp(quickEst.total)}</b>
               </div>
               {quickBookRooms.length > 1 && (
                 <div className="flex justify-between text-base pt-1 border-t border-blue-300 mt-1"><span className="font-bold">Total {quickBookRooms.length} Kamar</span><b className="text-blue-800">{fmtRp(quickEst.total * quickBookRooms.length)}</b></div>
               )}
-              {quickForm.tipe === "day_use" && <p className="text-[10px] text-slate-500">*Tarif dasar 6 jam ini lunas sekarang. Kalau tamu extend/overtime, ditagih terpisah saat checkout.</p>}
+              {quickForm.tipe === "day_use"
+                ? <p className="text-[10px] text-slate-500">*Tarif dasar 6 jam ini lunas sekarang. Kalau tamu extend/overtime, ditagih terpisah saat checkout.</p>
+                : <p className="text-[10px] text-slate-500">*Lunas untuk {quickEst.nights} malam, dibayar sekarang saat check-in.</p>}
             </div>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setQuickBookRooms([])}>Batal</Button>
             <Button data-testid="q-submit" onClick={submitQuickBook} className="bg-blue-700 hover:bg-blue-800">
-              {quickForm.tipe === "day_use" ? "Konfirmasi Check-In" : "Buat Booking Menginap"}
+              {quickForm.tipe === "day_use" ? "Konfirmasi Check-In" : "Bayar & Check-In"}
             </Button>
           </DialogFooter>
         </DialogContent>

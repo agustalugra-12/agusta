@@ -83,6 +83,12 @@ async def create_booking(body: BookingCreate, user: dict = Depends(get_current_u
             diskon_rp = hasil_diskon["diskon_rp"]
 
             total = subtotal + service_fee
+            # (2026-07-31, keputusan bisnis Agus "bayar di depan semua") - kalau Quick Book
+            # kirim pembayaran sekalian saat bikin booking (Menginap walk-in), catat lunas
+            # LANGSUNG di sini - bukan lewat mark-paid-manual (endpoint itu khusus booking
+            # yang mulai dari status "booking_pending", Quick Book selalu mulai "aktif").
+            dibayar = sum(int(p.get("jumlah", 0)) for p in body.pembayaran)
+            sudah_lunas = dibayar >= total and total > 0
             doc = {
                 "id": str(uuid.uuid4()), "kode": kode,
                 "room_id": r["id"], "room_nomor": r["nomor"], "room_tipe": r["tipe"],
@@ -97,6 +103,12 @@ async def create_booking(body: BookingCreate, user: dict = Depends(get_current_u
                 "created_at": now_iso(), "created_by": user["nama"],
                 "property_id": property_id,
             }
+            if body.pembayaran:
+                doc["pembayaran"] = body.pembayaran
+                doc["amount_due"] = dibayar
+                if sudah_lunas:
+                    doc["payment_status"] = "paid"
+                    doc["paid_at"] = now_iso()
             if group_id:
                 doc["group_id"] = group_id
             await db.bookings.insert_one(doc)

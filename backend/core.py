@@ -771,6 +771,14 @@ class BookingCreate(BaseModel):
     catatan: str = ""
     tarif_override: Optional[int] = None  # staf boleh set harga custom per malam/per sesi, beda dari tarif dasar kamar
     dengan_sarapan: bool = False  # hanya berlaku tipe menginap, diabaikan kalau tarif_override diisi (staf sudah tentukan harga akhir sendiri)
+    # (2026-07-31, keputusan bisnis Agus "bayar di depan semua") - Quick Book (walk-in)
+    # sekarang WAJIB kumpulkan pembayaran lunas begitu booking dibuat, sama kayak Day Use
+    # di /checkins. Field ini opsional (bukan wajib diisi) supaya endpoint ini TETAP bisa
+    # dipakai jalur lama yang belum kirim pembayaran (mis. kalau ada integrasi lain yang
+    # masih perlu buat booking_pending dulu) - validasi WAJIB-nya ada di level frontend
+    # Quick Book (Dashboard.jsx), bukan di sini, supaya endpoint generik ini tidak
+    # menghalangi pemakaian lain yang sah tanpa pembayaran langsung.
+    pembayaran: List[Dict[str, Any]] = []
 
 class BookingUpdate(BaseModel):
     nama_tamu: Optional[str] = None
