@@ -59,6 +59,13 @@ export function statusLabel(s) {
     menginap: "Menginap",
     perlu_dibersihkan: "Perlu Dibersihkan",
     maintenance: "Maintenance",
+    // "checkout_terlambat" (2026-08-02, permintaan Agus - Dashboard.jsx) - beda dari status
+    // kamar mentah "menginap": kamar ini SUDAH lewat tanggal checkout booking-nya (aturan
+    // tanggal exclusive checkout, sama dgn _occupies_date backend), tapi staf belum proses
+    // checkout sungguhan. Ditampilkan beda (bukan "Menginap" biasa) supaya kalender/dashboard
+    // tidak menganggapnya menginap selamanya, TAPI tetap kelihatan (bukan "Kosong" begitu
+    // saja) supaya staf tidak lupa masih ada tamu yang perlu diproses checkout.
+    checkout_terlambat: "Checkout Tertunda",
   })[s] || s;
 }
 
@@ -69,6 +76,7 @@ export function statusColor(s) {
     menginap: "#3B82F6",
     perlu_dibersihkan: "#F97316",
     maintenance: "#EAB308",
+    checkout_terlambat: "#7C3AED",
   })[s] || "#94A3B8";
 }
 

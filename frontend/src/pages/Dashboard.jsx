@@ -889,7 +889,25 @@ export default function Dashboard() {
           <div data-testid="room-grid" className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 gap-3">
             {rooms.map((r) => {
               // Saat tanggal yang dilihat BUKAN hari ini, status realtime kamar (day_use/menginap/dll) tidak relevan → anggap kosong.
-              const effStatus = isToday ? r.status : "kosong";
+              // Bug nyata ditemukan 2026-08-02 (laporan Agus, dgn contoh screenshot persis):
+              // kamar Menginap yang SUDAH lewat tanggal checkout booking-nya (mis. checkin 1
+              // Agustus/checkout 2 Agustus) tetap tampil biru "Menginap" begitu tanggal
+              // kalender berganti ke 2 Agustus, PADAHAL per aturan tanggal exclusive-checkout
+              // yang SAMA dipakai Kalender Ketersediaan/Daftar Reservasi/Laporan (_occupies_date,
+              // backend), tamu itu SUDAH TIDAK dianggap menempati tanggal itu. Sebabnya:
+              // status "isToday" sebelumnya SELALU percaya r.status mentah (real-time),
+              // TIDAK PERNAH dicek ulang terhadap tanggal booking-nya sendiri - kalau staf
+              // belum sempat proses checkout sungguhan, kamar bisa kelihatan "Menginap" utk
+              // tamu yang sebenarnya sudah lewat tanggal checkout-nya, bahkan seterusnya.
+              // Fix: kalau r.status "menginap" TAPI tidak ada booking tipe menginap di kamar
+              // ini yang masih aktif per bookingsOnDate (aturan tanggal exclusive yang sama),
+              // tandai "checkout_terlambat" (beda warna/label dari "Menginap" biasa) - BUKAN
+              // "kosong" begitu saja, supaya staf tetap tahu masih ada tamu yang perlu
+              // diproses checkout-nya, bukan hilang tanpa jejak.
+              let effStatus = isToday ? r.status : "kosong";
+              if (isToday && effStatus === "menginap" && !bookingsOnDate.some(b => b.room_id === r.id && b.tipe === "menginap")) {
+                effStatus = "checkout_terlambat";
+              }
               // "kosong" ATAU "perlu_dibersihkan" (2026-08-01, bug nyata ditemukan Agus -
               // tamu terbooking "Radea" hilang dari dashboard) - kamar yang baru saja
               // ditinggal tamu lain (belum dibersihkan) TIDAK ADA tamu aktif di dalamnya,
