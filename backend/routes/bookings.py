@@ -574,7 +574,12 @@ async def booking_availability(room_id: str, from_date: str, days: int = 14,
         for b in bks:
             bs = datetime.fromisoformat(b["jam_mulai"])
             be = datetime.fromisoformat(b["jam_selesai"])
-            if bs < d_end and be > d_start:
+            # Bug nyata ditemukan 2026-08-02 (sama pola dgn GET /bookings?date= yang sudah
+            # diperbaiki - overlap TIMESTAMP mentah membuat hari CHECKOUT booking lain ikut
+            # dianggap konflik, padahal kamar sudah kosong lagi hari itu) - pakai _occupies_date
+            # yang sama persis dipakai Kalender Ketersediaan, supaya saran tanggal alternatif
+            # ini konsisten (tidak menyarankan tanggal yang SEBENARNYA sudah kosong sbg "penuh").
+            if _occupies_date(bs, be, d_start.date()):
                 conflict = b
                 break
         slots.append({

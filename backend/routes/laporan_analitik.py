@@ -1,4 +1,5 @@
 from core import *
+from routes.ketersediaan import _occupies_date
 
 # ---- Laporan & Analitik (Fase 3) ----
 # Beda dari /reports/* (P&L operasional Fase 1, sumber: checkins/kasir/expenses walk-in):
@@ -79,7 +80,10 @@ async def laporan_tren_okupansi(from_date: str = Query(...), to_date: str = Quer
     range_end = (d_to + timedelta(days=1)).isoformat()
 
     bks = await db.bookings.find(scoped({
-        "status": {"$in": ["aktif", "booking_paid"]},
+        # "booking_pending"/"checked_in" WAJIB disertakan (2026-08-02, bug nyata - sama pola
+        # dgn Kalender Ketersediaan/Daftar Reservasi: tamu yang sudah check-in tidak lagi
+        # "aktif", jadi tanpa ini tren okupansi UNDERCOUNT begitu tamu benar-benar check-in).
+        "status": {"$in": ["aktif", "booking_paid", "booking_pending", "checked_in"]},
         "jam_mulai": {"$lt": range_end}, "jam_selesai": {"$gt": range_start},
     }, property_id), {"_id": 0, "room_nomor": 1, "jam_mulai": 1, "jam_selesai": 1}).to_list(5000)
     cis = await db.checkins.find(scoped({
@@ -94,9 +98,14 @@ async def laporan_tren_okupansi(from_date: str = Query(...), to_date: str = Quer
     n_days = (d_to - d_from).days + 1
     for i in range(max(1, n_days)):
         day = d_from + timedelta(days=i)
-        day_start = day.isoformat()
-        day_end = (day + timedelta(days=1)).isoformat()
-        occupied = {room for room, mulai, selesai in stays if mulai < day_end and selesai > day_start}
+        # Bug nyata ditemukan 2026-08-02 (sama pola dgn Kalender Ketersediaan/Daftar
+        # Reservasi/saran tanggal alternatif - overlap TIMESTAMP mentah membuat hari CHECKOUT
+        # ikut dihitung terisi, inflate okupansi). Pakai _occupies_date yang sama - juga benar
+        # utk day-use (checkin/checkout hari yang sama tetap dihitung terisi hari itu).
+        occupied = {
+            room for room, mulai, selesai in stays
+            if _occupies_date(datetime.fromisoformat(mulai), datetime.fromisoformat(selesai), day.date())
+        }
         pct = round(len(occupied) / total_rooms * 100) if total_rooms else 0
         result.append({"tanggal": day.date().isoformat(), "okupansi": min(100, pct)})
     return result
