@@ -165,7 +165,18 @@ async def public_availability(tanggal: str, tipe: Optional[str] = None, checkout
     q: Dict[str, Any] = {}
     if tipe:
         q["tipe"] = tipe
-    if is_today:
+    # Bug nyata ditemukan 2026-08-02 (pertanyaan Agus - tamu chat jam 8 pagi minta Day Use
+    # jam 13:00 hari ini, tipe Standard: sistem salah bilang "0 kamar tersedia" padahal 8
+    # kamar Standard checkout jam 12:00 siang hari itu juga, harusnya bisa dipakai jam 13:00):
+    # gate "kosong" di bawah cuma cek status kamar SAAT QUERY DIJALANKAN (mis. jam 8 pagi,
+    # kamar masih "menginap" krn checkout belum diproses staf) - kalau `jam_checkin` diisi
+    # (tamu sudah sebutkan jam spesifik), JANGAN gunakan gate real-time ini sama sekali,
+    # serahkan ke overlap presisi jam di bawah (check_room_available, sudah ada sejak fix
+    # jam_checkin sebelumnya) yang benar-benar tahu kamar itu bebas atau tidak PADA JAM yang
+    # diminta - bukan cuma status sesaat waktu query. Tanpa jam_checkin (belum tahu jam
+    # spesifik), tetap pakai gate lama (konservatif, aman) supaya tidak menjanjikan kamar
+    # yang belum tentu kosong di jam yang tamu belum sebutkan.
+    if is_today and not jam_checkin:
         q["status"] = "kosong"
     else:
         q["status"] = {"$ne": "maintenance"}
