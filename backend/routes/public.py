@@ -3,7 +3,7 @@ from core import *
 from reservation_service import check_room_available, create_reservation, room_locks
 from email_service import generate_voucher_pdf, send_voucher_email, get_property_branding
 from routes.push import send_push
-from scheduling_engine import slot_dayuse_aman
+from scheduling_engine import slot_dayuse_aman, DAYUSE_DURASI_JAM, WIB
 import httpx
 import io
 from fastapi.responses import StreamingResponse
@@ -113,7 +113,8 @@ async def public_rooms_catalog(properti: Optional[str] = None):
 
 @api.get("/public/availability")
 async def public_availability(tanggal: str, tipe: Optional[str] = None, checkout: Optional[str] = None,
-                              property_id_override: Optional[str] = None, properti: Optional[str] = None):
+                              property_id_override: Optional[str] = None, properti: Optional[str] = None,
+                              jam_checkin: Optional[str] = None):
     """List kamar tersedia pada tanggal tertentu (halaman publik).
     Untuk tanggal MASA DEPAN, status realtime kamar (day_use/menginap/perlu_dibersihkan) TIDAK relevan
     karena akan kembali kosong sebelum tanggal tersebut. Hanya `maintenance` (long-term) yang di-exclude.
@@ -123,6 +124,19 @@ async def public_availability(tanggal: str, tipe: Optional[str] = None, checkout
     window overlap yang dicek adalah seluruh rentang [tanggal, checkout), bukan cuma
     1 hari — supaya kamar yang sudah dibooking di salah satu malam dalam rentang itu
     tidak muncul sebagai tersedia.
+
+    `jam_checkin` (opsional, "HH:MM" WIB, 2026-08-01 - bug nyata ditemukan lewat laporan
+    user: tamu Vina tanya Day Use BESOK jam 10 pagi, AI jawab "tersedia banyak" padahal
+    SEMUA kamar Standard hari itu baru checkout menginap jam 12 siang - filter tanggal-saja
+    di atas TIDAK tahu soal jam, "hari checkout tidak dihitung menempati" cuma benar kalau
+    checkin baru diminta SETELAH jam checkout riil, bukan utk Day Use pagi yang datang
+    SEBELUM tamu lama keluar). HANYA relevan utk Day Use (kalau `checkout` diisi/multi-malam
+    menginap, diabaikan - checkin menginap normalnya jam 14:00, sudah aman dari kasus ini).
+    Kalau diisi, kamar yang lolos filter tanggal di atas DISARING ULANG pakai overlap presisi
+    jam (check_room_available, hard validator yang sama dipakai saat submit sungguhan) thd
+    slot Day Use [jam_checkin, jam_checkin + durasi standar] - supaya kamar yang secara
+    TANGGAL "tersedia" tapi tamu sebelumnya belum checkout pas jam yang diminta, tidak ikut
+    dihitung tersedia.
 
     `property_id_override` (Fase 4) - dipakai pemanggil INTERNAL yang sudah tahu properti
     yang benar dari konteksnya sendiri (mis. ai_bot_ketersediaan dari API key ai-chat-bot,
@@ -176,6 +190,29 @@ async def public_availability(tanggal: str, tipe: Optional[str] = None, checkout
                 break
         if not bk:
             out.append({"id": r["id"], "nomor": r["nomor"], "tipe": r["tipe"], "tarif": r["tarif"], "tarif_menginap": r["tarif_menginap"]})
+
+    # Filter presisi jam utk Day Use (2026-08-01, lihat catatan jam_checkin di docstring) -
+    # HANYA jalan kalau jam_checkin diisi DAN ini bukan query menginap multi-malam (checkout
+    # kosong). Pakai check_room_available yang SAMA persis dgn hard validator submit
+    # sungguhan - kalau lolos di sini, dijamin juga lolos saat benar-benar submit (tidak ada
+    # celah preview-vs-submit yang bisa menyimpang lagi).
+    if jam_checkin and not checkout and out:
+        try:
+            jm_mulai_wib = datetime.combine(d.date(), datetime.strptime(jam_checkin, "%H:%M").time(), tzinfo=WIB)
+        except ValueError:
+            jm_mulai_wib = None
+        if jm_mulai_wib:
+            jm_mulai_utc = jm_mulai_wib.astimezone(timezone.utc)
+            jm_selesai_utc = jm_mulai_utc + timedelta(hours=DAYUSE_DURASI_JAM)
+            out_presisi = []
+            for r in out:
+                try:
+                    await check_room_available(r["id"], jm_mulai_utc, jm_selesai_utc, property_id)
+                    out_presisi.append(r)
+                except HTTPException:
+                    continue
+            out = out_presisi
+
     out.sort(key=lambda r: (0 if r["tipe"] == "Standard" else 1, int(r["nomor"]) if r["nomor"].isdigit() else 9999))
     return {"tanggal": tanggal, "tipe": tipe, "rooms": out}
 

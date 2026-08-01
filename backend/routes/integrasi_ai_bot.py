@@ -91,7 +91,7 @@ async def regenerate_ai_bot_key(user: dict = Depends(require_owner), property_id
 @api.get("/integrasi-ai-bot/ketersediaan")
 async def ai_bot_ketersediaan(
     tanggal: Optional[str] = None, tipe: Optional[str] = None, jumlah_kamar: Optional[int] = None,
-    property_id: str = Depends(verifikasi_ai_bot_key)
+    jam_checkin: Optional[str] = None, property_id: str = Depends(verifikasi_ai_bot_key)
 ):
     """Ketersediaan & tarif kamar live per tanggal — logika sama dengan halaman publik
     `/book` (`public_availability`, termasuk fix hari checkout tidak dianggap booked),
@@ -114,9 +114,16 @@ async def ai_bot_ketersediaan(
     `kamar_diminta`/`kamar_kurang` disertakan kalau kondisi ini terpenuhi, supaya AI bisa
     bilang "X kamar sudah ada sekarang, Y kamar lagi kemungkinan siap sekitar jam Z" alih-
     alih cuma bilang "cuma ada X" tanpa opsi menunggu. Tidak diisi = perilaku lama
-    (default 1, sama seperti sebelum perubahan ini)."""
+    (default 1, sama seperti sebelum perubahan ini).
+
+    **Perubahan 2026-08-01** (bug nyata ditemukan dari laporan Agus - tamu Vina tanya Day
+    Use BESOK jam 10 pagi, AI jawab "tersedia banyak" padahal SEMUA kamar Standard baru
+    checkout tamu menginap jam 12 siang hari itu): tambah `jam_checkin` opsional ("HH:MM"
+    WIB) - diteruskan ke public_availability, yang utk Day Use (bukan multi-malam menginap)
+    akan menyaring ulang pakai overlap presisi jam, bukan cuma tanggal (lihat docstring
+    public_availability utk detail). Tidak diisi = perilaku lama (cuma cek tanggal)."""
     tanggal = tanggal or datetime.now().strftime("%Y-%m-%d")
-    hasil = await public_availability(tanggal=tanggal, tipe=tipe, property_id_override=property_id)
+    hasil = await public_availability(tanggal=tanggal, tipe=tipe, property_id_override=property_id, jam_checkin=jam_checkin)
 
     q: Dict[str, Any] = {"tipe": tipe} if tipe else {}
     semua_kamar = await db.rooms.find(scoped(q, property_id), {"_id": 0, "tipe": 1, "tarif": 1, "tarif_menginap": 1}).to_list(500)
