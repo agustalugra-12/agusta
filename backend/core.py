@@ -337,6 +337,26 @@ async def cari_guest(property_id: str, no_hp: str = "", no_identitas: str = "") 
     return None
 
 
+async def cari_atau_upsert_guest_tanpa_kontak(nama: str, property_id: str) -> Optional[Dict[str, Any]]:
+    """Fallback pencarian saat no_hp DAN no_identitas kosong-kosongnya (2026-08-01, bug nyata
+    ditemukan: RedDoorz email parser & import manual OTA sering tidak punya nomor HP tamu
+    sama sekali - cari_guest() di atas SELALU return None kalau begitu, jadi upsert_guest
+    SELALU bikin data tamu baru tiap booking, walau tamu/nama persis sama - "Data Tamu" jadi
+    penuh duplikat nama yang sama berkali-kali, ditemukan lewat laporan user "nama tamu
+    dobel2"). Cari berdasarkan nama PERSIS (case-insensitive, trim) dalam properti yang sama
+    - bukan 100% sempurna (2 tamu beda orang dgn nama sama persis & sama-sama tanpa kontak
+    akan salah dianggap 1 orang), tapi jauh lebih baik daripada duplikasi tanpa batas yang
+    terjadi sekarang. Cuma dipakai sebagai fallback TERAKHIR, tidak pernah dipakai kalau
+    no_hp/no_identitas ada isinya."""
+    nama = (nama or "").strip()
+    if not nama:
+        return None
+    return await db.guests.find_one(scoped({
+        "no_hp": "", "no_identitas": "",
+        "nama": {"$regex": f"^{re.escape(nama)}$", "$options": "i"},
+    }, property_id))
+
+
 # ---- Program Loyalitas Kedatangan (diskon member) ----
 # Dikonfirmasi user 2026-07-19: persentase diskon subtotal kamar berdasarkan urutan
 # kedatangan tamu (kedatangan ke-1 = pertama kali datang). Siklus 10 kedatangan, lalu
@@ -504,6 +524,8 @@ async def upsert_guest(nama: str, no_hp: str, no_identitas: str, kendaraan: str,
     `total_kunjungan` naik - booking yang belum/tidak check-in TIDAK masuk daftar ini)."""
     nama = (nama or "").strip()
     guest = await cari_guest(property_id, no_hp, no_identitas)
+    if not guest and not no_hp and not no_identitas:
+        guest = await cari_atau_upsert_guest_tanpa_kontak(nama, property_id)
     if guest:
         varian = dict(guest.get("nama_varian") or {})
         if not varian and guest.get("nama"):
