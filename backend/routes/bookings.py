@@ -306,9 +306,27 @@ async def checkin_from_booking(bid: str, body: CheckinFromBookingBody = CheckinF
         await db.rooms.update_one({"id": b["room_id"]}, {"$set": {
             "status": "menginap", "info": {"nama_tamu": b.get("nama_tamu", "")},
         }})
-        await db.bookings.update_one({"id": bid}, {"$set": {
+        booking_update: Dict[str, Any] = {
             "status": "checked_in", "checked_in_at": now, "checked_in_by": user["nama"],
-        }})
+        }
+        # Early check-in (2026-08-01, bug nyata ditemukan: kamar yang tamunya sudah
+        # check-in LEBIH AWAL dari jam_mulai terjadwal tetap dianggap "kosong" oleh
+        # check_room_available sampai jam_mulai aslinya tiba - risiko double-booking
+        # kamar yang fisiknya sudah terisi tamu nyata). Kalau check-in terjadi lebih awal
+        # TAPI masih di tanggal kalender yang sama dengan jam_mulai terjadwal, majukan
+        # jam_mulai ke waktu check-in sungguhan supaya check_room_available langsung
+        # menganggap kamar terisi dari SEKARANG - tidak mengubah TANGGAL (jumlah malam/
+        # perhitungan pendapatan per malam tidak terpengaruh). Kalau check-in di tanggal
+        # LEBIH AWAL dari jadwal (kasus langka, ada implikasi tagihan malam tambahan),
+        # SENGAJA tidak disentuh di sini - itu keputusan staf/billing manual.
+        try:
+            jam_mulai_lama = datetime.fromisoformat(b["jam_mulai"])
+            now_dt = datetime.fromisoformat(now)
+            if now_dt < jam_mulai_lama and now_dt.date() == jam_mulai_lama.date():
+                booking_update["jam_mulai"] = now
+        except (KeyError, ValueError, TypeError):
+            pass
+        await db.bookings.update_one({"id": bid}, {"$set": booking_update})
         # (2026-07-31, bug nyata ditemukan sambil kerjakan card member "Total Belanja") -
         # total_transaksi tamu SEBELUMNYA cuma naik dari checkout Day Use
         # (routes/checkins.py) - booking Menginap TIDAK PERNAH menambah angka ini sama
