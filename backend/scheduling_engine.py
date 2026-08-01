@@ -110,6 +110,62 @@ async def rekomendasi_slot_kosong(tipe_kamar: str, property_id: str, jumlah: int
     return utama
 
 
+async def timeline_kamar_hari_ini(property_id: str) -> List[Dict[str, Any]]:
+    """Daftar SEMUA kamar yang statusnya bukan kosong SEKARANG dan diperkirakan siap lagi
+    HARI INI - Day Use yang sedang berlangsung (estimasi checkout) DAN kamar yang sedang/
+    menunggu dibersihkan (estimasi selesai housekeeping). Beda dari rekomendasi_slot_kosong
+    (yang cuma cari 1 tipe kamar spesifik pas dibutuhkan) - ini gambaran OPERASIONAL PENUH
+    hari ini, dipakai supaya AI selalu tahu situasi kamar terkini tanpa perlu tamu tanya
+    dulu (2026-08-01, permintaan Agus: "AI mendapat info dari PMS tentang apapun itu, misal
+    kamar Day Use akan checkout jam 12, ada juga jam 13, dan ada yang sedang dibersihkan
+    mungkin 30 menit lagi selesai").
+
+    Kamar Menginap TIDAK disertakan (tidak checkout hari ini, konsisten dengan
+    estimasi_kamar_siap - jangan janjikan kekosongan palsu).
+
+    Untuk kamar `perlu_dibersihkan`, estimasi diambil dari `db.housekeeping_log` (dibuat
+    otomatis tiap kali kamar masuk status ini - lihat routes/rooms.py & routes/checkins.py):
+    pakai `jam_mulai` (staf sudah pencet "Mulai Bersihkan") kalau ada, else `tanggal` (waktu
+    kamar pertama masuk antrian) + buffer housekeeping standar. Kalau tidak ketemu log sama
+    sekali (seharusnya tidak terjadi, tapi jaga-jaga data lama/edge case), kamar itu
+    dilewati dari timeline drpd AI dikasih estimasi yang mengarang."""
+    now = datetime.now(timezone.utc)
+    out: List[Dict[str, Any]] = []
+
+    rooms = await db.rooms.find(
+        scoped({"status": {"$in": ["day_use", "perlu_dibersihkan"]}}, property_id), {"_id": 0}
+    ).to_list(500)
+    for r in rooms:
+        if r["status"] == "day_use":
+            siap = await estimasi_kamar_siap(r["id"], property_id)
+            if siap:
+                out.append({
+                    "room_nomor": r["nomor"], "tipe": r["tipe"], "status_sekarang": "day_use",
+                    "estimasi_siap": siap.isoformat(),
+                    "keterangan": "Day Use sedang berlangsung - perkiraan checkout + bersih-bersih",
+                })
+        else:  # perlu_dibersihkan
+            log = await db.housekeeping_log.find_one(
+                scoped({"room_id": r["id"], "status": {"$in": ["pending", "cleaning"]}}, property_id),
+                sort=[("tanggal", -1)],
+            )
+            if not log:
+                continue
+            acuan = log.get("jam_mulai") or log.get("tanggal")
+            if not acuan:
+                continue
+            siap = datetime.fromisoformat(acuan) + timedelta(minutes=BUFFER_HOUSEKEEPING_MENIT)
+            if siap <= now:
+                siap = now + timedelta(minutes=5)  # sudah lewat estimasi awal, hampir selesai - jangan kasih waktu masa lalu
+            out.append({
+                "room_nomor": r["nomor"], "tipe": r["tipe"], "status_sekarang": "perlu_dibersihkan",
+                "estimasi_siap": siap.isoformat(),
+                "keterangan": "Sedang/menunggu dibersihkan housekeeping",
+            })
+    out.sort(key=lambda x: x["estimasi_siap"])
+    return out
+
+
 async def booking_menginap_berikutnya(room_id: str, setelah: datetime, property_id: str) -> Optional[Dict[str, Any]]:
     """Booking MENGINAP terkonfirmasi berikutnya untuk kamar ini yang check-in setelah
     waktu tertentu — dipakai membatasi slot Day Use flexible (Rule 5 & Flexible Day Use)."""

@@ -5,7 +5,7 @@ from routes.issues import buat_issue
 from routes.booking_requests import buat_booking_request
 from routes.pesan_whatsapp import _cari_kamar_dari_no_hp
 from routes.pembatalan import ajukan_pembatalan_ai
-from scheduling_engine import rekomendasi_slot_kosong
+from scheduling_engine import rekomendasi_slot_kosong, timeline_kamar_hari_ini
 
 # ---- Integrasi AI Chat Bot Eksternal ----
 # Untuk "ai-chat-bot" (repo terpisah milik user, dirancang reusable lintas sistem — BUKAN
@@ -177,6 +177,19 @@ async def ai_bot_ketersediaan(
                     ]
         out.append(item)
     return {"tanggal": tanggal, "ketersediaan": out}
+
+
+@api.get("/integrasi-ai-bot/timeline-kamar")
+async def ai_bot_timeline_kamar(property_id: str = Depends(verifikasi_ai_bot_key)):
+    """Gambaran operasional PENUH kamar hari ini - SEMUA kamar Day Use yang sedang
+    berlangsung + kamar yang sedang/menunggu dibersihkan, masing-masing dengan estimasi
+    jam siap lagi (2026-08-01, permintaan Agus: AI selalu sinkron dengan situasi kamar
+    terkini PMS, bukan cuma tahu pas ditanya spesifik). Beda dari /ketersediaan (yang fokus
+    hitung slot per tipe kamar) - endpoint ini daftar mentah tiap kamar individual, dipakai
+    ai-chat-bot untuk konteks yang SELALU disuntik tiap giliran chat (lihat _build_context),
+    bukan tool yang perlu dipanggil AI secara eksplisit. Lihat timeline_kamar_hari_ini di
+    scheduling_engine.py untuk detail perhitungan tiap jenis estimasi."""
+    return {"timeline": await timeline_kamar_hari_ini(property_id)}
 
 
 @api.get("/integrasi-ai-bot/menu")
