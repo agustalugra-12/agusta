@@ -90,7 +90,8 @@ async def regenerate_ai_bot_key(user: dict = Depends(require_owner), property_id
 
 @api.get("/integrasi-ai-bot/ketersediaan")
 async def ai_bot_ketersediaan(
-    tanggal: Optional[str] = None, tipe: Optional[str] = None, property_id: str = Depends(verifikasi_ai_bot_key)
+    tanggal: Optional[str] = None, tipe: Optional[str] = None, jumlah_kamar: Optional[int] = None,
+    property_id: str = Depends(verifikasi_ai_bot_key)
 ):
     """Ketersediaan & tarif kamar live per tanggal — logika sama dengan halaman publik
     `/book` (`public_availability`, termasuk fix hari checkout tidak dianggap booked),
@@ -103,7 +104,17 @@ async def ai_bot_ketersediaan(
     kamar Day Use yang akan checkout (bukan Menginap - lihat `estimasi_kamar_siap` di
     scheduling_engine.py), disertakan `estimasi_kosong_lagi` sebagai perkiraan jujur; kalau
     penuh karena Menginap atau tanggal bukan hari ini, field itu TIDAK ADA sama sekali -
-    AI wajib bilang penuh apa adanya, tidak boleh menawarkan estimasi kosong."""
+    AI wajib bilang penuh apa adanya, tidak boleh menawarkan estimasi kosong.
+
+    **Perubahan 2026-08-01** (keluhan Agus - test chat tamu minta 3 kamar tapi cuma 1
+    kosong, AI tidak pernah kasih opsi menunggu): tambah `jumlah_kamar` opsional - kalau
+    diisi (tamu sebutkan jumlah kamar yang dibutuhkan), estimasi_kosong_lagi dkk dihitung
+    begitu `kamar_tersedia < jumlah_kamar` (bukan cuma pas PERSIS 0), dan jumlah kandidat
+    yang dicari via rekomendasi_slot_kosong disesuaikan dgn KEKURANGANNYA. Field baru
+    `kamar_diminta`/`kamar_kurang` disertakan kalau kondisi ini terpenuhi, supaya AI bisa
+    bilang "X kamar sudah ada sekarang, Y kamar lagi kemungkinan siap sekitar jam Z" alih-
+    alih cuma bilang "cuma ada X" tanpa opsi menunggu. Tidak diisi = perilaku lama
+    (default 1, sama seperti sebelum perubahan ini)."""
     tanggal = tanggal or datetime.now().strftime("%Y-%m-%d")
     hasil = await public_availability(tanggal=tanggal, tipe=tipe, property_id_override=property_id)
 
@@ -129,11 +140,25 @@ async def ai_bot_ketersediaan(
             per_tipe[r["tipe"]]["kamar_tersedia"] += 1
 
     is_today = tanggal == datetime.now().strftime("%Y-%m-%d")
+    # Bug nyata ditemukan 2026-08-01 (keluhan Agus - test chat tamu minta 3 kamar tapi cuma
+    # 1 yang kosong): SEBELUMNYA estimasi_kosong_lagi cuma dihitung kalau kamar_tersedia
+    # PERSIS 0 - kalau tamu minta LEBIH dari yang tersedia (mis. minta 3, ada 1), AI tidak
+    # pernah dikasih tahu ada kemungkinan kamar tambahan siap lagi hari ini (dari Day Use
+    # yang akan checkout) - cuma bilang "cuma ada 1" tanpa menawarkan opsi menunggu. Sekarang
+    # `jumlah_kamar` (opsional, dari check_availability tool - diisi AI kalau tamu sebut
+    # jumlah kamar) dipakai: estimasi dihitung kalau kamar_tersedia < jumlah yang diminta
+    # (default 1, sama seperti perilaku lama kalau tidak diisi), dan jumlah kandidat yang
+    # diminta ke rekomendasi_slot_kosong disesuaikan dengan KEKURANGANNYA, bukan selalu 3.
+    diminta = max(1, int(jumlah_kamar or 1))
     out = []
     for t, v in per_tipe.items():
         item = {"tipe": t, **v}
-        if v["kamar_tersedia"] == 0 and is_today:
-            rekom = await rekomendasi_slot_kosong(t, property_id, jumlah=3)
+        kekurangan = diminta - v["kamar_tersedia"]
+        if kekurangan > 0 and diminta > 1:
+            item["kamar_diminta"] = diminta
+            item["kamar_kurang"] = kekurangan
+        if kekurangan > 0 and is_today:
+            rekom = await rekomendasi_slot_kosong(t, property_id, jumlah=kekurangan)
             if rekom:
                 item["estimasi_kosong_lagi"] = rekom["siap_pakai"].isoformat()
                 item["estimasi_kamar_nomor"] = rekom["room_nomor"]
