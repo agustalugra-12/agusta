@@ -2,6 +2,7 @@ import asyncio
 from core import *
 from reservation_service import check_room_available, room_locks
 from email_service import generate_voucher_pdf, send_voucher_email, kirim_voucher_wa, get_property_branding
+from routes.ketersediaan import _occupies_date
 
 @api.post("/bookings")
 async def create_booking(body: BookingCreate, user: dict = Depends(get_current_user),
@@ -146,15 +147,35 @@ async def list_bookings(status: Optional[str] = None, tipe: Optional[str] = None
             {"nama_tamu": {"$regex": search_escaped, "$options": "i"}},
             {"kode": {"$regex": search_escaped, "$options": "i"}},
         ]
+    filter_day = None
     if date:
         try:
             day_start = datetime.fromisoformat(date).replace(hour=0, minute=0, second=0, microsecond=0)
         except Exception:
             raise HTTPException(400, "date harus YYYY-MM-DD")
+        filter_day = day_start.date()
         day_end = day_start + timedelta(days=1)
+        # Pre-filter Mongo pakai overlap TANGGAL kasar (superset, bukan final) - penyaringan
+        # PRESISI (hari checkout tidak dihitung menempati) dilakukan di Python di bawah lewat
+        # _occupies_date, SAMA PERSIS logikanya dgn Kalender Ketersediaan (routes/ketersediaan.py).
         q["jam_mulai"] = {"$lt": day_end.isoformat()}
         q["jam_selesai"] = {"$gte": day_start.isoformat()}
     items = await db.bookings.find(scoped(q, property_id), {"_id": 0}).sort("jam_mulai", 1).to_list(1000)
+    if filter_day is not None:
+        # Bug nyata ditemukan 2026-08-02 (laporan Agus - booking 1 malam masih muncul di
+        # filter tanggal checkout-nya, mis. checkin 1 Agustus/checkout 2 Agustus tetap
+        # muncul saat filter "tanggal 2 Agustus"): query Mongo di atas cuma overlap TIMESTAMP
+        # mentah (hari checkout ikut ke-match), SAMA PERSIS bug yang sudah diperbaiki di
+        # Kalender Ketersediaan 2026-07-12 (lihat _occupies_date) tapi endpoint list ini
+        # (dipakai Daftar Reservasi) ketinggalan tidak ikut diperbaiki saat itu. Terapkan
+        # penyaringan presisi yang sama di sini supaya konsisten - hari checkout TIDAK
+        # dihitung menempati (kecuali day-use checkin/checkout di hari yang sama).
+        items = [
+            b for b in items
+            if b.get("jam_selesai") and _occupies_date(
+                parse_iso(b["jam_mulai"], "jam_mulai"), parse_iso(b["jam_selesai"], "jam_selesai"), filter_day
+            )
+        ]
     # status_bayar (belum_bayar/dp/lunas) + jumlah_dibayar/sisa_tagihan — sama seperti
     # GET /payments/bookings-status, supaya Dashboard & Reservasi tidak baca payment_status
     # mentah (yang tidak bedakan DP dari lunas) dan berujung salah label ke staf.
