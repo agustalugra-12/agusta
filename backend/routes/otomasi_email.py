@@ -363,62 +363,57 @@ async def buat_reservasi_otomatis(log_id: str, data: dict, sumber: str, subjek: 
         return
 
     kandidat = await db.rooms.find(scoped({"tipe": mapping["pms_tipe"]}, property_id), {"_id": 0}).to_list(200)
-    dipilih = []
+    # Bug nyata ditemukan 2026-08-01 (kasus Ricky Kusvianto, RedDoorz - kamar tampak kosong
+    # secara tanggal booking tapi sedang dipakai Day Use SAAT diproses): sebelumnya kandidat
+    # dipilih HANYA lewat check_room_available (overlap booking, tidak tahu soal db.checkins
+    # Day Use), lalu create_reservation dipanggil terpisah dan bisa menolak (r["status"] !=
+    # "kosong" utk checkin hari ini) - exception itu TIDAK ditangani di sini, merambat ke atas
+    # dan membatalkan SELURUH proses fetch_gmail_emails (termasuk email OTA lain yang belum
+    # sempat diproses di batch yang sama), sementara email ini sendiri sudah kadung tersimpan
+    # Parsed_Success tanpa reservation_id - macet permanen (tidak pernah dicoba ulang, gmail_
+    # message_id sudah dianggap "pernah diambil"). Sekarang: pilih SEKALIGUS buat reservasi
+    # dalam satu loop candidate-by-candidate, kamar yang gagal (baik dari check_room_available
+    # maupun create_reservation) dilewati ke kandidat berikutnya, bukan menggagalkan semuanya.
+    reservation_ids = []
+    gagal_detail = []
     for r in kandidat:
-        if len(dipilih) >= jumlah_kamar:
+        if len(reservation_ids) >= jumlah_kamar:
             break
         try:
             await check_room_available(r["id"], check_in, check_out, property_id)
-            dipilih.append(r)
-        except HTTPException:
+        except HTTPException as e:
+            gagal_detail.append(f'kamar {r["nomor"]}: {e.detail}')
             continue
-    if not dipilih:
-        await db.email_logs.update_one({"id": log_id}, {"$set": {
-            "status": "Manual_Required",
-            "alasan": f'Tidak ada kamar {mapping["pms_tipe"]} yang kosong pada {check_in.date()}–{check_out.date()} (kemungkinan bentrok) — perlu ditinjau manual staf.',
-        }})
-        return
 
-    # Booking "Prepaid" RedDoorz TIDAK mencantumkan nominal di emailnya sama sekali (2026-07-19,
-    # ditemukan user) - beda dari booking biasa yang selalu ada field harga. Kalau begitu,
-    # total di sini TERPAKSA memakai tarif publik PMS sendiri sebagai PLACEHOLDER supaya kamar
-    # tetap ter-booking (nomor kamar/tanggal jauh lebih penting untuk anti-bentrok daripada
-    # nominalnya), TAPI ditandai `ota_harga_dikonfirmasi=False` - dikecualikan dari SEMUA
-    # laporan pendapatan (reports.py & laporan_analitik.py) sampai staf isi nominal settlement
-    # ASLI dari laporan/invoice RedDoorz lewat POST /bookings/{id}/konfirmasi-harga-ota. Ini
-    # karena tarif net yang OTA bayar ke hotel biasanya LEBIH RENDAH dari tarif publik (margin
-    # OTA) - mencatatnya sebagai pendapatan asli akan OVERSTATE laporan keuangan.
-    # Nominal di email OTA (RedDoorz dkk) adalah tarif NET, belum termasuk service fee PMS
-    # (2026-07-27, ditemukan lewat laporan user - reservasi tanpa WA sama sekali/langsung
-    # diinput ke RedDoorz sebelumnya tercatat TANPA service fee sama sekali, beda dari semua
-    # booking lain di PMS yang selalu kena SERVICE_FEE_PCT). Perlakukan `harga_dari_email`
-    # sebagai SUBTOTAL, lalu hitung service fee dengan persentase yang SAMA seperti booking
-    # manapun, supaya total yang tercatat konsisten dengan cara PMS menghitung di mana pun.
-    harga_dari_email = int(data.get("harga") or 0)
-    harga_dikonfirmasi = harga_dari_email > 0
-    subtotal_semua = harga_dari_email or (dipilih[0]["tarif_menginap"] * jumlah_kamar)  # OTA selalu tipe menginap
-    subtotal_per_kamar = round(subtotal_semua / jumlah_kamar)
-    service_fee_per_kamar = round(subtotal_per_kamar * SERVICE_FEE_PCT)
-    total_per_kamar = subtotal_per_kamar + service_fee_per_kamar
-    dibatalkan = data.get("status_pembayaran") == "Dibatalkan"
-    reservation_ids = []
-    for r in dipilih:
-        booking = await create_reservation(
-            {
-                "room_id": r["id"],
-                "nama_tamu": data.get("nama_tamu", ""), "no_hp": "", "email": "",
-                "no_identitas": "", "kendaraan": "",
-                "jumlah_tamu": data.get("jumlah_tamu") or 1,
-                "jam_mulai": check_in, "jam_selesai": check_out,
-                "catatan": f'Reservasi OTA otomatis dari email "{subjek}" ({sumber}, no. {data.get("no_reservasi", "-")})'
-                + (f" — {jumlah_kamar} kamar dipesan bersamaan" if jumlah_kamar > 1 else ""),
-                "created_by": "ai_email_parser",
-                "tipe": "menginap",
-            },
-            property_id,
-            source="ota",
-            harga_override={"subtotal": subtotal_per_kamar, "service_fee": service_fee_per_kamar, "total": total_per_kamar, "dp_min": 0},
-        )
+        harga_dari_email = int(data.get("harga") or 0)
+        harga_dikonfirmasi = harga_dari_email > 0
+        subtotal_semua = harga_dari_email or (r["tarif_menginap"] * jumlah_kamar)  # OTA selalu tipe menginap
+        subtotal_per_kamar = round(subtotal_semua / jumlah_kamar)
+        service_fee_per_kamar = round(subtotal_per_kamar * SERVICE_FEE_PCT)
+        total_per_kamar = subtotal_per_kamar + service_fee_per_kamar
+        dibatalkan = data.get("status_pembayaran") == "Dibatalkan"
+
+        try:
+            booking = await create_reservation(
+                {
+                    "room_id": r["id"],
+                    "nama_tamu": data.get("nama_tamu", ""), "no_hp": "", "email": "",
+                    "no_identitas": "", "kendaraan": "",
+                    "jumlah_tamu": data.get("jumlah_tamu") or 1,
+                    "jam_mulai": check_in, "jam_selesai": check_out,
+                    "catatan": f'Reservasi OTA otomatis dari email "{subjek}" ({sumber}, no. {data.get("no_reservasi", "-")})'
+                    + (f" — {jumlah_kamar} kamar dipesan bersamaan" if jumlah_kamar > 1 else ""),
+                    "created_by": "ai_email_parser",
+                    "tipe": "menginap",
+                },
+                property_id,
+                source="ota",
+                harga_override={"subtotal": subtotal_per_kamar, "service_fee": service_fee_per_kamar, "total": total_per_kamar, "dp_min": 0},
+            )
+        except HTTPException as e:
+            gagal_detail.append(f'kamar {r["nomor"]}: {e.detail}')
+            continue
+
         update_fields = {"ota_reservation_no": data.get("no_reservasi")}
         if dibatalkan:
             update_fields["status"] = "cancelled"
@@ -443,13 +438,20 @@ async def buat_reservasi_otomatis(log_id: str, data: dict, sumber: str, subjek: 
         await db.bookings.update_one({"id": booking["id"]}, {"$set": update_fields})
         reservation_ids.append(booking["id"])
 
+    if not reservation_ids:
+        await db.email_logs.update_one({"id": log_id}, {"$set": {
+            "status": "Manual_Required",
+            "alasan": f'Tidak ada kamar {mapping["pms_tipe"]} yang kosong pada {check_in.date()}–{check_out.date()} (kemungkinan bentrok) — perlu ditinjau manual staf. Detail: {"; ".join(gagal_detail) or "-"}',
+        }})
+        return
+
     log_update = {"reservation_id": reservation_ids[0], "reservation_ids": reservation_ids, "aksi": "reservasi_baru_dibuat"}
-    if len(dipilih) < jumlah_kamar:
+    if len(reservation_ids) < jumlah_kamar:
         # Sebagian berhasil dibuat (kamar yang memang kosong), sisanya butuh tinjauan staf —
         # bukan didiamkan seluruhnya supaya staf tidak perlu memesankan ulang yang sudah aman.
         log_update.update({
             "status": "Manual_Required",
-            "alasan": f'Email OTA memesan {jumlah_kamar} kamar {mapping["pms_tipe"]}, tapi hanya {len(dipilih)} yang kosong pada {check_in.date()}–{check_out.date()} — {len(dipilih)} reservasi sudah dibuat otomatis, {jumlah_kamar - len(dipilih)} kamar SISANYA perlu ditangani manual staf (cari kamar lain / hubungi tamu).',
+            "alasan": f'Email OTA memesan {jumlah_kamar} kamar {mapping["pms_tipe"]}, tapi hanya {len(reservation_ids)} yang berhasil dibuat pada {check_in.date()}–{check_out.date()} — {len(reservation_ids)} reservasi sudah dibuat otomatis, {jumlah_kamar - len(reservation_ids)} kamar SISANYA perlu ditangani manual staf (cari kamar lain / hubungi tamu). Detail: {"; ".join(gagal_detail) or "-"}',
         })
     await db.email_logs.update_one({"id": log_id}, {"$set": log_update})
 
@@ -722,12 +724,25 @@ async def fetch_gmail_emails(max_results: int = 20) -> int:
                 # review staf kalau datanya tidak cukup jelas. Bisa mengubah status doc ini
                 # balik ke Manual_Required kalau tidak bisa dicocokkan otomatis sama sekali
                 # (lihat masing-masing fungsi).
-                if jenis == "baru":
-                    await buat_reservasi_otomatis(doc["id"], extracted_data, sumber, subjek)
-                elif jenis == "pembatalan":
-                    await batalkan_reservasi_otomatis(doc["id"], {**extracted_data, "jenis": jenis}, sumber, subjek)
-                else:  # modifikasi
-                    await proses_modifikasi_otomatis(doc["id"], extracted_data, sumber, subjek)
+                # Bug nyata ditemukan 2026-08-01 (kasus Ricky Kusvianto): exception tak
+                # terduga dari salah satu fungsi ini sebelumnya merambat ke atas dan
+                # membatalkan SISA loop for mid in message_ids - email OTA lain yang belum
+                # sempat diambil di batch yang sama jadi ikut tidak pernah tersimpan sama
+                # sekali. Isolasi per-email supaya 1 email bermasalah tidak mengorbankan
+                # yang lain; email ini sendiri ditandai Manual_Required dengan pesan error
+                # asli supaya staf tahu persis kenapa, bukan macet diam-diam.
+                try:
+                    if jenis == "baru":
+                        await buat_reservasi_otomatis(doc["id"], extracted_data, sumber, subjek)
+                    elif jenis == "pembatalan":
+                        await batalkan_reservasi_otomatis(doc["id"], {**extracted_data, "jenis": jenis}, sumber, subjek)
+                    else:  # modifikasi
+                        await proses_modifikasi_otomatis(doc["id"], extracted_data, sumber, subjek)
+                except Exception as e:
+                    await db.email_logs.update_one({"id": doc["id"]}, {"$set": {
+                        "status": "Manual_Required",
+                        "alasan": f"Error tak terduga saat otomasi reservasi: {e} — perlu ditinjau/diinput manual staf.",
+                    }})
     return disimpan
 
 
