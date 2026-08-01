@@ -261,12 +261,21 @@ export default function Dashboard() {
       ]);
       setUlangTahun(ut.data);
       setTugasHarian(th.data);
-      // tampilkan semua booking yang menempati kamar: aktif, booking_pending, booking_paid
+      // tampilkan semua booking yang menempati kamar: aktif, booking_pending, booking_paid,
+      // checked_in (2026-08-01, bug nyata ditemukan Agus - tamu Opa Isa yang sedang menginap
+      // sampai 10 Agustus "hilang" total dari Dashboard begitu tanggal yang dilihat digeser
+      // ke tengah masa inapnya, misal tanggal 5/8 Agustus - sebabnya status booking-nya sudah
+      // berubah dari "aktif" jadi "checked_in" begitu dia benar-benar check-in hari pertama,
+      // dan filter ini sebelumnya TIDAK PERNAH menyertakan "checked_in" - jadi booking-nya
+      // sama sekali tidak masuk ke array `bookings`, membuat kamarnya kelihatan "kosong" utk
+      // SEMUA tanggal selain hari ini. Hari ini sendiri tidak kena krn dashboard pakai status
+      // real-time kamar (r.status/r.info) utk hari ini, bukan array `bookings` ini - baru
+      // kelihatan begitu staf pindah ke tanggal lain di date picker).
       // sync_status waiting_reddoorz_* (Tahap 2 Modul Reservasi) — booking Menginap dari
       // Booking Request yang belum diinput/disinkron manual ke PMS RedDoorz TETAP memblokir
       // slotnya di backend (check_room_available tidak berubah), tapi belum ditampilkan
       // sebagai tamu terkonfirmasi di grid Dashboard sampai email RedDoorz cocok.
-      const occupying = b.data.filter(x => ["aktif", "booking_pending", "booking_paid"].includes(x.status)
+      const occupying = b.data.filter(x => ["aktif", "booking_pending", "booking_paid", "checked_in"].includes(x.status)
         && !["waiting_reddoorz_input", "waiting_reddoorz_sync"].includes(x.sync_status));
       setSummary(s.data); setRooms(r.data); setActive(c.data); setBookings(occupying);
       setBookingRequests(br.data);

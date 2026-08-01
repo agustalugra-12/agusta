@@ -1,7 +1,17 @@
 from core import *
 
 # Status booking yang dianggap menempati kamar (dipakai juga di routes/bookings.py availability check).
-ACTIVE_BOOKING_STATUSES = ["aktif", "booking_paid", "booking_pending"]
+# "checked_in" WAJIB disertakan (2026-08-01, bug nyata ditemukan Agus - tamu Opa Isa yang
+# sedang menginap sampai 10 Agustus "hilang" dari Kalender Ketersediaan untuk tanggal-tanggal
+# di tengah masa inapnya): begitu tamu Menginap benar-benar check-in, status booking berubah
+# dari "aktif" jadi "checked_in" (lihat checkin_from_booking di routes/bookings.py) - list ini
+# sebelumnya TIDAK PERNAH menyertakan "checked_in", jadi begitu tamu check-in (hampir selalu
+# terjadi di hari pertama), okupansi kalender langsung menganggap kamarnya KOSONG untuk SISA
+# masa inapnya sampai hari checkout - live test tanggal 3/4/6/9/10 Agustus semuanya salah
+# tampil 0% okupansi padahal banyak tamu asli masih menginap. check_room_available
+# (reservation_service.py) & scheduling_engine.BOOKING_TERKONFIRMASI_STATUS sudah lama benar
+# menyertakan "checked_in" - list di sini yang ketinggalan, sekarang disamakan.
+ACTIVE_BOOKING_STATUSES = ["aktif", "booking_paid", "booking_pending", "checked_in"]
 
 # Tahap 2 Modul Reservasi (2026-07-17): booking Menginap dari Booking Request yang masih
 # menunggu input/sinkron manual ke PMS RedDoorz TETAP memblokir slotnya (check_room_available

@@ -178,7 +178,17 @@ async def public_availability(tanggal: str, tipe: Optional[str] = None, checkout
     for r in rooms:
         kandidat = await db.bookings.find(scoped({
             "room_id": r["id"],
-            "status": {"$in": ["aktif", "booking_paid", "booking_pending"]},
+            # "checked_in" WAJIB disertakan (2026-08-01, bug nyata ditemukan Agus - tamu Opa
+            # Isa yang sedang menginap sampai 10 Agustus muncul sbg "tersedia" di sini utk
+            # tanggal2 di tengah masa inapnya, karena status booking-nya sudah "checked_in"
+            # begitu tamu benar2 check-in, bukan "aktif" lagi). Bug ini WARISAN yang sama
+            # persis dgn yang sudah pernah diperbaiki di check_room_available - fungsi ITU
+            # sudah benar menyertakan "checked_in", tapi fungsi PREVIEW ini (dipakai halaman
+            # /book publik & tool check_availability AI) ketinggalan - preview bisa bilang
+            # "tersedia" utk kamar yang sebenarnya masih ditempati, walau submit sungguhan
+            # tetap ditolak check_room_available (tidak double-booking asli, tapi tamu/AI
+            # bisa terlanjur janji kamar yang ternyata tidak bisa dipakai).
+            "status": {"$in": ["aktif", "booking_paid", "booking_pending", "checked_in"]},
             "jam_mulai": {"$lt": d_end.isoformat()},
             "jam_selesai": {"$gt": d_start.isoformat()},
         }, property_id), {"_id": 0, "jam_mulai": 1, "jam_selesai": 1}).to_list(50)

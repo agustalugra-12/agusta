@@ -536,7 +536,11 @@ async def booking_availability(room_id: str, from_date: str, days: int = 14,
     end_window = base + timedelta(days=days)
     bks = await db.bookings.find(scoped({
         "room_id": room_id,
-        "status": {"$in": ["aktif", "booking_paid", "booking_pending"]},
+        # "checked_in" WAJIB disertakan (2026-08-01, bug nyata - sama pola dgn public.py/
+        # ketersediaan.py: tamu yang sudah check-in tidak lagi berstatus "aktif", jadi
+        # tanpa ini saran tanggal alternatif bisa merekomendasikan tanggal yang sebenarnya
+        # masih ditempati tamu yang sudah check-in).
+        "status": {"$in": ["aktif", "booking_paid", "booking_pending", "checked_in"]},
         "jam_mulai": {"$lt": end_window.isoformat()},
         "jam_selesai": {"$gt": base.isoformat()},
     }, property_id), {"_id": 0}).to_list(500)
