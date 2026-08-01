@@ -32,9 +32,30 @@ async def estimasi_kamar_siap(room_id: str, property_id: str) -> Optional[dateti
     user 2026-07-19): rekomendasi "kamar akan kosong lagi jam X" cuma jujur kalau penghuni
     sekarang memang akan checkout hari ini. Tamu Menginap tidak checkout hari ini, jadi kamar
     yang penuh karena Menginap TIDAK PERNAH dikasih estimasi - harus dijawab "penuh" apa
-    adanya, bukan janji palsu kapan kosong."""
+    adanya, bukan janji palsu kapan kosong.
+
+    **Ralat 2026-08-02** (pertanyaan Agus "apakah AI kasih rekomendasi jam checkin?" -
+    ternyata TIDAK, untuk kasus ini): asumsi "Tamu Menginap tidak checkout hari ini" di atas
+    SALAH untuk kasus yang genuinely sering terjadi - tamu Menginap 1 malam yang checkin
+    KEMARIN checkout HARI INI (jam standar 12:00 WIB). Kalau checkout ini belum diproses
+    staf, kamar itu sebelumnya TIDAK PERNAH dikasih estimasi sama sekali (fungsi ini cuma
+    cek tipe "day_use"), padahal harusnya jujur bisa bilang "kamar X akan kosong ~jam 12:30"
+    - sama honestnya dengan estimasi Day Use yang sudah ada. Ditambahkan di bawah, HANYA
+    untuk booking Menginap yang checkout-nya JATUH HARI INI (bukan tanggal lain/masa depan -
+    itu genuinely tidak checkout hari ini, benar tidak dikasih estimasi)."""
     now = datetime.now(timezone.utc)
     kandidat_siap = []
+
+    # Menginap checkout hari ini, status checked_in (sudah tiba, belum checkout) - lihat
+    # ralat di docstring atas. Pakai tanggal WIB (bukan UTC mentah) supaya batas "hari ini"
+    # konsisten dengan operasional properti, bukan geser krn selisih zona waktu.
+    menginap_aktif = await db.bookings.find_one(scoped({
+        "room_id": room_id, "tipe": "menginap", "status": "checked_in",
+    }, property_id), sort=[("jam_selesai", 1)])
+    if menginap_aktif and menginap_aktif.get("jam_selesai"):
+        checkout_dt = datetime.fromisoformat(menginap_aktif["jam_selesai"])
+        if checkout_dt.astimezone(WIB).date() == now.astimezone(WIB).date():
+            kandidat_siap.append(max(now, checkout_dt) + timedelta(minutes=BUFFER_HOUSEKEEPING_MENIT))
 
     aktif = await db.bookings.find_one(scoped({
         "room_id": room_id, "tipe": "day_use", "status": {"$in": BOOKING_AKTIF_STATUS},
