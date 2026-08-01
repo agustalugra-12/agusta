@@ -77,11 +77,12 @@ export function statusColor(s) {
 // semua permukaan (Booking Success, PDF, Dashboard, Reservasi) sesuai field status_bayar
 // yang di-derive backend (status_bayar_booking(), backend/core.py) — bukan payment_status
 // mentah yang tidak bedakan DP dari lunas.
-export const STATUS_BAYAR_LABEL = { belum_bayar: "BELUM BAYAR", dp: "DP — BELUM LUNAS", lunas: "LUNAS" };
+export const STATUS_BAYAR_LABEL = { belum_bayar: "BELUM BAYAR", dp: "DP — BELUM LUNAS", lunas: "LUNAS", direfund: "SUDAH BAYAR — DIREFUND" };
 export const STATUS_BAYAR_BADGE_CLASS = {
   belum_bayar: "bg-slate-100 text-slate-700",
   dp: "bg-amber-100 text-amber-800",
   lunas: "bg-emerald-100 text-emerald-800",
+  direfund: "bg-sky-100 text-sky-800",
 };
 
 /**
@@ -94,6 +95,9 @@ export function statusBayarOf(b) {
   if (!b) return { status_bayar: "belum_bayar", jumlah_dibayar: 0, sisa_tagihan: 0 };
   if (b.status_bayar) {
     return { status_bayar: b.status_bayar, jumlah_dibayar: Number(b.jumlah_dibayar || 0), sisa_tagihan: Number(b.sisa_tagihan || 0) };
+  }
+  if (b.payment_status === "refunded") {
+    return { status_bayar: "direfund", jumlah_dibayar: Number(b.amount_due || 0), sisa_tagihan: 0 };
   }
   const total = Number(b.total || 0);
   const terkumpul = b.payment_status === "paid" ? Number(b.amount_due || 0) : 0;

@@ -616,19 +616,37 @@ def guess_booking_kode_from_order_id(order_id: str) -> Optional[str]:
     return m.group(1) if m else None
 
 def status_bayar_booking(b: dict) -> dict:
-    """Derive status bayar 3-keadaan (belum_bayar/dp/lunas) + sisa tagihan dari booking.
-    `payment_status` di skema booking cuma 2 keadaan gateway-level (pending/paid/dst) —
-    itu TIDAK cukup untuk bedakan tamu yang baru bayar DP vs bayar lunas, karena webhook
-    Midtrans/Tripay sama-sama set payment_status="paid" begitu ada settlement, apapun
-    payment_option-nya. Dipakai bersama oleh halaman staf (Pembayaran) dan permukaan tamu
-    (voucher PDF, email, /public/bookings/{id}) supaya konsisten."""
+    """Derive status bayar 4-keadaan (belum_bayar/dp/lunas/direfund) + sisa tagihan dari
+    booking. `payment_status` di skema booking cuma beberapa keadaan gateway-level
+    (pending/paid/refunded/dst) — itu TIDAK cukup untuk bedakan tamu yang baru bayar DP
+    vs bayar lunas, karena webhook Midtrans/Tripay sama-sama set payment_status="paid"
+    begitu ada settlement, apapun payment_option-nya. Dipakai bersama oleh halaman staf
+    (Pembayaran) dan permukaan tamu (voucher PDF, email, /public/bookings/{id}) supaya
+    konsisten.
+
+    "direfund" (2026-08-01, bug nyata ditemukan Agus - laporan Tripay tunjukkan tamu
+    SUDAH bayar, tapi PMS tampilkan "BELUM BAYAR"): booking yang dibatalkan SETELAH
+    sempat lunas (payment_status jadi "refunded", lihat cancel-with-fee/webhook Tripay
+    refund) sebelumnya ikut kena cabang `!= "paid"` yang sama dengan yang BENAR-BENAR
+    belum pernah dibayar - dari sudut pandang tamu/staf ini kabar yang salah total (tamu
+    sungguhan sudah transfer uang, cuma sebagian/semua direfund krn kebijakan
+    pembatalan, bukan "belum bayar sama sekali"). `jumlah_dibayar` tetap nominal yang
+    ASLI dibayar tamu (`amount_due`, fakta historis - bukan dikurangi refund_amount),
+    `sisa_tagihan` 0 (booking sudah dibatalkan, tidak ada tagihan lanjutan) - detail
+    refund_amount/cancel_fee sudah ada field terpisah di booking utk yang butuh rincian
+    itu, tidak perlu dihitung ulang di sini."""
     total = int(b.get("total") or 0)
-    terkumpul = int(b.get("amount_due") or 0) if b.get("payment_status") == "paid" else 0
-    if b.get("payment_status") != "paid":
-        status_bayar = "belum_bayar"
-    else:
+    payment_status = b.get("payment_status")
+    if payment_status == "refunded":
+        status_bayar = "direfund"
+        return {"status_bayar": status_bayar, "jumlah_dibayar": int(b.get("amount_due") or 0), "sisa_tagihan": 0}
+    if payment_status == "paid":
+        terkumpul = int(b.get("amount_due") or 0)
         status_bayar = "lunas" if total > 0 and terkumpul >= total else "dp"
-    return {"status_bayar": status_bayar, "jumlah_dibayar": terkumpul, "sisa_tagihan": max(0, total - terkumpul)}
+    else:
+        status_bayar = "belum_bayar"
+        terkumpul = 0
+    return {"status_bayar": status_bayar, "jumlah_dibayar": max(0, terkumpul), "sisa_tagihan": max(0, total - terkumpul)}
 
 DISKON_AI_MAX_PERSEN = 10
 

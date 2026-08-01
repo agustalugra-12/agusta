@@ -113,11 +113,12 @@ async def get_payment_log_by_booking(booking_kode: str, user: dict = Depends(get
 async def list_bookings_status_bayar(status_bayar: Optional[str] = None, search: Optional[str] = None,
                                       user: dict = Depends(get_current_user),
                                       property_id: str = Depends(get_active_property)):
-    """Daftar reservasi dengan status bayar terderivasi (Belum Bayar/DP/Lunas) — dipakai
-    fitur 'Status Bayar' halaman Pembayaran. `status_bayar` filter: belum_bayar|dp|lunas.
+    """Daftar reservasi dengan status bayar terderivasi (Belum Bayar/DP/Lunas/Direfund) —
+    dipakai fitur 'Status Bayar' halaman Pembayaran. `status_bayar` filter:
+    belum_bayar|dp|lunas|direfund.
     """
-    if status_bayar and status_bayar not in ("belum_bayar", "dp", "lunas"):
-        raise HTTPException(400, "status_bayar harus belum_bayar, dp, atau lunas")
+    if status_bayar and status_bayar not in ("belum_bayar", "dp", "lunas", "direfund"):
+        raise HTTPException(400, "status_bayar harus belum_bayar, dp, lunas, atau direfund")
     q: Dict[str, Any] = scoped({}, property_id)
     if search:
         # re.escape() (2026-07-27, audit keamanan) - cegah ReDoS dari pola regex jahat, cari

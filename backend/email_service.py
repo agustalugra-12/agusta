@@ -65,7 +65,7 @@ SYARAT_EXTEND_DAYUSE = [
     "  (dibulatkan ke atas per jam mulai), dihitung otomatis saat checkout.",
 ]
 
-STATUS_BAYAR_LABEL = {"belum_bayar": "BELUM BAYAR", "dp": "DP (BELUM LUNAS)", "lunas": "LUNAS"}
+STATUS_BAYAR_LABEL = {"belum_bayar": "BELUM BAYAR", "dp": "DP (BELUM LUNAS)", "lunas": "LUNAS", "direfund": "SUDAH BAYAR - DIREFUND"}
 
 logger = logging.getLogger("email_service")
 
