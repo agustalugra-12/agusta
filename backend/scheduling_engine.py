@@ -64,27 +64,50 @@ async def estimasi_kamar_siap(room_id: str, property_id: str) -> Optional[dateti
     return min(kandidat_siap)
 
 
-async def rekomendasi_slot_kosong(tipe_kamar: str, property_id: str) -> Optional[Dict[str, Any]]:
+async def rekomendasi_slot_kosong(tipe_kamar: str, property_id: str, jumlah: int = 1) -> Optional[Dict[str, Any]]:
     """Kalau semua kamar tipe ini penuh SEKARANG, cari kandidat kamar paling cepat siap +
-    slot Day Use penuh (6 jam) yang tidak bentrok booking lain yang sudah terkonfirmasi.
-    Dipakai AI WhatsApp untuk jawab "penuh, tapi kamar X siap jam Y". None kalau tidak ada
-    kandidat yang bisa diestimasi."""
+    slot Day Use yang tidak bentrok booking lain yang sudah terkonfirmasi. Dipakai AI
+    WhatsApp untuk jawab "penuh, tapi kamar X siap jam Y". None kalau tidak ada kandidat
+    yang bisa diestimasi.
+
+    `jumlah` (2026-08-01, optimasi permintaan Agus - "tentukan fungsinya apa saja/optimal"):
+    balikin sampai N kandidat terurut waktu tercepat (bukan cuma 1) lewat field "alternatif"
+    di hasil, supaya AI bisa tawarkan pilihan seperti CS manusia ("kamar 3 jam 14:30, atau
+    kamar 5 jam 15:00") - bukan cuma satu opsi kaku. Kandidat utama (return value top-level)
+    tetap yang PALING CEPAT siap, jadi pemanggil lama yang cuma pakai field top-level tidak
+    perlu berubah.
+
+    Durasi slot per kandidat SEKARANG pakai slot_dayuse_aman (2026-08-01, bug/optimasi
+    ditemukan: sebelumnya selalu coba slot 6 jam PENUH lewat check_room_available - kalau
+    ada booking Menginap yang check-in beberapa jam setelah kamar siap, hard validator itu
+    MENOLAK seluruh kandidat & kamar itu jadi terlihat "tidak ada rekomendasi" padahal kamar
+    itu sebenarnya BISA dipakai Day Use durasi lebih pendek sebelum tamu Menginap datang -
+    slot_dayuse_aman yang sudah ada persis dibuat untuk menghitung durasi aman ini, tapi
+    belum pernah dipakai di sini sebelumnya)."""
     rooms = await db.rooms.find(scoped({"tipe": tipe_kamar}, property_id), {"_id": 0}).to_list(200)
     kandidat = []
     for r in rooms:
         siap = await estimasi_kamar_siap(r["id"], property_id)
         if not siap:
             continue
-        usulan_selesai = siap + timedelta(hours=DAYUSE_DURASI_JAM)
+        aman = await slot_dayuse_aman(r["id"], siap, property_id)
+        usulan_selesai = aman["jam_selesai_aman"]
+        if usulan_selesai <= siap:
+            continue  # tidak ada durasi Day Use yang muat sama sekali sebelum tamu Menginap berikutnya
         try:
             await check_room_available(r["id"], siap, usulan_selesai, property_id)
         except HTTPException:
-            continue  # slot ini bentrok booking lain yang sudah terkonfirmasi, lewati
-        kandidat.append({"room_id": r["id"], "room_nomor": r["nomor"], "siap_pakai": siap, "usulan_selesai": usulan_selesai})
+            continue  # tetap bentrok meski sudah dipersingkat (mis. Day Use lain sudah booked di situ), lewati
+        kandidat.append({
+            "room_id": r["id"], "room_nomor": r["nomor"], "siap_pakai": siap, "usulan_selesai": usulan_selesai,
+            "dipersingkat": aman["dipersingkat"], "alasan_dipersingkat": aman["alasan"],
+        })
     if not kandidat:
         return None
     kandidat.sort(key=lambda x: x["siap_pakai"])
-    return kandidat[0]
+    utama = dict(kandidat[0])
+    utama["alternatif"] = kandidat[1:jumlah] if jumlah > 1 else []
+    return utama
 
 
 async def booking_menginap_berikutnya(room_id: str, setelah: datetime, property_id: str) -> Optional[Dict[str, Any]]:

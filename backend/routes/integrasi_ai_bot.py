@@ -133,10 +133,23 @@ async def ai_bot_ketersediaan(
     for t, v in per_tipe.items():
         item = {"tipe": t, **v}
         if v["kamar_tersedia"] == 0 and is_today:
-            rekom = await rekomendasi_slot_kosong(t, property_id)
+            rekom = await rekomendasi_slot_kosong(t, property_id, jumlah=3)
             if rekom:
                 item["estimasi_kosong_lagi"] = rekom["siap_pakai"].isoformat()
                 item["estimasi_kamar_nomor"] = rekom["room_nomor"]
+                # Durasi Day Use utk kandidat ini mungkin lebih pendek dari 6 jam standar
+                # kalau ada tamu Menginap check-in tak lama setelah kamar ini siap
+                # (2026-08-01) - AI wajib sampaikan ini, jangan janjikan durasi penuh.
+                if rekom.get("dipersingkat"):
+                    item["estimasi_durasi_dipersingkat"] = True
+                    item["estimasi_selesai_max"] = rekom["usulan_selesai"].isoformat()
+                # Kandidat kamar/tipe lain yang juga akan siap hari ini (2026-08-01,
+                # permintaan Agus - tawarkan pilihan seperti CS manusia, bukan cuma 1 opsi).
+                if rekom.get("alternatif"):
+                    item["estimasi_alternatif"] = [
+                        {"room_nomor": a["room_nomor"], "siap_pakai": a["siap_pakai"].isoformat()}
+                        for a in rekom["alternatif"]
+                    ]
         out.append(item)
     return {"tanggal": tanggal, "ketersediaan": out}
 
@@ -331,6 +344,10 @@ class AiBotBookingRequestIn(BaseModel):
     tanggal_checkout: Optional[str] = None
     catatan: Optional[str] = None
     payment_option: Optional[str] = None  # dp50 | full, kalau tamu sudah sebutkan sendiri
+    # Preferensi metode Tripay (2026-08-01) - QRIS2|PERMATAVA|BNIVA|BRIVA|MANDIRIVA, kalau
+    # tamu sudah sebutkan sendiri di chat. None/nilai tidak dikenal = fallback QRIS di
+    # auto-approve (lihat TRIPAY_METODE_VALID, routes/booking_requests.py).
+    metode_pembayaran: Optional[str] = None
     # Diskon diskresi (2026-07-21) - True HANYA kalau tamu SENDIRI yang minta diskon di
     # chat (kebijakan bisnis: AI tidak boleh menawarkan duluan). Persentasenya TIDAK
     # dipercaya dari sini - dihitung ulang server dari data booking (hitung_diskon_ai_diskresi
