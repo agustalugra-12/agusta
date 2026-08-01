@@ -250,6 +250,28 @@ async def move_room(room_id: str, body: MoveRoomBody, user: dict = Depends(get_c
                     "move_reason": body.alasan or "",
                 }}
             )
+    # update booking Menginap aktif juga (2026-08-01, bug nyata ditemukan: laporan user
+    # "kamar 16 kosong tapi tidak bisa dimasukkan tamu day use" - cabang menginap di atas
+    # cuma memindahkan `info` di db.rooms, TIDAK PERNAH update db.bookings.room_id/
+    # room_nomor tamu yang dipindah. Akibatnya kamar LAMA tetap "terkunci" di
+    # check_room_available oleh booking yang sebenarnya sudah pindah [kamar kosong tapi
+    # booking baru selalu ditolak "bentrok"], DAN kamar BARU sama sekali TIDAK PUNYA
+    # proteksi booking [risiko double-booking kamar yang fisiknya sudah terisi tamu
+    # nyata]. Sama pola dengan fix db.checkins di atas, cuma untuk db.bookings.
+    if old["status"] == "menginap":
+        bk = await db.bookings.find_one(scoped({
+            "room_id": old["id"], "tipe": "menginap", "status": "checked_in",
+        }, property_id), sort=[("jam_mulai", -1)])
+        if bk:
+            await db.bookings.update_one(
+                {"id": bk["id"]},
+                {"$set": {
+                    "room_id": new["id"], "room_nomor": new["nomor"], "room_tipe": new["tipe"],
+                    "moved_from_room_id": old["id"], "moved_from_room_nomor": old["nomor"],
+                    "moved_at": now_iso(), "moved_by": user["nama"],
+                    "move_reason": body.alasan or "",
+                }}
+            )
     # housekeeping log untuk kamar lama
     await db.housekeeping_log.insert_one({
         "id": str(uuid.uuid4()), "property_id": property_id, "room_id": old["id"], "room_nomor": old["nomor"],
