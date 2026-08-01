@@ -881,7 +881,16 @@ export default function Dashboard() {
             {rooms.map((r) => {
               // Saat tanggal yang dilihat BUKAN hari ini, status realtime kamar (day_use/menginap/dll) tidak relevan → anggap kosong.
               const effStatus = isToday ? r.status : "kosong";
-              const upcomingBk = effStatus === "kosong" ? bookingsOnDate
+              // "kosong" ATAU "perlu_dibersihkan" (2026-08-01, bug nyata ditemukan Agus -
+              // tamu terbooking "Radea" hilang dari dashboard) - kamar yang baru saja
+              // ditinggal tamu lain (belum dibersihkan) TIDAK ADA tamu aktif di dalamnya,
+              // sama seperti kamar kosong, jadi booking tamu BERIKUTNYA hari ini tetap
+              // harus kelihatan - sebelumnya cuma dicek "kosong" doang, jadi begitu kamar
+              // masuk status "perlu_dibersihkan" (mis. tamu lain sempat dipindah ke situ lalu
+              // dipindah lagi), booking tamu yang sudah menunggu jadi tidak terlihat sama
+              // sekali sampai housekeeping selesai - padahal tidak ada hubungannya.
+              const belumAdaTamuAktif = effStatus === "kosong" || effStatus === "perlu_dibersihkan";
+              const upcomingBk = belumAdaTamuAktif ? bookingsOnDate
                 .filter(b => b.room_id === r.id)
                 .sort((a, c) => a.jam_mulai.localeCompare(c.jam_mulai))[0] : null;
               const bg = upcomingBk ? (upcomingBk.tipe === "menginap" ? "#3B82F6" : "#92400E") : statusColor(effStatus);
@@ -894,10 +903,11 @@ export default function Dashboard() {
               // sedang Day Use TAPI juga sudah ada booking Menginap yang akan check-in nanti
               // hari ini di kamar yang SAMA (diperbolehkan - lihat scheduling_engine.py,
               // asal tidak overlap waktu), booking Menginap itu jadi tidak kelihatan sama
-              // sekali di dashboard sampai Day Use-nya selesai. Cuma dicek saat kamar TIDAK
-              // kosong (kosong sudah punya jalur `upcomingBk` sendiri di atas) - cari booking
-              // lain hari ini di kamar ini yang jam_mulai-nya masih di depan (belum mulai).
-              const laterTodayBk = (isToday && effStatus !== "kosong") ? bookingsOnDate
+              // sekali di dashboard sampai Day Use-nya selesai. Cuma dicek saat kamar BENAR-
+              // BENAR ada tamu aktif sekarang (kosong/perlu_dibersihkan sudah punya jalur
+              // `upcomingBk` sendiri di atas) - cari booking lain hari ini di kamar ini yang
+              // jam_mulai-nya masih di depan (belum mulai).
+              const laterTodayBk = (isToday && !belumAdaTamuAktif) ? bookingsOnDate
                 .filter(b => b.room_id === r.id && new Date(b.jam_mulai) > new Date())
                 .sort((a, c) => a.jam_mulai.localeCompare(c.jam_mulai))[0] : null;
               const laterColor = laterTodayBk ? (laterTodayBk.tipe === "menginap" ? "#3B82F6" : "#92400E") : null;

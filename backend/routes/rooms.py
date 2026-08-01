@@ -1,5 +1,6 @@
 from core import *
 from routes.push import send_push
+from reservation_service import check_room_available
 
 UPLOAD_DIR_ROOMS = ROOT_DIR / "uploads" / "rooms"
 UPLOAD_DIR_ROOMS.mkdir(parents=True, exist_ok=True)
@@ -231,6 +232,31 @@ async def move_room(room_id: str, body: MoveRoomBody, user: dict = Depends(get_c
         raise HTTPException(404, "Kamar tujuan tidak ditemukan")
     if new["status"] != "kosong":
         raise HTTPException(400, f"Kamar tujuan tidak kosong (status: {new['status']})")
+
+    # Cek benturan JADWAL di kamar tujuan (2026-08-01, bug nyata ditemukan: pindah tamu
+    # Menginap ke kamar yang status-nya "kosong" SAAT INI tapi sebenarnya sudah ada booking
+    # LAIN yang menunggu di kamar yang sama untuk tanggal yang sama - move_room sebelumnya
+    # cuma cek status kamar sesaat (bisa "kosong" walau ada booking_pending yang belum
+    # check-in), tidak pernah cek jadwal sungguhan seperti check_room_available. Akibatnya
+    # tamu bisa dipindah ke kamar yang diam-diam sudah "terisi" tamu lain di sistem -
+    # konflik baru ketahuan belakangan saat tamu satunya mau check-in.
+    booking_terkait = None
+    if old["status"] == "menginap":
+        booking_terkait = await db.bookings.find_one(scoped({
+            "room_id": old["id"], "tipe": "menginap", "status": "checked_in",
+        }, property_id), sort=[("jam_mulai", -1)])
+    elif old["status"] == "day_use":
+        ci_cek = await db.checkins.find_one(scoped({"room_id": old["id"], "status": "aktif"}, property_id))
+        if ci_cek:
+            booking_terkait = {"jam_mulai": ci_cek["jam_checkin"], "jam_selesai": None}
+    if booking_terkait and booking_terkait.get("jam_mulai"):
+        mulai_cek = datetime.fromisoformat(booking_terkait["jam_mulai"])
+        selesai_cek = (
+            datetime.fromisoformat(booking_terkait["jam_selesai"]) if booking_terkait.get("jam_selesai")
+            else mulai_cek + timedelta(hours=6)  # day_use aktif belum ada jam_selesai pasti, pakai durasi standar sbg estimasi konflik
+        )
+        await check_room_available(new["id"], mulai_cek, selesai_cek, property_id)
+
     new_status = old["status"]
     new_info = dict(old.get("info") or {})
     # update kamar baru
