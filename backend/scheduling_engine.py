@@ -34,13 +34,34 @@ async def estimasi_kamar_siap(room_id: str, property_id: str) -> Optional[dateti
     yang penuh karena Menginap TIDAK PERNAH dikasih estimasi - harus dijawab "penuh" apa
     adanya, bukan janji palsu kapan kosong."""
     now = datetime.now(timezone.utc)
+    kandidat_siap = []
+
     aktif = await db.bookings.find_one(scoped({
         "room_id": room_id, "tipe": "day_use", "status": {"$in": BOOKING_AKTIF_STATUS},
         "jam_mulai": {"$lte": now.isoformat()}, "jam_selesai": {"$gt": now.isoformat()},
     }, property_id), sort=[("jam_selesai", 1)])
-    if not aktif or not aktif.get("jam_selesai"):
+    if aktif and aktif.get("jam_selesai"):
+        kandidat_siap.append(datetime.fromisoformat(aktif["jam_selesai"]) + timedelta(minutes=BUFFER_HOUSEKEEPING_MENIT))
+
+    # Walk-in Day Use lewat db.checkins (2026-08-01, bug nyata ditemukan: Harmoni SEMUA
+    # kamarnya walk-in via checkin staf langsung, bukan db.bookings sama sekali - fungsi
+    # ini sebelumnya cuma cek db.bookings, jadi SELALU return None utk properti yang
+    # walk-in-nya lewat checkins - AI salah bilang "penuh, tidak ada estimasi" padahal
+    # datanya sebenarnya ada: jam_checkin + durasi Day Use standar). checkins tidak
+    # menyimpan jam_selesai terjadwal (checkout riil ditentukan pas tamu benar2 keluar),
+    # jadi diestimasi dari jam_checkin + DAYUSE_DURASI_JAM standar - PERKIRAAN, bukan
+    # jaminan (konsisten dengan framing "estimasi_kosong_lagi" yang sudah ada).
+    checkin_aktif = await db.checkins.find_one(scoped({
+        "room_id": room_id, "status": "aktif", "jam_checkout": None,
+    }, property_id), sort=[("jam_checkin", 1)])
+    if checkin_aktif and checkin_aktif.get("jam_checkin"):
+        estimasi = datetime.fromisoformat(checkin_aktif["jam_checkin"]) + timedelta(hours=DAYUSE_DURASI_JAM)
+        if estimasi > now:  # kalau sudah lewat estimasi (overtime), jangan kasih waktu masa lalu
+            kandidat_siap.append(estimasi + timedelta(minutes=BUFFER_HOUSEKEEPING_MENIT))
+
+    if not kandidat_siap:
         return None
-    return datetime.fromisoformat(aktif["jam_selesai"]) + timedelta(minutes=BUFFER_HOUSEKEEPING_MENIT)
+    return min(kandidat_siap)
 
 
 async def rekomendasi_slot_kosong(tipe_kamar: str, property_id: str) -> Optional[Dict[str, Any]]:
