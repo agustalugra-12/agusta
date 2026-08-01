@@ -54,10 +54,18 @@ async def _request_lock(rid: str):
     finally:
         lock.release()
 
-# Channel Tripay default untuk auto-approve Day Use (QRIS - paling universal di Indonesia,
-# hampir semua e-wallet/mobile banking bisa scan). Kode Tripay sungguhan "QRIS2", BUKAN
-# "QRIS" - dicek langsung ke GET /payments/tripay/channels sebelum dipakai di sini.
+# Channel Tripay FALLBACK untuk auto-approve (QRIS - paling universal di Indonesia,
+# hampir semua e-wallet/mobile banking bisa scan) - dipakai HANYA kalau tamu tidak
+# menyebutkan preferensi metode pembayaran sendiri di chat. Kode Tripay sungguhan "QRIS2",
+# BUKAN "QRIS" - dicek langsung ke GET /payments/tripay/channels sebelum dipakai di sini.
 AUTO_APPROVE_PAYMENT_METHOD = "QRIS2"
+
+# Metode pembayaran valid yang boleh dipilih tamu lewat AI WhatsApp (2026-08-01, permintaan
+# user - sebelumnya AI selalu memaksa QRIS tanpa menawarkan pilihan lain walau Tripay
+# sudah aktif dengan banyak channel). Dicocokkan ke kode channel Tripay sungguhan yang
+# aktif di akun T51494 (GET /payments/tripay/channels) - kalau Tripay nambah/kurangi
+# channel aktif di masa depan, sesuaikan set ini juga.
+TRIPAY_METODE_VALID = {"QRIS2", "PERMATAVA", "BNIVA", "BRIVA", "MANDIRIVA"}
 
 
 def _kode_request() -> str:
@@ -220,7 +228,7 @@ async def _coba_auto_approve_day_use(doc: Dict[str, Any]) -> None:
             from routes.tripay import tripay_create_transaction
             trx = await tripay_create_transaction(TripayCreateTransactionBody(
                 booking_id=booking["id"], payment_option=doc["payment_option_diminta"],
-                method=AUTO_APPROVE_PAYMENT_METHOD,
+                method=doc.get("metode_pembayaran_diminta") or AUTO_APPROVE_PAYMENT_METHOD,
             ))
 
             now = now_iso()
@@ -408,7 +416,7 @@ async def _coba_auto_approve_menginap(doc: Dict[str, Any]) -> None:
             from routes.tripay import tripay_create_transaction
             trx = await tripay_create_transaction(TripayCreateTransactionBody(
                 booking_id=booking["id"], payment_option=doc["payment_option_diminta"],
-                method=AUTO_APPROVE_PAYMENT_METHOD,
+                method=doc.get("metode_pembayaran_diminta") or AUTO_APPROVE_PAYMENT_METHOD,
             ))
 
             now = now_iso()
@@ -540,8 +548,18 @@ async def buat_booking_request(data: Dict[str, Any], property_id: Optional[str] 
     # tamu sama sekali kalau approve/tolak perlu konfirmasi lebih lanjut. no_hp juga dicek
     # minimal harus mayoritas digit (bukan validasi format ketat - importir bisa beda-beda,
     # cukup tolak yang jelas-jelas bukan nomor sama sekali, mis. kosong/nama tertukar).
-    if not (data.get("nama_tamu") or "").strip():
-        raise HTTPException(400, "Nama tamu wajib diisi - tanya nama lengkap tamu sebelum lanjut booking.")
+    nama_tamu_bersih = (data.get("nama_tamu") or "").strip()
+    # Wajib nama ASLI, bukan cuma non-kosong (2026-08-01, bug nyata ditemukan: AI pernah
+    # sama sekali tidak menanyakan nama tamu di sepanjang percakapan, lalu mengisi
+    # guest_name dengan EMOJI sebagai pengisi kosong - booking tersimpan tanpa nama tamu
+    # yang bisa dibaca staf). Minimal 2 huruf ASLI (unicode letter, dukung nama non-Latin)
+    # - cukup untuk menolak emoji/simbol/angka semata tanpa validasi format nama yang kaku.
+    if len(nama_tamu_bersih) < 2 or sum(c.isalpha() for c in nama_tamu_bersih) < 2:
+        raise HTTPException(
+            400,
+            "Nama tamu belum valid (kosong/bukan nama asli, mis. emoji/simbol) - WAJIB tanya "
+            "nama lengkap tamu sungguhan sebelum lanjut booking, jangan isi dengan placeholder apapun.",
+        )
     no_hp_bersih = (data.get("no_hp") or "").strip()
     if not no_hp_bersih or sum(c.isdigit() for c in no_hp_bersih) < 8:
         raise HTTPException(
@@ -593,6 +611,9 @@ async def buat_booking_request(data: Dict[str, Any], property_id: Optional[str] 
         "tanggal_checkin": data["tanggal_checkin"], "jam_checkin": data.get("jam_checkin"),
         "tanggal_checkout": data.get("tanggal_checkout"), "catatan": data.get("catatan") or "",
         "payment_option_diminta": payment_option if payment_option in ("dp50", "full") else None,
+        "metode_pembayaran_diminta": (
+            data.get("metode_pembayaran") if data.get("metode_pembayaran") in TRIPAY_METODE_VALID else None
+        ),
         "preview_kedatangan_ke": diskon_info["kedatangan_ke"], "preview_diskon_persen": diskon_persen_efektif,
         "preview_diskon_member_persen": diskon_info["diskon_persen"], "diskon_ai_persen": diskon_ai_persen,
         "preview_harga": preview_harga,
