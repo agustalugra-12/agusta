@@ -31,6 +31,8 @@ from contextlib import asynccontextmanager
 
 _room_locks: Dict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
 
+WIB = timezone(timedelta(hours=7))
+
 
 @asynccontextmanager
 async def room_locks(*room_ids: str):
@@ -114,13 +116,29 @@ async def create_reservation(data: Dict[str, Any], property_id: str, source: str
     if r["status"] == "maintenance":
         raise HTTPException(400, "Kamar sedang maintenance, tidak bisa dibooking")
     # Kamar yang sedang terisi (day_use/menginap/perlu_dibersihkan) SAAT INI cuma menghalangi
-    # booking yang mulai HARI INI JUGA — booking untuk tanggal mendatang tetap boleh, cukup
-    # divalidasi lewat check_room_available (overlap tanggal sungguhan) di bawah. Konsisten
-    # dengan logika public_availability (is_today) di routes/public.py. Bug ditemukan
-    # 2026-07-17: booking publik utk tanggal mendatang salah ditolak "Kamar tidak tersedia"
-    # hanya karena kamar itu kebetulan sedang dipakai tamu lain SAAT INI, walau sudah kosong
-    # lagi jauh sebelum tanggal check-in yang diminta.
-    if mulai.astimezone(timezone.utc).date() <= datetime.now(timezone.utc).date() and r["status"] != "kosong":
+    # booking yang checkin-nya SEKARANG/SUDAH LEWAT — booking utk jam NANTI (baik hari ini
+    # atau tanggal lain) tetap boleh, cukup divalidasi lewat check_room_available (overlap
+    # jam presisi sungguhan) di bawah. Konsisten dengan logika public_availability (is_today)
+    # di routes/public.py. Bug ditemukan 2026-07-17: booking publik utk tanggal mendatang
+    # salah ditolak "Kamar tidak tersedia" hanya karena kamar itu kebetulan sedang dipakai
+    # tamu lain SAAT INI, walau sudah kosong lagi jauh sebelum tanggal check-in yang diminta.
+    #
+    # Ralat 2026-08-02 (kasus lapangan Agus - tamu chat jam 8 pagi setuju booking Day Use
+    # jam 2 siang setelah AI kasih rekomendasi jam; atau tamu walk-in jam 9 pagi minta
+    # Menginap begitu staf infokan kamar ready jam 2 siang lewat Quick Book): guard lama
+    # bandingkan TANGGAL KALENDER (bukan jam presisi) pakai `datetime.now(timezone.utc)` -
+    # PADAHAL server jalan di zona WIB (server.timezone = Asia/Jakarta) sementara "hari ini"
+    # semestinya dihitung dari WIB (konsisten dgn is_today di public.py yg pakai
+    # datetime.now() lokal server, otomatis WIB). Akibat gabungan 2 masalah ini: (1) guard
+    # cuma cek TANGGAL (bukan jam), jadi booking jam 2 siang nanti tetap ditolak kalau kamar
+    # masih terisi jam 8 pagi SEKARANG, padahal jam 2 siang jelas beda dari "sekarang" -
+    # (2) window "grey zone" 00:00-07:00 WIB (UTC belum ganti tanggal walau WIB sudah)
+    # bikin perilakunya tidak konsisten. Sekarang guard ini HANYA berlaku kalau checkin
+    # BENAR-BENAR sekarang/sudah lewat (mulai <= now, dibandingkan di WIB) - booking utk jam
+    # mendatang (nanti hari ini ATAU tanggal lain) sepenuhnya diserahkan ke check_room_available
+    # (validasi jam presisi, tahu persis kapan tamu SEKARANG ini akan checkout).
+    now_wib = datetime.now(timezone.utc).astimezone(WIB)
+    if mulai.astimezone(WIB) <= now_wib and r["status"] != "kosong":
         raise HTTPException(400, "Kamar tidak tersedia")
 
     extra_bed_qty = max(0, min(EXTRA_BED_MAX, int(data.get("extra_bed_qty") or 0)))
