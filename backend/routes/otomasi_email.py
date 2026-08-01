@@ -14,6 +14,37 @@ from reservation_service import check_room_available, create_reservation, room_l
 
 _openai_client = OpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
 
+WIB = timezone(timedelta(hours=7))
+
+
+def _parse_ota_datetime(s: str, field: str) -> datetime:
+    """Parse check_in/check_out hasil AI Email Parser (dipakai buat_reservasi_otomatis &
+    proses_modifikasi_otomatis) - BEDA dari parse_iso generik di core.py karena string ini
+    SELALU tanpa info zona waktu eksplisit (dikonfirmasi lewat data nyata 2026-08-02: puluhan
+    email RedDoorz semuanya "2026-08-01T14:00:00" polos, tidak pernah ada offset), sementara
+    prompt AI Email Parser sendiri instruksikan "asumsikan jam 14:00/12:00" - jam check-in/
+    checkout STANDAR PROPERTI, yang jelas WIB lokal (checkin_time/checkout_time di Settings
+    juga WIB), bukan UTC.
+
+    Bug nyata ditemukan 2026-08-02 (laporan Agus soal tamu Jakaria "aneh muncul di tanggal 2"
+    - ternyata bukan bug itu, tapi investigasi menemukan bug LAIN yang nyata): parse_iso()
+    generik mengasumsikan UTC untuk string tanpa offset (`d.replace(tzinfo=timezone.utc)`) -
+    akibatnya SEMUA booking OTA RedDoorz (mayoritas tamu di sistem) tersimpan jam_mulai/
+    jam_selesai 7 JAM LEBIH LAMBAT dari waktu asli (14:00 WIB tersimpan seolah 14:00 UTC =
+    21:00 WIB). Tidak menggeser TANGGAL kalender untuk kasus checkin/checkout standar (14:00/
+    12:00 masih jauh dari batas tengah malam), tapi JAM yang tersimpan salah total, dan bisa
+    menggeser tanggal utk kasus jam checkin dekat tengah malam.
+
+    Kalau string ternyata SUDAH punya offset eksplisit (belum pernah terjadi di data nyata,
+    tapi jaga-jaga), dihormati apa adanya - TIDAK dipaksa WIB."""
+    try:
+        d = datetime.fromisoformat(s.replace("Z", "+00:00"))
+    except Exception:
+        raise HTTPException(400, f"Format {field} tidak valid (harus ISO 8601)")
+    if d.tzinfo is None:
+        d = d.replace(tzinfo=WIB)
+    return d.astimezone(timezone.utc)
+
 GOOGLE_AUTH_ENDPOINT = "https://accounts.google.com/o/oauth2/v2/auth"
 GOOGLE_TOKEN_ENDPOINT = "https://oauth2.googleapis.com/token"
 GOOGLE_USERINFO_ENDPOINT = "https://www.googleapis.com/oauth2/v3/userinfo"
@@ -322,8 +353,8 @@ async def buat_reservasi_otomatis(log_id: str, data: dict, sumber: str, subjek: 
         return
 
     try:
-        check_in = parse_iso(data["check_in"], "check_in")
-        check_out = parse_iso(data["check_out"], "check_out")
+        check_in = _parse_ota_datetime(data["check_in"], "check_in")
+        check_out = _parse_ota_datetime(data["check_out"], "check_out")
     except HTTPException:
         await db.email_logs.update_one({"id": log_id}, {"$set": {
             "status": "Manual_Required", "alasan": "Format tanggal check-in/check-out hasil AI tidak valid — isi manual.",
@@ -592,8 +623,8 @@ async def proses_modifikasi_otomatis(log_id: str, data: dict, sumber: str, subje
     try:
         if not check_in_raw or not check_out_raw:
             raise ValueError("tanggal check-in/check-out baru tidak disebutkan di email")
-        new_start = parse_iso(check_in_raw, "check_in")
-        new_end = parse_iso(check_out_raw, "check_out")
+        new_start = _parse_ota_datetime(check_in_raw, "check_in")
+        new_end = _parse_ota_datetime(check_out_raw, "check_out")
     except (ValueError, HTTPException):
         await _modifikasi_menunggu_review(
             bookings, log_id, no_reservasi,
