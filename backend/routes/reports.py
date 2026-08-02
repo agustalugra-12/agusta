@@ -342,13 +342,22 @@ async def report_summary(user: dict = Depends(get_current_user), property_id: st
 @api.get("/reports/kedatangan-harian")
 async def report_kedatangan_harian(user: dict = Depends(get_current_user), property_id: str = Depends(get_active_property)):
     """Jumlah kedatangan tamu per hari, 30 hari terakhir (2026-07-21, permintaan user -
-    grafik tren kedatangan di Dashboard utama). Sumber `db.bookings.jam_mulai` (tanggal
-    check-in), BUKAN `db.checkins` - collection itu jarang terisi (cuma jalur check-in
-    manual staf tertentu yang menulis ke situ, sebagian besar booking online/OTA/AI tidak
-    pernah membuat dokumen di sana), jadi tidak representatif untuk tren. Booking
-    `cancelled` dikecualikan (tidak pernah benar-benar datang). Dihitung per booking
-    (1 booking = 1 "kedatangan", konsisten dgn cara kamar dihitung terisi/tidaknya),
-    bukan per kepala (jumlah_tamu) - lebih mudah dibaca staf sebagai tren reservasi."""
+    grafik tren kedatangan di Dashboard utama). Sumber utama `db.bookings.jam_mulai`
+    (tanggal check-in) - booking `cancelled` dikecualikan (tidak pernah benar-benar
+    datang). Dihitung per booking (1 booking = 1 "kedatangan", konsisten dgn cara kamar
+    dihitung terisi/tidaknya), bukan per kepala (jumlah_tamu) - lebih mudah dibaca staf
+    sebagai tren reservasi.
+
+    `db.checkins` TANPA `from_booking_id` (2026-08-02, bug nyata ditemukan Agus - grafik
+    ini kelihatan sangat undercount, dilaporkan sbg "data tidak sinkron"/"harusnya
+    nampilin kedatangan day use juga") DITAMBAHKAN ke hitungan, dikunci per `jam_checkin`.
+    Asumsi lama dokumentasi ini ("db.checkins jarang terisi") sudah TIDAK BENAR lagi -
+    audit 2026-08-02 menemukan 25 check-in walk-in day use murni cuma dalam 2 hari
+    (1-2 Agustus), SEMUANYA hilang dari grafik ini krn walk-in Quick Book (staf pilih
+    kamar kosong -> langsung isi tamu Day Use) TIDAK PERNAH membuat dokumen di
+    `db.bookings` sama sekali, cuma di `db.checkins`. Checkins YANG PUNYA `from_booking_id`
+    (asal dari booking WA AI/online yang staf check-in-kan) SENGAJA DILEWATI di sini -
+    tamu itu sudah terhitung dari sisi `db.bookings`-nya, ikut dihitung lagi jadi dobel."""
     end_date = datetime.now(timezone.utc).date()
     start_date = end_date - timedelta(days=29)
     start_dt = datetime.combine(start_date, datetime.min.time()).replace(tzinfo=timezone.utc)
@@ -356,10 +365,20 @@ async def report_kedatangan_harian(user: dict = Depends(get_current_user), prope
         "status": {"$ne": "cancelled"},
         "jam_mulai": {"$gte": start_dt.isoformat()},
     }, property_id), {"_id": 0, "jam_mulai": 1}).to_list(5000)
+    walkin_checkins = await db.checkins.find(scoped({
+        "from_booking_id": None,
+        "jam_checkin": {"$gte": start_dt.isoformat()},
+    }, property_id), {"_id": 0, "jam_checkin": 1}).to_list(5000)
     per_tanggal: Dict[str, int] = {}
     for b in bookings:
         try:
             tgl = parse_iso(b["jam_mulai"], "jam_mulai").date().isoformat()
+        except Exception:
+            continue
+        per_tanggal[tgl] = per_tanggal.get(tgl, 0) + 1
+    for c in walkin_checkins:
+        try:
+            tgl = parse_iso(c["jam_checkin"], "jam_checkin").date().isoformat()
         except Exception:
             continue
         per_tanggal[tgl] = per_tanggal.get(tgl, 0) + 1
