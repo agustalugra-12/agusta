@@ -36,6 +36,11 @@ const todayLocal = () => {
 
 const toDateOnly = (d) => new Date(d.getFullYear(), d.getMonth(), d.getDate());
 
+// Warna marun (2026-08-02, permintaan Agus) - booking (Menginap/Day Use) yang SUDAH
+// di-checkout staf (status "checked_out"), dipakai di grid Daftar Kamar supaya beda
+// jelas dari biru/coklat (masih occupies tanggal itu TAPI belum di-checkout).
+const MARUN_CHECKOUT = "#7F1D1D";
+
 // Exclusive-checkout-date rule (2026-08-02) - diekstrak dari logika bookingsOnDate yang
 // sudah ada supaya bisa dipakai ulang utk Grid 6 Hari (permintaan Agus) TANPA duplikasi
 // aturan yang sama (hari CHECK-OUT tidak dihitung menempati, KECUALI day-use checkin/
@@ -497,7 +502,15 @@ export default function Dashboard() {
     const upcomingBk = belumAdaTamuAktif ? bookingsForCol
       .filter(b => b.room_id === r.id)
       .sort((a, c) => a.jam_mulai.localeCompare(c.jam_mulai))[0] : null;
-    const bg = upcomingBk ? (upcomingBk.tipe === "menginap" ? "#3B82F6" : "#92400E") : statusColor(effStatus);
+    // Marun utk booking yang SUDAH di-checkout (2026-08-02, permintaan Agus - kolom
+    // tanggal lain di grid sebelumnya nunjukin biru/menginap terus walau tamunya sudah
+    // benar2 checkout, karena bookingOccupiesDateOnly cuma cek rentang tanggal, tidak
+    // peduli status). Biru = masih occupies tanggal itu TAPI belum di-checkout staf
+    // (butuh perhatian/pengingat), marun = sudah selesai di-checkout (murni histori).
+    const sudahCheckout = upcomingBk?.status === "checked_out";
+    const bg = upcomingBk
+      ? (sudahCheckout ? MARUN_CHECKOUT : (upcomingBk.tipe === "menginap" ? "#3B82F6" : "#92400E"))
+      : statusColor(effStatus);
     const bkLabel = upcomingBk
       ? new Date(upcomingBk.jam_mulai).toLocaleString("id-ID", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })
       : null;
@@ -660,6 +673,24 @@ export default function Dashboard() {
   };
 
   // Mark No-Show (tamu tidak datang): hanya untuk booking_paid, DP/full payment tidak direfund
+  // Checkout tamu Menginap langsung dari dialog Booking Detail (2026-08-02, bug nyata
+  // ditemukan Agus - kamar 11/Maulana tidak bisa check-in karena tamu sebelumnya belum
+  // di-checkout, TAPI tidak ada tombol checkout sama sekali kalau booking dibuka lewat
+  // klik kolom tanggal LAIN (bukan Hari Ini) di grid - itu membuka dialog ini
+  // [bookingDetail], bukan dialog Action Room [actionRoom] yang punya "Selesai
+  // Menginap". Aturan tetap: setiap tamu WAJIB di-checkout dulu sebelum kamar bisa
+  // dipakai tamu baru (tidak diubah/dilonggarkan) - ini cuma nambah jalur akses ke aksi
+  // checkout yang sama persis (PUT /rooms/{id}/status -> kosong), bukan tombol baru.
+  const checkoutMenginapFromDetail = async () => {
+    if (!bookingDetail) return;
+    if (!window.confirm(`Checkout tamu ${bookingDetail.nama_tamu} dari Kamar ${bookingDetail.room_nomor}? Kamar akan berstatus Kosong.`)) return;
+    try {
+      await api.put(`/rooms/${bookingDetail.room_id}/status`, { status: "kosong" });
+      toast.success(`Kamar ${bookingDetail.room_nomor} berhasil di-checkout, sekarang Kosong.`);
+      setBookingDetail(null); load();
+    } catch (e) { toast.error(e?.response?.data?.detail || "Gagal checkout"); }
+  };
+
   const markNoShow = async () => {
     if (!bookingDetail) return;
     const paid = Number(bookingDetail.amount_due || 0);
@@ -1454,10 +1485,19 @@ export default function Dashboard() {
                 </Button>
               </>
             )}
-            {!rescheduleMode && bookingDetail?.status === "checked_in" && Number(bookingDetail.total || 0) - Number(bookingDetail.amount_due || 0) > 0 && (
-              <Button data-testid="bd-collect-checked-in" onClick={openCollectDialog} className="bg-blue-700 hover:bg-blue-800 text-white">
-                Collect Sisa Rp {(Number(bookingDetail.total || 0) - Number(bookingDetail.amount_due || 0)).toLocaleString("id-ID")}
-              </Button>
+            {!rescheduleMode && bookingDetail?.status === "checked_in" && (
+              <>
+                {Number(bookingDetail.total || 0) - Number(bookingDetail.amount_due || 0) > 0 && (
+                  <Button data-testid="bd-collect-checked-in" onClick={openCollectDialog} className="bg-blue-700 hover:bg-blue-800 text-white">
+                    Collect Sisa Rp {(Number(bookingDetail.total || 0) - Number(bookingDetail.amount_due || 0)).toLocaleString("id-ID")}
+                  </Button>
+                )}
+                {bookingDetail.tipe === "menginap" && (
+                  <Button data-testid="bd-checkout-menginap" onClick={checkoutMenginapFromDetail} className="bg-emerald-600 hover:bg-emerald-700 text-white">
+                    Checkout Tamu
+                  </Button>
+                )}
+              </>
             )}
             {rescheduleMode && (
               <>
