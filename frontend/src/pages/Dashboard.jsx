@@ -931,21 +931,27 @@ export default function Dashboard() {
           </div>
           <div data-testid="room-grid" className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 gap-3">
             {rooms.map((r) => {
-              // Saat tanggal yang dilihat BUKAN hari ini, status realtime kamar (day_use/menginap/dll) tidak relevan → anggap kosong.
-              const effStatus = isToday ? r.status : "kosong";
-              // Koreksi 2026-08-02 (Agus meluruskan setelah sempat salah dicoba jadi status
-              // baru "checkout_terlambat"): status kamar HARUS ikut lifecycle operasional
-              // booking (checked-in -> checked-out lewat aksi staf), BUKAN perbandingan
-              // selected_date vs tanggal checkout - status "Menginap" (biru) tetap benar
-              // walau HARI INI adalah tanggal checkout, selama staf belum klik checkout
-              // sungguhan. Yang berubah HANYA badge informasional kecil (bukan warna/label
-              // utama) - beri tahu staf checkout-nya jatuh tempo, tanpa mengubah status.
-              // Dicek dari `bookings` (bukan bookingsOnDate - itu SENGAJA sudah exclude hari
-              // checkout, jadi tidak akan pernah cocok untuk kasus "checkout-nya hari ini").
-              const checkoutHariIniBk = (isToday && effStatus === "menginap")
+              // KEPUTUSAN FINAL 2026-08-02 (Agus membalik koreksi lifecycle sebelumnya -
+              // "gini aku gunakan pms red dors tamu menginap hari ini tampil hari ini saja
+              // tidak tampil di tanggal 3... ini yang aku mau tetap konsisten"): status kamar
+              // SEKARANG murni berdasarkan TANGGAL (persis cara RedDoorz), bukan lifecycle
+              // checked-in/checked-out staf lagi - begitu tanggal checkout tiba (walau staf
+              // belum sempat klik Checkout sungguhan), kamar dianggap "kosong" utk tampilan &
+              // otomatis masuk jalur upcomingBk (exclusive-checkout-date, sama persis logika
+              // Occupancy Calendar) supaya booking BERIKUTNYA di kamar sama hari ini tetap
+              // kelihatan. (Riwayat: sempat dicoba status baru "checkout_terlambat" -> ditolak
+              // -> diganti badge info doang mempertahankan lifecycle -> SEKARANG dibalik lagi
+              // ke murni tanggal, ini yang final per keputusan eksplisit Agus.)
+              const menginapLewatCheckout = (isToday && r.status === "menginap")
                 ? bookings.find(b => b.room_id === r.id && b.tipe === "menginap" &&
                     toDateOnly(new Date(b.jam_selesai)).getTime() <= toDateOnly(new Date()).getTime())
                 : null;
+              const effStatus = isToday ? (menginapLewatCheckout ? "kosong" : r.status) : "kosong";
+              // Pengingat staf (BUKAN blokir booking baru - backend check_room_available
+              // tetap jadi penjaga asli anti-double-booking dari data booking sungguhan,
+              // ini cuma nudge visual) - kamar kelihatan "kosong" di atas TAPI tamu lama
+              // belum benar-benar di-checkout staf, supaya tidak lupa diproses.
+              const checkoutHariIniBk = menginapLewatCheckout;
               // "kosong" ATAU "perlu_dibersihkan" (2026-08-01, bug nyata ditemukan Agus -
               // tamu terbooking "Radea" hilang dari dashboard) - kamar yang baru saja
               // ditinggal tamu lain (belum dibersihkan) TIDAK ADA tamu aktif di dalamnya,
@@ -1032,10 +1038,10 @@ export default function Dashboard() {
                 {checkoutHariIniBk && (
                   <div
                     data-testid={`room-checkout-due-${r.nomor}`}
-                    title="Booking Menginap ini sudah lewat/jatuh tempo tanggal checkout - status tetap Menginap sampai staf proses checkout"
+                    title={`Kamar tampil kosong sesuai tanggal checkout (${checkoutHariIniBk.nama_tamu}), TAPI staf belum klik Checkout sungguhan - kamar mungkin masih fisik terisi, jangan lupa proses checkout-nya`}
                     className="absolute bottom-0 left-0 right-0 bg-violet-900/85 text-white text-[9px] font-bold text-center px-1.5 py-1"
                   >
-                    Checkout Hari Ini
+                    ⚠ Belum Di-checkout
                   </div>
                 )}
               </div>
