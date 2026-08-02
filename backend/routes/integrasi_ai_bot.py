@@ -5,7 +5,7 @@ from routes.issues import buat_issue
 from routes.booking_requests import buat_booking_request
 from routes.pesan_whatsapp import _cari_kamar_dari_no_hp
 from routes.pembatalan import ajukan_pembatalan_ai
-from scheduling_engine import rekomendasi_slot_kosong, timeline_kamar_hari_ini
+from scheduling_engine import rekomendasi_slot_kosong, timeline_kamar_hari_ini, BUFFER_HOUSEKEEPING_MENIT
 
 # ---- Integrasi AI Chat Bot Eksternal ----
 # Untuk "ai-chat-bot" (repo terpisah milik user, dirancang reusable lintas sistem — BUKAN
@@ -169,6 +169,20 @@ async def ai_bot_ketersediaan(
             if rekom:
                 item["estimasi_kosong_lagi"] = rekom["siap_pakai"].isoformat()
                 item["estimasi_kamar_nomor"] = rekom["room_nomor"]
+                # Jam checkout MENTAH, terpisah dari "siap_pakai" (2026-08-02, permintaan
+                # Agus - contoh nyata: "saat ini full kk, tersedia lagi 15.56 dan ready jam
+                # 16.30 apa kk mau?"). `siap_pakai` SUDAH termasuk buffer housekeeping
+                # (BUFFER_HOUSEKEEPING_MENIT, lihat estimasi_kamar_siap) - dulu itu SATU-
+                # SATUNYA angka yang dikasih ke AI, jadi AI tidak bisa membedakan "kapan tamu
+                # lama checkout" vs "kapan benar-benar siap dipakai tamu baru setelah
+                # dibersihkan". Sekarang keduanya dikirim terpisah supaya AI bisa jujur & lebih
+                # jelas ke tamu ("checkout jam X, siap dipakai lagi ~jam Y setelah
+                # dibersihkan") - dihitung mundur dari siap_pakai (bukan hitung ulang terpisah)
+                # supaya tetap 1 sumber kebenaran (estimasi_kamar_siap), tidak ada risiko dua
+                # angka saling menyimpang.
+                item["estimasi_checkout_asli"] = (
+                    rekom["siap_pakai"] - timedelta(minutes=BUFFER_HOUSEKEEPING_MENIT)
+                ).isoformat()
                 # Durasi Day Use utk kandidat ini mungkin lebih pendek dari 6 jam standar
                 # kalau ada tamu Menginap check-in tak lama setelah kamar ini siap
                 # (2026-08-01) - AI wajib sampaikan ini, jangan janjikan durasi penuh.
