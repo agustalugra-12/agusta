@@ -52,8 +52,8 @@ const calcCancelFeePolicy = (jamMulaiIso) => {
   }
   return { label: "H-2 s/d Hari-H (<72 jam sebelum check-in): biaya 50%", biaya_persen: 50 };
 };
-const emptyQuickForm = (tarif) => ({
-  tipe: "day_use", nama_tamu: "", no_hp: "", no_identitas: "", kendaraan: "", jumlah_tamu: 1,
+const emptyQuickForm = (tarif, defaultTipe) => ({
+  tipe: defaultTipe || "day_use", nama_tamu: "", no_hp: "", no_identitas: "", kendaraan: "", jumlah_tamu: 1,
   jam_checkin: nowLocalDateTime(), malam: 1, harga: tarif ?? 0, catatan: "",
   metode_bayar: "tunai", // (2026-07-31) tarif dasar WAJIB lunas di depan, lihat submitQuickBook
   // (2026-07-31, permintaan Agus) - Quick Book juga dipakai utk tamu yang datang LANGSUNG
@@ -61,6 +61,14 @@ const emptyQuickForm = (tarif) => ({
   // dipakai khusus Menginap (Day Use sudah punya jam_checkin sendiri yang bisa dimundurkan
   // ke tanggal lain juga). Default hari ini.
   tanggal_mulai: todayLocal(),
+  // jam_checkin_menginap (2026-08-02, permintaan Agus - PRD "tamu datang jam 9 pagi minta
+  // Menginap, kamar masih terisi tamu Day Use, baru siap jam 2 siang, jangan kalah cepat
+  // dgn bookingan online WA/RedDoorz") - KOSONG = perilaku lama (check-in Menginap SEKARANG
+  // literal, kalau tanggal_mulai hari ini). Diisi (format "HH:MM") = mode RESERVASI: booking
+  // dibuat aktif TAPI TIDAK langsung check-in - kamar yang sekarang masih terisi tamu lain
+  // tetap dibiarkan apa adanya, staf check-in manual nanti pas tamu yang baru benar2 datang
+  // (tombol "Check-in Tamu" yang sudah ada di dialog detail booking).
+  jam_checkin_menginap: "",
 });
 
 export default function Dashboard() {
@@ -95,7 +103,22 @@ export default function Dashboard() {
   const [slotWarnings, setSlotWarnings] = useState([]); // [{room_nomor, alasan, rekomendasi_selesai}]
   const [memberPreview, setMemberPreview] = useState(null); // {nama, total_kunjungan, kedatangan_ke, diskon_persen} | null
 
-  const openQuickBook = (rooms) => { setQuickForm(emptyQuickForm(rooms[0]?.tarif)); setQuickBookRooms(rooms); setSlotWarnings([]); setMemberPreview(null); };
+  const openQuickBook = (rooms, defaultTipe) => { setQuickForm(emptyQuickForm(rooms[0]?.tarif, defaultTipe)); setQuickBookRooms(rooms); setSlotWarnings([]); setMemberPreview(null); };
+  // Reservasi tamu baru utk kamar yang SEKARANG masih terisi tamu lain (2026-08-02,
+  // permintaan Agus) - dipanggil dari tombol di dialog aksi kamar (bukan dari klik kamar
+  // kosong spt openQuickBook biasa). SENGAJA default tipe "menginap" (skenario nyata yang
+  // diminta: tamu walk-in mau Menginap, kamar masih dipakai Day Use, siap beberapa jam
+  // lagi) dan langsung set jam_checkin_menginap ke jam sekarang+beberapa saat sbg starting
+  // point yang masuk akal (staf tinggal sesuaikan ke jam pastinya) - BUKAN dikosongkan spt
+  // openQuickBook biasa (kosong = perilaku "check-in SEKARANG", tidak masuk akal utk kamar
+  // yang jelas-jelas masih terisi).
+  const openReservasiNanti = (room) => {
+    setQuickForm({ ...emptyQuickForm(room.tarif_menginap ?? room.tarif, "menginap"), jam_checkin_menginap: nowLocalDateTime().slice(11, 16) });
+    setQuickBookRooms([room]);
+    setSlotWarnings([]);
+    setMemberPreview(null);
+    setActionRoom(null);
+  };
   const toggleRoomSelect = (room) => {
     setSelectedIds((ids) => ids.includes(room.id) ? ids.filter((id) => id !== room.id) : [...ids, room.id]);
   };
@@ -210,10 +233,27 @@ export default function Dashboard() {
         // kedatangannya tidak pernah kehitung sama sekali (bug nyata, ditemukan 2026-07-31).
         const isToday = quickForm.tanggal_mulai === todayLocal();
         if (isToday && !quickForm.no_hp.trim()) { toast.error("Nomor HP wajib diisi untuk check-in Menginap"); return; }
+        // Mode RESERVASI (2026-08-02, permintaan Agus) - staf isi jam_checkin_menginap saat
+        // kamar masih terisi tamu lain sekarang tapi mau dikunci utk tamu baru yang siap
+        // menunggu (PRD: "tamu datang jam 9 pagi, kamar ready jam 2 siang, jangan kalah
+        // cepat dgn bookingan online"). Beda dari `isToday` biasa (yang berarti check-in
+        // LITERAL SEKARANG): di sini instant HANYA kalau hari ini DAN staf TIDAK mengisi jam
+        // spesifik - begitu jam diisi, booking dibuat "aktif" (slot terkunci di backend,
+        // sudah lolos guard create_reservation yg sudah WIB-aware, lihat reservation_service.py)
+        // TAPI check-in beneran (kamar ditandai terisi) BARU terjadi manual nanti.
+        const jamNantiRaw = (quickForm.jam_checkin_menginap || "").trim();
+        const isInstant = isToday && !jamNantiRaw;
         const nights = Math.max(1, Number(quickForm.malam) || 1);
-        // Jam mulai 12:00 lokal (WITA/WIB, sama pola dgn PublicBook.jsx) kalau tanggal
-        // lain (bukan sekarang juga) - kalau hari ini, pakai jam sekarang beneran.
-        const start = isToday ? new Date() : new Date(`${quickForm.tanggal_mulai}T12:00:00`);
+        // Jam mulai: hari ini + jam reservasi kalau diisi > hari ini + sekarang kalau instant
+        // > tanggal lain jam 12:00 (WITA/WIB, sama pola dgn PublicBook.jsx).
+        let start;
+        if (isToday && jamNantiRaw) {
+          start = new Date(`${quickForm.tanggal_mulai}T${jamNantiRaw}:00`);
+        } else if (isToday) {
+          start = new Date();
+        } else {
+          start = new Date(`${quickForm.tanggal_mulai}T12:00:00`);
+        }
         const end = new Date(start);
         end.setDate(end.getDate() + nights);
         // pembayaran dikirim SEKALIAN saat bikin booking (bukan panggilan mark-paid-manual
@@ -231,18 +271,20 @@ export default function Dashboard() {
         });
         const bks = isGroup ? data.bookings : [data];
         // Lunas sudah tercatat sekalian saat create (di atas) - check-in SUNGGUHAN (kamar
-        // jadi terisi, kedatangan kehitung) HANYA kalau tamu benar2 datang hari ini.
-        // Booking utk tanggal lain tetap "aktif"+lunas, di-check-in nanti lewat tombol
-        // "Check-in Tamu" saat tamu tiba (sudah ada di dialog detail booking).
-        if (isToday) {
+        // jadi terisi, kedatangan kehitung) HANYA kalau tamu benar2 datang SEKARANG (instant).
+        // Mode reservasi & booking utk tanggal lain tetap "aktif"+lunas, di-check-in nanti
+        // lewat tombol "Check-in Tamu" saat tamu tiba (sudah ada di dialog detail booking).
+        if (isInstant) {
           for (const bk of bks) {
             await api.post(`/bookings/${bk.id}/checkin`, { no_hp: quickForm.no_hp });
           }
         }
         toast.success(
-          isToday
+          isInstant
             ? (isGroup ? `Menginap lunas + check-in untuk ${bks.length} kamar` : "Menginap lunas, tamu sudah check-in")
-            : (isGroup ? `Menginap lunas untuk ${bks.length} kamar, dijadwalkan check-in ${quickForm.tanggal_mulai}` : `Menginap lunas, dijadwalkan check-in ${quickForm.tanggal_mulai}`)
+            : isToday
+              ? (isGroup ? `Reservasi lunas untuk ${bks.length} kamar, check-in nanti jam ${jamNantiRaw}` : `Reservasi lunas, check-in nanti jam ${jamNantiRaw}`)
+              : (isGroup ? `Menginap lunas untuk ${bks.length} kamar, dijadwalkan check-in ${quickForm.tanggal_mulai}` : `Menginap lunas, dijadwalkan check-in ${quickForm.tanggal_mulai}`)
         );
       }
       setQuickBookRooms([]); cancelMultiSelect(); load();
@@ -1066,6 +1108,21 @@ export default function Dashboard() {
                     <p className="text-[10px] text-amber-600 mt-1">Tanggal lain (bukan hari ini) - kamar TIDAK langsung ditandai terisi, tamu di-check-in nanti pas benar-benar datang.</p>
                   )}
                 </div>
+                {/* (2026-08-02, permintaan Agus) - kalau tanggalnya hari ini, staf bisa
+                    pilih: kosongkan = tamu check-in SEKARANG (perilaku lama), atau isi jam
+                    = mode RESERVASI (kamar mungkin masih terisi tamu lain, booking dikunci
+                    dulu di sistem, check-in beneran menyusul manual pas tamu datang). */}
+                {quickForm.tanggal_mulai === todayLocal() && (
+                  <div className="col-span-2">
+                    <Label>Jam Check-In (kosongkan = sekarang)</Label>
+                    <Input data-testid="q-jam-menginap" type="time" value={quickForm.jam_checkin_menginap} onChange={(e) => setQuickForm(f => ({ ...f, jam_checkin_menginap: e.target.value }))} />
+                    {quickForm.jam_checkin_menginap ? (
+                      <p className="text-[10px] text-amber-600 mt-1">Mode reservasi - booking dikunci di sistem sekarang, tapi kamar TIDAK langsung ditandai terisi. Staf check-in manual nanti pas tamu benar-benar datang (tombol "Check-in Tamu" di detail booking).</p>
+                    ) : (
+                      <p className="text-[10px] text-slate-500 mt-1">Kosong = tamu check-in sekarang juga (kamar langsung ditandai terisi).</p>
+                    )}
+                  </div>
+                )}
                 <div><Label>Jumlah Malam</Label><Input data-testid="q-malam" type="number" min="1" value={quickForm.malam} onChange={(e) => setQuickForm(f => ({ ...f, malam: e.target.value }))} /></div>
               </>
             )}
@@ -1103,7 +1160,9 @@ export default function Dashboard() {
           <DialogFooter>
             <Button variant="outline" onClick={() => setQuickBookRooms([])}>Batal</Button>
             <Button data-testid="q-submit" onClick={submitQuickBook} className="bg-blue-700 hover:bg-blue-800">
-              {quickForm.tipe === "day_use" ? "Konfirmasi Check-In" : "Bayar & Check-In"}
+              {quickForm.tipe === "day_use"
+                ? "Konfirmasi Check-In"
+                : (quickForm.tanggal_mulai === todayLocal() && quickForm.jam_checkin_menginap ? "Bayar & Reservasi" : "Bayar & Check-In")}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -1174,6 +1233,16 @@ export default function Dashboard() {
             {(actionRoom?.status === "day_use" || actionRoom?.status === "menginap") && (
               <Button data-testid="pindah-kamar" variant="outline" onClick={() => { setMoveDialog({ fromRoom: actionRoom }); setMoveTargetId(""); setMoveAlasan(""); }}>
                 Pindah Kamar
+              </Button>
+            )}
+            {/* (2026-08-02, permintaan Agus) - staf bisa langsung reservasi tamu WALK-IN
+                BARU utk kamar ini walau masih terisi tamu lain sekarang, supaya tidak kalah
+                cepat dgn bookingan online (WA/RedDoorz) yang bisa masuk kapan saja. Booking
+                dibuat "aktif" (slotnya terkunci di sistem) TANPA mengganggu tamu yang
+                sekarang - check-in tamu baru dilakukan manual nanti pas dia benar2 datang. */}
+            {(actionRoom?.status === "day_use" || actionRoom?.status === "menginap") && (
+              <Button data-testid="reservasi-nanti" variant="outline" onClick={() => openReservasiNanti(actionRoom)}>
+                Reservasi Tamu Baru (Nanti Kosong)
               </Button>
             )}
             {actionRoom?.status === "perlu_dibersihkan" && (
