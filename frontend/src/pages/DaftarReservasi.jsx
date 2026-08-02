@@ -11,19 +11,22 @@ import { Search, X, Ban, CreditCard, MessageCircle } from "lucide-react";
 
 const toLocalInput = (iso) => { const d = new Date(iso); d.setMinutes(d.getMinutes() - d.getTimezoneOffset()); return d.toISOString().slice(0, 16); };
 
-const STATUS_OPTIONS = ["Semua", "aktif", "booking_pending", "booking_paid", "checked_in", "cancelled", "no_show"];
+const STATUS_OPTIONS = ["Semua", "aktif", "booking_pending", "booking_paid", "checked_in", "checked_out", "cancelled", "no_show"];
 // Label status LIFECYCLE booking (aktif/pending/dst) — beda dari status BAYAR (Belum
 // Bayar/DP/Lunas, lihat STATUS_BAYAR_LABEL di apiClient.js). "booking_paid" cuma berarti
 // "sudah ada pembayaran masuk & terkonfirmasi", BUKAN otomatis lunas (bisa DP) — makanya
 // labelnya "Terkonfirmasi", bukan "Lunas", supaya tidak tumpang tindih dengan badge bayar.
+// "checked_out" (2026-08-02) — Day Use yang sudah benar-benar checkout lewat db.checkins
+// (lihat routes/checkins.py checkout()), beda dari "checked_in" yang masih dianggap aktif/
+// mengunci kamar.
 const STATUS_LABEL = {
   aktif: "Aktif", booking_pending: "Menunggu Bayar", booking_paid: "Terkonfirmasi",
-  checked_in: "Sudah Check-In", cancelled: "Dibatalkan", no_show: "No-Show",
+  checked_in: "Sudah Check-In", checked_out: "Sudah Check-Out", cancelled: "Dibatalkan", no_show: "No-Show",
 };
 const STATUS_BADGE = {
   aktif: "bg-blue-100 text-blue-800", booking_pending: "bg-amber-100 text-amber-800",
   booking_paid: "bg-emerald-100 text-emerald-800", checked_in: "bg-violet-100 text-violet-800",
-  cancelled: "bg-slate-200 text-slate-600", no_show: "bg-red-100 text-red-700",
+  checked_out: "bg-slate-100 text-slate-500", cancelled: "bg-slate-200 text-slate-600", no_show: "bg-red-100 text-red-700",
 };
 const SOURCE_BADGE = {
   walk_in: "bg-slate-100 text-slate-700", online: "bg-blue-100 text-blue-800",

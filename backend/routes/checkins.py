@@ -200,6 +200,23 @@ async def checkout(checkin_id: str, body: CheckoutIn, user: dict = Depends(get_c
     }
     await db.checkins.update_one({"id": checkin_id}, {"$set": updates})
     await db.rooms.update_one({"id": c["room_id"]}, {"$set": {"status": "perlu_dibersihkan", "info": {}}})
+    # (2026-08-02, bug KRITIS nyata ditemukan - tamu Vina di kamar 5, RIAN RIAN tidak bisa
+    # dipindah ke kamar 5 walau tamu sebelumnya sudah checkout & kamar sudah dibersihkan)
+    # checkout ini TIDAK PERNAH menyentuh `db.bookings` sama sekali - booking asal (kalau
+    # checkin ini dibuat dari booking via checkin_from_booking) tetap selamanya berstatus
+    # "checked_in", yang termasuk status AKTIF/blocking di check_room_available &
+    # move_room. Akibatnya kamar yang fisiknya sudah kosong & bersih tetap "terkunci" oleh
+    # booking lama sampai jam_selesai terjadwalnya lewat. "checked_out" SENGAJA bukan bagian
+    # dari BOOKING_AKTIF_STATUS/BOOKING_TERKONFIRMASI_STATUS/ACTIVE_BOOKING_STATUSES manapun
+    # (semua daftar itu allow-list, bukan exclude-list) - jadi begitu status ini di-set,
+    # booking otomatis berhenti dihitung "aktif"/"terkonfirmasi" di semua tempat itu tanpa
+    # perlu ubah daftarnya. Laporan okupansi (laporan_analitik.py) tidak terdampak - untuk
+    # Day Use dia sudah punya sumber independen dari db.checkins (jam_checkin/jam_checkout
+    # asli), jadi tetap akurat lepas dari status booking ini.
+    if c.get("from_booking_id"):
+        await db.bookings.update_one({"id": c["from_booking_id"]}, {"$set": {
+            "status": "checked_out", "checked_out_at": now.isoformat(), "checked_out_by": user["nama"],
+        }})
     # housekeeping log
     await db.housekeeping_log.insert_one({
         "id": str(uuid.uuid4()),

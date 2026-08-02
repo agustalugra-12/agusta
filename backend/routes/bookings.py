@@ -365,6 +365,17 @@ async def checkin_from_booking(bid: str, body: CheckinFromBookingBody = CheckinF
     # dibuat), BUKAN direset ke 0/tarif kamar saat ini - kalau tidak, uang yang sudah
     # dikumpulkan staf saat booking dibuat jadi seolah belum dibayar sama sekali di sini,
     # dan checkout nanti akan salah minta bayar penuh lagi dari awal.
+    #
+    # (2026-08-02, bug KRITIS nyata ditemukan - tamu Vina & Dewa Putu ditagih dobel saat
+    # checkout) - niat komentar di atas TIDAK PERNAH benar-benar jalan: `db.bookings`
+    # SAMA SEKALI tidak punya field `pembayaran` (booking cuma menyimpan `amount_due`/
+    # `payment_status`), jadi `b.get("pembayaran")` selalu None -> checkin doc selalu
+    # mulai dengan pembayaran KOSONG walau `paid` (dari amount_due) sudah > 0. Akibatnya
+    # checkout() (routes/checkins.py) menghitung `sudah_dibayar=0` dan menagih SELURUH
+    # `total` lagi dari awal - tamu yang sudah lunas dobel dicatat sebagai pemasukan,
+    # tamu yang baru DP ditagih penuh (bukan cuma sisa DP-nya). Fix: seed `pembayaran`
+    # dari `paid` (amount_due booking, sudah dihitung di atas) supaya checkout menghitung
+    # sisa yang BENAR (cuma overtime + sisa DP kalau ada).
     trx_no = f"CI-{datetime.now().strftime('%Y%m%d%H%M%S')}-{uuid.uuid4().hex[:4].upper()}"
     ci_doc = {
         "id": str(uuid.uuid4()),
@@ -383,7 +394,7 @@ async def checkin_from_booking(bid: str, body: CheckinFromBookingBody = CheckinF
         "status": "aktif",
         "catatan": f"Dari booking {b['kode']}.".strip(),
         "foto_identitas_url": "",
-        "pembayaran": list(b.get("pembayaran") or []),
+        "pembayaran": ([{"metode": (b.get("payment_type") or "online"), "jumlah": paid}] if paid > 0 else []),
         "from_booking_id": b["id"], "from_booking_kode": b["kode"],
         "booking_paid": paid, "booking_remaining": sisa,
         "petugas_checkin": user["nama"], "petugas_checkin_id": user["id"],

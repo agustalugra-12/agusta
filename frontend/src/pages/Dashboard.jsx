@@ -1478,6 +1478,11 @@ export default function Dashboard() {
                 </Button>
               </>
             )}
+            {!rescheduleMode && bookingDetail?.status === "checked_in" && Number(bookingDetail.total || 0) - Number(bookingDetail.amount_due || 0) > 0 && (
+              <Button data-testid="bd-collect-checked-in" onClick={openCollectDialog} className="bg-blue-700 hover:bg-blue-800 text-white">
+                Collect Sisa Rp {(Number(bookingDetail.total || 0) - Number(bookingDetail.amount_due || 0)).toLocaleString("id-ID")}
+              </Button>
+            )}
             {rescheduleMode && (
               <>
                 <Button data-testid="bd-resched-save" onClick={submitReschedule} className="bg-blue-700 hover:bg-blue-800">Simpan Jadwal Baru</Button>
