@@ -242,6 +242,24 @@ async def tripay_callback(request: Request):
 
             for gb in group_bookings:
                 was_paid = gb.get("payment_status") == "paid"
+                # Bug KRITIS ditemukan & diperbaiki 2026-08-02 (kejadian nyata: tamu Kadek
+                # Ongki minta ganti DP->lunas, staf buat transaksi Tripay BARU utk booking
+                # yang sama - transaksi lunas itu settlement lebih dulu (booking jadi paid,
+                # voucher terkirim, uang tercatat), TAPI transaksi DP LAMA yang ditinggalkan
+                # baru "expire" di sisi Tripay ~1 jam kemudian & callback expire itu
+                # menimpa balik booking jadi cancelled/expired - padahal sudah nyata
+                # dibayar lunas lewat transaksi lain). Guard ini: kalau booking SUDAH
+                # payment_status=paid DAN callback yang masuk sekarang bertipe
+                # downgrade (expire/deny/refund) - JANGAN downgrade booking yang sudah
+                # nyata dibayar. payment_log tetap dicatat apa adanya di atas (riwayat
+                # transaksi yang ditinggalkan itu sendiri tetap akurat), cuma status
+                # BOOKING yang tidak ikut didowngrade oleh transaksi lain yang sudah basi.
+                if was_paid and status in ("expire", "deny", "refund"):
+                    logging.getLogger("tripay").warning(
+                        f"Callback {status} utk order {merchant_ref} (booking {gb['kode']}) DIABAIKAN - "
+                        f"booking ini sudah payment_status=paid dari transaksi lain, tidak didowngrade."
+                    )
+                    continue
                 await db.bookings.update_one({"id": gb["id"]}, {"$set": {
                     "status": new_status, "payment_status": new_payment,
                     "paid_at": now if new_payment == "paid" else gb.get("paid_at"),
