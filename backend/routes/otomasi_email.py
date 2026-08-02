@@ -439,12 +439,22 @@ async def buat_reservasi_otomatis(log_id: str, data: dict, sumber: str, subjek: 
             gagal_detail.append(f'kamar {r["nomor"]}: {e.detail}')
             continue
 
+        # (2026-08-02, bug KRITIS nyata ditemukan Agus - kasus TASYA TASYA 2 kamar,
+        # laporan keuangan kelebihan catat) - `harga` dari email OTA (RedDoorz) SUDAH
+        # harga TOTAL FINAL yang sungguhan diterima/disepakati, BUKAN subtotal sebelum
+        # service fee. Sebelumnya kode ini memperlakukan `harga` sbg subtotal lalu
+        # nambah service fee 3% LAGI di atasnya - hasilnya `total` yang tercatat di PMS
+        # SELALU lebih besar dari yang sebenarnya diterima dari RedDoorz (audit 2026-08-02:
+        # 33 booking OTA historis kelebihan catat total Rp260.106). TIDAK PERNAH tambah
+        # service fee utk sumber="ota" - beda dari booking WhatsApp/langsung yang memang
+        # per desain menambahkan 3% di atas harga kamar (KEBIJAKAN SERVICE FEE di
+        # ai_service.py, itu TETAP berlaku, HANYA untuk booking non-OTA).
         harga_dari_email = int(data.get("harga") or 0)
         harga_dikonfirmasi = harga_dari_email > 0
         subtotal_semua = harga_dari_email or (r["tarif_menginap"] * jumlah_kamar)  # OTA selalu tipe menginap
         subtotal_per_kamar = round(subtotal_semua / jumlah_kamar)
-        service_fee_per_kamar = round(subtotal_per_kamar * SERVICE_FEE_PCT)
-        total_per_kamar = subtotal_per_kamar + service_fee_per_kamar
+        service_fee_per_kamar = 0
+        total_per_kamar = subtotal_per_kamar
         dibatalkan = data.get("status_pembayaran") == "Dibatalkan"
 
         try:
