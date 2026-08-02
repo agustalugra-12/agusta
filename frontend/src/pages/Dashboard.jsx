@@ -515,12 +515,16 @@ export default function Dashboard() {
     const upcomingBk = belumAdaTamuAktif ? bookingsForCol
       .filter(b => b.room_id === r.id)
       .sort((a, c) => a.jam_mulai.localeCompare(c.jam_mulai))[0] : null;
-    // Marun utk booking yang SUDAH di-checkout (2026-08-02, permintaan Agus - kolom
-    // tanggal lain di grid sebelumnya nunjukin biru/menginap terus walau tamunya sudah
-    // benar2 checkout, karena bookingOccupiesDateOnly cuma cek rentang tanggal, tidak
-    // peduli status). Biru = masih occupies tanggal itu TAPI belum di-checkout staf
-    // (butuh perhatian/pengingat), marun = sudah selesai di-checkout (murni histori).
-    const sudahCheckout = upcomingBk?.status === "checked_out";
+    // Marun utk booking MENGINAP yang SUDAH di-checkout (2026-08-02, permintaan Agus -
+    // kolom tanggal lain di grid sebelumnya nunjukin biru/menginap terus walau tamunya
+    // sudah benar2 checkout, karena bookingOccupiesDateOnly cuma cek rentang tanggal,
+    // tidak peduli status). Biru = masih occupies tanggal itu TAPI belum di-checkout
+    // staf (butuh perhatian/pengingat), marun = sudah selesai di-checkout (murni
+    // histori). KHUSUS Menginap (2026-08-02, revisi Agus - marun jangan dipakai utk Day
+    // Use, itu tetap pakai warna coklat muda DAY_USE_BOOKING_COLOR spt biasa walau
+    // sudah checked_out) - Day Use memang WAJAR selalu berakhir checkout tiap hari,
+    // marun di situ jadi berisik/tidak informatif, beda dgn Menginap yang jarang-jarang.
+    const sudahCheckout = upcomingBk?.status === "checked_out" && upcomingBk?.tipe === "menginap";
     const bg = upcomingBk
       ? (sudahCheckout ? MARUN_CHECKOUT : (upcomingBk.tipe === "menginap" ? "#3B82F6" : DAY_USE_BOOKING_COLOR))
       : statusColor(effStatus);
