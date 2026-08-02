@@ -177,7 +177,21 @@ async def _coba_auto_approve_day_use(doc: Dict[str, Any]) -> None:
             return  # grup >1 kamar tetap lewat review staf (auto-pilih banyak kamar sekaligus lebih berisiko)
 
         from routes.public import public_availability
-        avail = await public_availability(doc["tanggal_checkin"], tipe=doc.get("room_tipe"), property_id_override=doc["property_id"])
+        # Bug nyata ditemukan 2026-08-02 (insiden langsung: tamu "Frisnanda Maulana" coba
+        # booking Day Use berkali-kali ~30 menit, semua ditolak "kamar penuh" padahal
+        # ai_bot_ketersediaan/check_availability tool AI - preview yang dilihat tamu -
+        # SAMA PERSIS jam & tipe-nya menunjukkan banyak kamar tersedia): panggilan
+        # public_availability ini TIDAK PERNAH menyertakan `jam_checkin`, padahal `doc`
+        # sudah punya field itu (dipakai di bawah, baris berikutnya) - tanpa jam_checkin,
+        # public_availability (utk HARI INI) jatuh ke gate konservatif lama "status kamar
+        # == kosong SAAT INI" (lihat fix jam_checkin sebelumnya di routes/public.py) -
+        # BEDA dari apa yang tamu lihat di preview (yang benar menyertakan jam_checkin).
+        # Preview bilang "tersedia", tapi proses booking sungguhan pakai jalur INI dengan
+        # gate yang berbeda - tamu berulang kali dapat "penuh" palsu padahal kamarnya ada.
+        avail = await public_availability(
+            doc["tanggal_checkin"], tipe=doc.get("room_tipe"), jam_checkin=doc.get("jam_checkin"),
+            property_id_override=doc["property_id"],
+        )
         if not avail["rooms"]:
             await _auto_reject_penuh(doc)
             return
