@@ -126,6 +126,24 @@ async def change_room_status(room_id: str, body: RoomStatusUpdate, user: dict = 
     else:
         info = {}
     await db.rooms.update_one({"id": room_id}, {"$set": {"status": body.status, "info": info}})
+    # (2026-08-02, bug KRITIS nyata ditemukan Agus - "Reservasi" banyak yang tidak
+    # tercatat: booking Menginap yang tamunya sudah SELESAI (staf klik "Selesai
+    # Menginap") tetap nyangkut selamanya di status "checked_in", persis pola bug yang
+    # sama dgn Day Use/checkins.py checkout() yang sudah diperbaiki hari ini - cuma
+    # jalur Menginap ini pakai mekanisme lain (PUT /rooms/{id}/status) yang dari awal
+    # TIDAK PERNAH sinkron balik ke db.bookings sama sekali. Begitu kamar berpindah dari
+    # "menginap" ke status lain (kosong/maintenance - guest ini sudah tidak menginap lagi
+    # di sini), booking Menginap AKTIF terakhir kamar ini ditandai "checked_out" (status
+    # yang sama dgn Day Use, otomatis TIDAK dihitung aktif di manapun - lihat
+    # checkins.py checkout()).
+    if old_status == "menginap" and body.status != "menginap":
+        bk_selesai = await db.bookings.find_one(scoped({
+            "room_id": room_id, "tipe": "menginap", "status": "checked_in",
+        }, property_id), sort=[("jam_mulai", -1)])
+        if bk_selesai:
+            await db.bookings.update_one({"id": bk_selesai["id"]}, {"$set": {
+                "status": "checked_out", "checked_out_at": now_iso(), "checked_out_by": user["nama"],
+            }})
     await log_activity(user, "change_room_status",
                        f"Kamar {r['nomor']}: {old_status} -> {body.status}",
                        entity=r["nomor"])
