@@ -329,6 +329,26 @@ async def _cocokkan_booking_pending_reddoorz(nama_tamu: str, room_tipe: str, che
     return [b for _, b in cocok[:jumlah_kamar]]
 
 
+async def _resolve_property_dari_subjek(subjek: str) -> Optional[str]:
+    """Deteksi properti tujuan email OTA dari nama hotel yang disebut di subjek (RedDoorz
+    SELALU sertakan nama properti persis, mis. "...untuk Pelangi Homestay..." - lihat
+    subjek asli kasus nyata Rut Lindawati 2026-08-02). Best-effort: return None kalau
+    tidak ketemu/ambigu (>1 properti cocok) supaya pemanggil tetap fallback ke
+    get_default_property_id() - JANGAN pernah gagal keras di sini.
+
+    2026-08-02 (permintaan Agus - "perbaikan ini harus berlaku di semua tenant, jangan
+    sampai Harmoni ngalamin ini juga"): sebelumnya buat_reservasi_otomatis SELALU pakai
+    get_default_property_id() (properti pertama dibuat = Pelangi) utk SEMUA email OTA,
+    tidak peduli properti aslinya - aman HARI INI cuma karena Harmoni belum
+    butuh_sinkron_reddoorz, tapi diam-diam salah kalau nanti Harmoni (atau properti baru)
+    diaktifkan RedDoorz-nya. Fungsi ini bikin resolusi properti BENAR dari isi email
+    sendiri, bukan asumsi "properti pertama", jadi otomatis benar utk properti mana pun -
+    tidak perlu ditulis ulang tiap kali ada tenant baru."""
+    props = await db.properties.find({"aktif": True}, {"_id": 0, "id": 1, "nama": 1}).to_list(50)
+    cocok = [p["id"] for p in props if p.get("nama") and p["nama"].lower() in (subjek or "").lower()]
+    return cocok[0] if len(cocok) == 1 else None
+
+
 async def buat_reservasi_otomatis(log_id: str, data: dict, sumber: str, subjek: str) -> None:
     """Reservation Automation (PRD): dari data hasil AI Email Parser, buat reservasi
     otomatis di Pelangi PMS tanpa input manual staf — asalkan (a) tipe kamar OTA sudah
@@ -343,7 +363,10 @@ async def buat_reservasi_otomatis(log_id: str, data: dict, sumber: str, subjek: 
     berikutnya (dicocokkan lewat nomor itu) ikut memproses semua kamar dalam grup ini, bukan
     cuma satu. Total harga di email (`harga`) mencakup SELURUH kamar, dibagi rata per kamar.
     """
-    property_id = await get_default_property_id()  # STOPGAP (2026-07-24) - 1 akun Gmail RedDoorz global untuk semua properti, belum ada mekanisme per-properti
+    # (2026-08-02) properti dideteksi dari subjek email dulu (benar utk tenant manapun),
+    # fallback ke STOPGAP lama (properti pertama dibuat) kalau tidak ketemu/ambigu -
+    # lihat _resolve_property_dari_subjek.
+    property_id = await _resolve_property_dari_subjek(subjek) or await get_default_property_id()
     mapping = await db.room_mappings.find_one({"ota_nama": data.get("tipe_kamar"), "sumber": sumber})
     if not mapping:
         await db.email_logs.update_one({"id": log_id}, {"$set": {
@@ -484,6 +507,16 @@ async def buat_reservasi_otomatis(log_id: str, data: dict, sumber: str, subjek: 
             "status": "Manual_Required",
             "alasan": f'Email OTA memesan {jumlah_kamar} kamar {mapping["pms_tipe"]}, tapi hanya {len(reservation_ids)} yang berhasil dibuat pada {check_in.date()}–{check_out.date()} — {len(reservation_ids)} reservasi sudah dibuat otomatis, {jumlah_kamar - len(reservation_ids)} kamar SISANYA perlu ditangani manual staf (cari kamar lain / hubungi tamu). Detail: {"; ".join(gagal_detail) or "-"}',
         })
+    else:
+        # (2026-08-02, bug nyata ditemukan - kasus Rut Lindawati: email ini sempat gagal
+        # total di percobaan pertama (semua kamar Standard bentrok, status jadi
+        # Manual_Required), lalu diproses ULANG manual setelah kamar longgar & SUKSES
+        # PENUH - tapi sebelum fix ini, status/alasan LAMA dari percobaan gagal
+        # sebelumnya tidak pernah direset, jadi log tetap kelihatan "Manual_Required"
+        # dgn alasan basi walau reservasinya sudah benar2 jadi. Sukses penuh (SEKARANG
+        # ATAU di percobaan ulang manapun) WAJIB eksplisit balik ke Parsed_Success &
+        # hapus alasan lama, bukan cuma diam-diam tidak menyentuhnya.
+        log_update.update({"status": "Parsed_Success", "alasan": None})
     await db.email_logs.update_one({"id": log_id}, {"$set": log_update})
 
 
@@ -651,7 +684,12 @@ async def proses_modifikasi_otomatis(log_id: str, data: dict, sumber: str, subje
     # sebagian belum.
     # Celah check-lalu-tulis dibungkus lock (2026-07-19, audit anti-race-condition) - lihat
     # catatan di reservation_service.py.
-    property_id = await get_default_property_id()  # STOPGAP, lihat buat_reservasi_otomatis
+    # (2026-08-02) `bookings` di sini adalah booking YANG SUDAH ADA (dicari lewat
+    # ota_reservation_no) - property_id-nya sudah PASTI benar dari saat booking itu
+    # dibuat pertama kali, jauh lebih bisa diandalkan daripada asumsi/tebakan STOPGAP
+    # lama (get_default_property_id selalu properti pertama dibuat) - tidak akan pernah
+    # salah tenant, berlaku otomatis utk properti mana pun.
+    property_id = bookings[0]["property_id"]
     async with room_locks(*[b["room_id"] for b in bookings]):
         konflik = None
         for b in bookings:
@@ -774,6 +812,25 @@ async def fetch_gmail_emails(max_results: int = 20) -> int:
                         "status": "Manual_Required",
                         "alasan": f"Error tak terduga saat otomasi reservasi: {e} — perlu ditinjau/diinput manual staf.",
                     }})
+                # (2026-08-02, permintaan Agus - kasus nyata Rut Lindawati 2 kamar
+                # kena bentrok, macet di "Manual_Required" berhari-hari TANPA ADA yang
+                # tahu, ketahuan cuma krn Agus kebetulan buka halaman Otomasi Email.
+                # Tidak ada alert SAMA SEKALI sebelumnya utk kasus ini - beda dari
+                # booking/pembayaran/komplain yang semuanya sudah punya push+Telegram.
+                # send_push/kirim_alert_owner broadcast per ROLE, bukan per-properti,
+                # jadi otomatis berlaku ke SEMUA tenant tanpa perlu logic tambahan.
+                # `extracted_data` yang jadi pembeda "genuine booking OTA yang butuh
+                # tinjauan" vs cuma newsletter/promo (extracted_data None, tidak perlu
+                # alert - sudah benar diabaikan, bukan bug).
+                final_doc = await db.email_logs.find_one({"id": doc["id"]}, {"_id": 0, "status": 1, "alasan": 1})
+                if final_doc and final_doc.get("status") == "Manual_Required":
+                    from routes.push import send_push
+                    from routes.telegram_bot import kirim_alert_owner
+                    nama_tamu_alert = (extracted_data or {}).get("nama_tamu") or "(tanpa nama)"
+                    pesan = f"Email OTA {sumber} butuh tinjauan manual: {nama_tamu_alert} — {final_doc.get('alasan') or subjek}"
+                    await send_push("Email OTA Perlu Ditinjau", pesan, url="/otomasi-email", role="owner")
+                    await send_push("Email OTA Perlu Ditinjau", pesan, url="/otomasi-email", role="resepsionis")
+                    await kirim_alert_owner(f"📧 {pesan}")
     return disimpan
 
 
