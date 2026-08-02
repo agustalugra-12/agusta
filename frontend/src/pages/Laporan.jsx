@@ -185,13 +185,19 @@ function Ringkasan({ from, to }) {
   );
 }
 
+// Rincian DP/pelunasan (2026-08-02, permintaan Agus - Laporan Kamar perlu tunjukkan
+// tamu DP berapa via cash/Tripay & pelunasannya ditagih di sistem pakai cash/QR/dll),
+// dari `detail_pembayaran` (backend, per item) - dipakai tabel & export CSV.
+const fmtDetailPembayaran = (detail) => (detail || []).length === 0 ? "-"
+  : detail.map(d => `${d.jenis}: ${fmtRp(d.jumlah)} (${d.metode})`).join(" | ");
+
 function LaporanKamar({ from, to }) {
   const [data, setData] = useState({ summary: {}, items: [] });
   useEffect(() => { api.get("/reports/rooms", { params: { from_date: from, to_date: to } }).then(r => setData(r.data)); }, [from, to]);
   const s = data.summary || {};
   const exp = () => downloadCsv(`Laporan_Kamar_${from}_${to}.csv`,
-    ["No Transaksi", "Tanggal Check-In", "Tanggal Check-Out", "Nama Tamu", "Kamar", "Tipe", "Tarif Dasar", "Overtime", "Total", "Petugas"],
-    (data.items || []).map(c => [c.trx_no, fmtDateTime(c.jam_checkin), fmtDateTime(c.jam_checkout), c.nama_tamu, c.room_nomor, c.room_tipe, c.tarif_dasar, c.biaya_tambahan, c.total, c.petugas_checkout || c.petugas_checkin]));
+    ["No Transaksi", "Tanggal Check-In", "Tanggal Check-Out", "Nama Tamu", "Kamar", "Tipe", "Tarif Dasar", "Overtime", "Total", "Detail Pembayaran", "Petugas"],
+    (data.items || []).map(c => [c.trx_no, fmtDateTime(c.jam_checkin), fmtDateTime(c.jam_checkout), c.nama_tamu, c.room_nomor, c.room_tipe, c.tarif_dasar, c.biaya_tambahan, c.total, fmtDetailPembayaran(c.detail_pembayaran), c.petugas_checkout || c.petugas_checkin]));
   return (
     <div className="space-y-4">
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
@@ -207,7 +213,7 @@ function LaporanKamar({ from, to }) {
       <Card className="border-slate-200"><CardContent className="p-0 overflow-x-auto">
         <table className="w-full text-sm">
           <thead className="bg-slate-50 text-slate-600 text-xs uppercase"><tr>
-            {["No Trx", "Tamu", "Kamar", "Tipe", "Check-In", "Check-Out", "Tarif", "Overtime", "Total", "Petugas"].map(h => <th key={h} className="text-left p-3">{h}</th>)}
+            {["No Trx", "Tamu", "Kamar", "Tipe", "Check-In", "Check-Out", "Tarif", "Overtime", "Total", "Detail Pembayaran", "Petugas"].map(h => <th key={h} className="text-left p-3">{h}</th>)}
           </tr></thead>
           <tbody>
             {(data.items || []).map(c => (
@@ -221,10 +227,22 @@ function LaporanKamar({ from, to }) {
                 <td className="p-3">{fmtRp(c.tarif_dasar)}</td>
                 <td className="p-3 text-orange-600">{fmtRp(c.biaya_tambahan)}</td>
                 <td className="p-3 font-bold text-blue-700">{fmtRp(c.total)}</td>
+                <td className="p-3 text-xs">
+                  {(c.detail_pembayaran || []).length === 0 ? <span className="text-slate-400">-</span> : (
+                    <div className="space-y-0.5">
+                      {c.detail_pembayaran.map((d, i) => (
+                        <div key={i}>
+                          <span className={d.jenis === "DP" ? "text-amber-700 font-semibold" : d.jenis === "Pelunasan" ? "text-emerald-700 font-semibold" : "text-slate-600 font-semibold"}>{d.jenis}</span>
+                          {": "}{fmtRp(d.jumlah)} <span className="text-slate-400">({d.metode})</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </td>
                 <td className="p-3 text-xs">{c.petugas_checkout || c.petugas_checkin}</td>
               </tr>
             ))}
-            {(data.items || []).length === 0 && <tr><td colSpan={10} className="p-6 text-center text-slate-500">Tidak ada transaksi</td></tr>}
+            {(data.items || []).length === 0 && <tr><td colSpan={11} className="p-6 text-center text-slate-500">Tidak ada transaksi</td></tr>}
           </tbody>
         </table>
       </CardContent></Card>

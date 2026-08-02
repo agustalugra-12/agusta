@@ -487,6 +487,48 @@ async def report_kas_metode_bayar(from_date: str = Query(...), to_date: str = Qu
                 totals[m] += int(p.get("jumlah") or 0)
     return {**totals, "total": sum(totals.values())}
 
+_PAYMENT_OPTION_JENIS = {"dp50": "DP", "full": "Lunas", "collect_balance": "Pelunasan", "manual": "Lunas (Manual)"}
+
+async def _ambil_detail_pembayaran_booking(booking_ids: List[str]) -> Dict[str, List[Dict[str, Any]]]:
+    """Rincian DP/pelunasan per booking (2026-08-02, permintaan Agus - Laporan Kamar
+    perlu tunjukkan tamu DP berapa via cash/Tripay & pelunasannya ditagih di sistem
+    pakai cash/QR atau lainnya), dari payment_log (sumber kebenaran tiap event bayar
+    sungguhan - Tripay create-transaction/webhook, collect-balance staf, atau verifikasi
+    manual) - HANYA entri yang benar settlement (transaction_status=="settlement"),
+    bukan yang masih pending/belum terbayar."""
+    if not booking_ids:
+        return {}
+    logs = await db.payment_log.find({
+        "booking_id": {"$in": booking_ids}, "transaction_status": "settlement",
+    }, {"_id": 0, "booking_id": 1, "payment_option": 1, "payment_type": 1, "gross_amount": 1, "created_at": 1}).sort("created_at", 1).to_list(2000)
+    out: Dict[str, List[Dict[str, Any]]] = {}
+    for l in logs:
+        bid = l.get("booking_id")
+        if not bid:
+            continue
+        jenis = _PAYMENT_OPTION_JENIS.get(l.get("payment_option"), l.get("payment_option") or "Bayar")
+        out.setdefault(bid, []).append({
+            "jenis": jenis, "metode": l.get("payment_type") or "-",
+            "jumlah": int(float(l.get("gross_amount") or 0)),
+        })
+    return out
+
+def _detail_pembayaran_checkin(c: Dict[str, Any], booking_payment_option: Optional[str]) -> List[Dict[str, Any]]:
+    """Utk walk-in Day Use (db.checkins) - field `pembayaran` sudah berisi rincian
+    (seeded dari booking asal kalau ada + apapun yang dikumpulkan staf saat checkout,
+    lihat fix bug dobel-tagih 2026-08-02 di checkin_from_booking). Entri PERTAMA =
+    yang sudah dibayar sebelum/saat check-in (DP kalau booking asalnya dp50, else
+    Lunas/Tunai) - entri SESUDAHNYA = dikumpulkan staf saat checkout (Pelunasan)."""
+    pembayaran = c.get("pembayaran") or []
+    out = []
+    for i, p in enumerate(pembayaran):
+        if i == 0:
+            jenis = "DP" if booking_payment_option == "dp50" else "Lunas"
+        else:
+            jenis = "Pelunasan"
+        out.append({"jenis": jenis, "metode": p.get("metode") or "-", "jumlah": int(p.get("jumlah") or 0)})
+    return out
+
 @api.get("/reports/rooms")
 async def report_rooms(from_date: str = Query(...), to_date: str = Query(...),
                        user: dict = Depends(get_current_user),
@@ -494,7 +536,11 @@ async def report_rooms(from_date: str = Query(...), to_date: str = Query(...),
     """Transaksi kamar walk-in (checkins) DIGABUNG booking online/OTA/WhatsApp yang sudah
     lunas (bookings, dibucket per paid_at) — sebelumnya cuma checkins, bikin RedDoorz/booking
     online tidak pernah terhitung di "Total Transaksi" & pendapatan kamar. Tidak ada duplikasi
-    dengan checkins (dua alur guest-arrival independen, lihat report_daily)."""
+    dengan checkins (dua alur guest-arrival independen, lihat report_daily).
+
+    `detail_pembayaran` per item (2026-08-02, permintaan Agus) - rincian DP/pelunasan
+    & metode-nya (cash/Tripay/QR/dll), lihat _ambil_detail_pembayaran_booking &
+    _detail_pembayaran_checkin."""
     start = from_date
     end = to_date + "T23:59:59"
     items = await db.checkins.find(
@@ -507,6 +553,20 @@ async def report_rooms(from_date: str = Query(...), to_date: str = Query(...),
         "paid_at": {"$gte": start, "$lte": end},
         "ota_harga_dikonfirmasi": {"$ne": False},
     }, property_id), {"_id": 0}).to_list(5000)
+    # Booking asal utk checkins yang berasal dari booking (perlu payment_option-nya
+    # utk tahu entri pertama pembayaran itu DP atau Lunas) + payment_log utk semua
+    # booking (baik yg langsung tampil sbg booking_items maupun yg jadi asal checkins).
+    from_booking_ids = [c["from_booking_id"] for c in items if c.get("from_booking_id")]
+    asal_bookings = {}
+    if from_booking_ids:
+        docs = await db.bookings.find({"id": {"$in": from_booking_ids}}, {"_id": 0, "id": 1, "payment_option": 1}).to_list(2000)
+        asal_bookings = {d["id"]: d for d in docs}
+    all_booking_ids = list({*(b["id"] for b in bk), *from_booking_ids})
+    detail_map = await _ambil_detail_pembayaran_booking(all_booking_ids)
+    for c in items:
+        fbid = c.get("from_booking_id")
+        payment_option = asal_bookings.get(fbid, {}).get("payment_option") if fbid else None
+        c["detail_pembayaran"] = _detail_pembayaran_checkin(c, payment_option)
     booking_items = [{
         "id": b["id"], "trx_no": b.get("kode"),
         "nama_tamu": b.get("nama_tamu"), "room_nomor": b.get("room_nomor"), "room_tipe": b.get("room_tipe"),
@@ -515,6 +575,7 @@ async def report_rooms(from_date: str = Query(...), to_date: str = Query(...),
         "tarif_dasar": b.get("subtotal", 0), "biaya_tambahan": 0, "total": b.get("total", 0),
         "petugas_checkout": b.get("created_by") or b.get("source"),
         "source": b.get("source"),
+        "detail_pembayaran": detail_map.get(b["id"], []),
     } for b in bk]
     all_items = sorted(items + booking_items, key=lambda x: x.get("jam_checkout") or "", reverse=True)
     summary = {
