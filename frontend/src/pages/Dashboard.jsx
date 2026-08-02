@@ -392,13 +392,15 @@ export default function Dashboard() {
     return bookings.filter(b => bookingOccupiesDateOnly(b, filterDateOnly));
   }, [bookings, filterDate]);
 
-  // Jendela 6 Tanggal (2026-08-02, permintaan Agus - Daftar Kamar tampil 6 tanggal
-  // HORIZONTAL/ke samping, bukan 1 tanggal seperti sebelumnya). Anchor-nya `filterDate`
-  // (state date-picker "Booking pada" yang SUDAH ADA) - supaya tidak ada state/filter
-  // paralel, date-picker yang sama sekarang menggeser jendela 6 hari, bukan cuma 1 hari.
+  // Jendela 8 Tanggal (2026-08-02, permintaan Agus - Daftar Kamar tampil beberapa
+  // tanggal HORIZONTAL/ke samping, bukan 1 tanggal seperti sebelumnya; awalnya 6, lalu
+  // ditambah jadi 8 krn masih ada sisa ruang layar). Anchor-nya `filterDate` (state
+  // date-picker "Booking pada" yang SUDAH ADA) - supaya tidak ada state/filter paralel,
+  // date-picker yang sama sekarang menggeser jendela tanggal ini.
+  const JUMLAH_KOLOM_TANGGAL = 8;
   const windowDates = useMemo(() => {
     const start = toDateOnly(new Date(`${filterDate}T00:00:00`));
-    return Array.from({ length: 6 }, (_, i) => new Date(start.getTime() + i * 24 * 3600 * 1000));
+    return Array.from({ length: JUMLAH_KOLOM_TANGGAL }, (_, i) => new Date(start.getTime() + i * 24 * 3600 * 1000));
   }, [filterDate]);
 
   const todayOnlyTs = useMemo(() => toDateOnly(new Date()).getTime(), []);
@@ -464,10 +466,10 @@ export default function Dashboard() {
   };
 
   // Kartu 1 kamar x 1 tanggal - kartu yang SAMA PERSIS (markup, warna, badge, klik) dgn
-  // sebelum grid ini jadi 6-kolom, cuma di-generalisir dari `isToday`/`bookingsOnDate`
+  // sebelum grid ini jadi multi-kolom, cuma di-generalisir dari `isToday`/`bookingsOnDate`
   // (state tunggal) jadi `isColToday`/`bookingsForCol` (parameter per kolom) supaya bisa
-  // dipanggil ulang 6x per kamar. JANGAN dianggap "komponen grid baru" - ini refactor
-  // ekstraksi kartu yang sudah ada, dipakai ulang apa adanya.
+  // dipanggil ulang JUMLAH_KOLOM_TANGGAL kali per kamar. JANGAN dianggap "komponen grid
+  // baru" - ini refactor ekstraksi kartu yang sudah ada, dipakai ulang apa adanya.
   const renderRoomCard = (r, isColToday, bookingsForCol, dateKey) => {
     // KEPUTUSAN FINAL 2026-08-02 (Agus membalik koreksi lifecycle sebelumnya -
     // "gini aku gunakan pms red dors tamu menginap hari ini tampil hari ini saja
@@ -1066,14 +1068,15 @@ export default function Dashboard() {
               </div>
             )}
           </div>
-          {/* Daftar Kamar - 6 tanggal horizontal (2026-08-02, revisi permintaan Agus: SEBELUMNYA
+          {/* Daftar Kamar - N tanggal horizontal (2026-08-02, revisi permintaan Agus: SEBELUMNYA
               sempat dibuat sbg tabel/grid terpisah yang memanjang ke BAWAH - itu salah paham,
               dihapus. Yang benar: tanggal jadi HEADER KOLOM ke samping, kamar tetap jadi baris,
               dan tiap sel MEMAKAI ULANG persis kartu kamar yang sama (lihat renderRoomCard) -
-              bukan komponen/grid baru, cuma dipanggil 6x per kamar (1x per tanggal) alih-alih
-              1x. Kolom pertama = `filterDate` (date-picker "Booking pada" yang sudah ada, jadi
-              tidak ada state filter tanggal baru/paralel), kolom 2-6 = filterDate+1..+5 hari.
-              Kartu ukurannya FIXED (w-36, TIDAK menyusut) - scroll horizontal kalau sempit. */}
+              bukan komponen/grid baru, cuma dipanggil JUMLAH_KOLOM_TANGGAL kali per kamar (1x
+              per tanggal) alih-alih 1x. Kolom pertama = `filterDate` (date-picker "Booking pada"
+              yang sudah ada, jadi tidak ada state filter tanggal baru/paralel), kolom berikutnya
+              = filterDate+1..+(JUMLAH_KOLOM_TANGGAL-1) hari. Kartu ukurannya FIXED (w-36, TIDAK
+              menyusut) - scroll horizontal kalau sempit. */}
           <div className="overflow-x-auto -mx-1 px-1">
             <div className="inline-block min-w-full">
               <div className="flex sticky top-0 z-30 bg-white pb-2">
