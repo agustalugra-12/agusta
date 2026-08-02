@@ -36,6 +36,17 @@ const todayLocal = () => {
 
 const toDateOnly = (d) => new Date(d.getFullYear(), d.getMonth(), d.getDate());
 
+// Exclusive-checkout-date rule (2026-08-02) - diekstrak dari logika bookingsOnDate yang
+// sudah ada supaya bisa dipakai ulang utk Grid 6 Hari (permintaan Agus) TANPA duplikasi
+// aturan yang sama (hari CHECK-OUT tidak dihitung menempati, KECUALI day-use checkin/
+// checkout di hari yang sama) - sumber kebenaran yang sama dgn _occupies_date backend.
+const bookingOccupiesDateOnly = (b, dateOnly) => {
+  const start = toDateOnly(new Date(b.jam_mulai));
+  let end = toDateOnly(new Date(b.jam_selesai));
+  if (end.getTime() === start.getTime()) end = new Date(start.getTime() + 24 * 3600 * 1000);
+  return start <= dateOnly && dateOnly < end;
+};
+
 const nowLocalDateTime = () => { const d = new Date(); d.setMinutes(d.getMinutes() - d.getTimezoneOffset()); return d.toISOString().slice(0, 16); };
 
 // Kebijakan pembatalan TUNGGAL (2026-07-31, bug nyata dibenerin - dashboard sebelumnya
@@ -378,13 +389,43 @@ export default function Dashboard() {
   // bug yang sudah diperbaiki di backend (_occupies_date di routes/ketersediaan.py).
   const bookingsOnDate = useMemo(() => {
     const filterDateOnly = toDateOnly(new Date(`${filterDate}T00:00:00`));
-    return bookings.filter(b => {
-      const start = toDateOnly(new Date(b.jam_mulai));
-      let end = toDateOnly(new Date(b.jam_selesai));
-      if (end.getTime() === start.getTime()) end = new Date(start.getTime() + 24 * 3600 * 1000);
-      return start <= filterDateOnly && filterDateOnly < end;
-    });
+    return bookings.filter(b => bookingOccupiesDateOnly(b, filterDateOnly));
   }, [bookings, filterDate]);
+
+  // Grid Kamar 6 Hari (2026-08-02, permintaan Agus - tampilan ala channel manager/RedDoorz:
+  // kamar sbg baris, tanggal sbg kolom, 6 hari ke depan mulai hari ini) - PURELY computed
+  // dari `rooms`+`bookings` yang SUDAH dimuat load() (tidak ada API call baru sama sekali).
+  // Kolom hari ini (index 0) pakai status REAL-TIME kamar (r.status) dgn aturan yang SAMA
+  // persis dgn kartu grid utama di atas (menginapLewatCheckout -> kosong, lihat komentar di
+  // situ - SATU sumber kebenaran, jangan menyimpang). Kolom hari 1-5 (masa depan) PASTI belum
+  // ada status real-time (belum terjadi), jadi murni dari ADA/TIDAKNYA booking terkonfirmasi
+  // yang meng-occupy tanggal itu (exclusive-checkout, sama function dgn bookingsOnDate).
+  const sixDayDates = useMemo(() => {
+    const start = toDateOnly(new Date());
+    return Array.from({ length: 6 }, (_, i) => new Date(start.getTime() + i * 24 * 3600 * 1000));
+  }, []);
+
+  const sixDayGrid = useMemo(() => {
+    const todayOnly = sixDayDates[0];
+    return rooms.map((r) => {
+      const cells = sixDayDates.map((date, i) => {
+        if (i === 0) {
+          // Sama persis logika effStatus pada kartu utama (lihat render loop di bawah) -
+          // Menginap yang tanggal checkout-nya sudah tiba (walau staf belum klik Checkout
+          // sungguhan) dianggap "kosong" utk tampilan, konsisten dgn keputusan Agus.
+          const lewatCheckout = r.status === "menginap" && bookings.some(b =>
+            b.room_id === r.id && b.tipe === "menginap" &&
+            toDateOnly(new Date(b.jam_selesai)).getTime() <= todayOnly.getTime()
+          );
+          const status = lewatCheckout ? "kosong" : r.status;
+          return { status, nama: status === "kosong" ? null : (r.info?.nama_tamu || null) };
+        }
+        const bk = bookings.find(b => b.room_id === r.id && bookingOccupiesDateOnly(b, date));
+        return { status: bk ? bk.tipe : "kosong", nama: bk ? bk.nama_tamu : null };
+      });
+      return { room: r, cells };
+    });
+  }, [rooms, bookings, sixDayDates]);
 
   const isToday = filterDate === todayLocal();
   // BookingDetail dialog state (saat klik room yang punya booking di tanggal filter)
@@ -1047,6 +1088,51 @@ export default function Dashboard() {
               </div>
               );
             })}
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Grid Kamar 6 Hari (2026-08-02, permintaan Agus - tampilan ala channel manager/
+          RedDoorz: kamar sbg baris memanjang ke bawah, tanggal sbg kolom, 6 hari ke depan).
+          Read-only (klik tidak buka aksi apa pun - utk itu tetap pakai kartu di atas atau
+          date-picker) - murni gambaran cepat siapa terisi kapan, warna PERSIS sama dgn
+          statusColor yang sudah ada (tidak ada warna baru: kosong=hijau, menginap=biru,
+          day_use=merah, perlu_dibersihkan=oranye - checkout->dibersihkan tetap lewat alur
+          tombol yang sama di kartu di atas, grid ini cuma cerminan hasilnya). */}
+      <Card className="border-slate-200" data-testid="grid-6-hari">
+        <CardContent className="p-4 sm:p-6">
+          <p className="text-sm font-semibold text-slate-700 mb-3">Grid Kamar — 6 Hari ke Depan</p>
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs border-collapse" data-testid="tabel-grid-6-hari">
+              <thead>
+                <tr>
+                  <th className="sticky left-0 bg-white text-left font-semibold text-slate-500 px-2 py-1.5 border-b border-slate-200">Kamar</th>
+                  {sixDayDates.map((d, i) => (
+                    <th key={i} className="text-center font-semibold text-slate-500 px-1.5 py-1.5 border-b border-slate-200 min-w-[72px]">
+                      {i === 0 ? "Hari ini" : d.toLocaleDateString("id-ID", { weekday: "short", day: "2-digit", month: "short" })}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {sixDayGrid.map(({ room, cells }) => (
+                  <tr key={room.id}>
+                    <td className="sticky left-0 bg-white font-bold text-slate-700 px-2 py-1.5 border-b border-slate-100">{room.nomor}</td>
+                    {cells.map((c, i) => (
+                      <td key={i} className="px-1 py-1 border-b border-slate-100">
+                        <div
+                          className="rounded-md text-white text-center px-1.5 py-1.5 truncate"
+                          style={{ background: statusColor(c.status) }}
+                          title={c.nama ? `${statusLabel(c.status)} — ${c.nama}` : statusLabel(c.status)}
+                        >
+                          {c.nama || statusLabel(c.status)}
+                        </div>
+                      </td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
         </CardContent>
       </Card>
