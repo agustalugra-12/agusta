@@ -335,7 +335,15 @@ export default function Dashboard() {
       // Booking Request yang belum diinput/disinkron manual ke PMS RedDoorz TETAP memblokir
       // slotnya di backend (check_room_available tidak berubah), tapi belum ditampilkan
       // sebagai tamu terkonfirmasi di grid Dashboard sampai email RedDoorz cocok.
-      const occupying = b.data.filter(x => ["aktif", "booking_pending", "booking_paid", "checked_in"].includes(x.status)
+      // "checked_out" (2026-08-02, bug nyata ditemukan Agus - kamar 11 sudah di-checkout
+      // TAPI kolom tanggal lain di grid tidak berubah marun & namanya hilang) - booking
+      // yang SUDAH checked_out sengaja TIDAK masuk status aktif/blocking manapun (lihat
+      // change_room_status/checkins.py checkout()), tapi array `bookings` ini dipakai JUGA
+      // buat RENDER histori (warna marun) di grid, bukan cuma cek "masih aktif atau tidak"
+      // - kalau checked_out tidak disertakan di sini, booking itu sama sekali tidak pernah
+      // sampai ke renderRoomCard, jadi logic warna marun-nya tidak pernah ke-trigger sama
+      // sekali (bukan salah warna, tapi datanya memang tidak pernah dikirim ke situ).
+      const occupying = b.data.filter(x => ["aktif", "booking_pending", "booking_paid", "checked_in", "checked_out"].includes(x.status)
         && !["waiting_reddoorz_input", "waiting_reddoorz_sync"].includes(x.sync_status));
       setSummary(s.data); setRooms(r.data); setActive(c.data); setBookings(occupying);
       setBookingRequests(br.data);
