@@ -19,7 +19,12 @@ async def create_expense(body: ExpenseCreate, user: dict = Depends(get_current_u
     await db.expenses.insert_one(doc)
     await log_activity(user, "expense", f"Pengeluaran {body.kategori} Rp{body.nominal:,}".replace(",", "."))
     from routes.rekening import auto_posting
-    await auto_posting("pengeluaran", body.nominal, body.kategori, body.deskripsi, property_id)
+    # (2026-08-02, bug nyata ditemukan - input pengeluaran BACKDATE tanggal 1 Agustus
+    # sambil ngerjain task ini) - `body.tanggal` TIDAK PERNAH diteruskan ke auto_posting(),
+    # jadi pengeluaran yang di-backdate/postdate tetap keposting ke rekening_transaksi
+    # dgn tanggal HARI INI (default auto_posting kalau tanggal=None), bikin laporan kas
+    # harian tanggal yang benar jadi tidak lengkap & tanggal input jadi salah nambah.
+    await auto_posting("pengeluaran", body.nominal, body.kategori, body.deskripsi, property_id, tanggal=body.tanggal)
     doc.pop("_id", None)
     return doc
 
