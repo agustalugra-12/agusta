@@ -392,40 +392,26 @@ export default function Dashboard() {
     return bookings.filter(b => bookingOccupiesDateOnly(b, filterDateOnly));
   }, [bookings, filterDate]);
 
-  // Grid Kamar 6 Hari (2026-08-02, permintaan Agus - tampilan ala channel manager/RedDoorz:
-  // kamar sbg baris, tanggal sbg kolom, 6 hari ke depan mulai hari ini) - PURELY computed
-  // dari `rooms`+`bookings` yang SUDAH dimuat load() (tidak ada API call baru sama sekali).
-  // Kolom hari ini (index 0) pakai status REAL-TIME kamar (r.status) dgn aturan yang SAMA
-  // persis dgn kartu grid utama di atas (menginapLewatCheckout -> kosong, lihat komentar di
-  // situ - SATU sumber kebenaran, jangan menyimpang). Kolom hari 1-5 (masa depan) PASTI belum
-  // ada status real-time (belum terjadi), jadi murni dari ADA/TIDAKNYA booking terkonfirmasi
-  // yang meng-occupy tanggal itu (exclusive-checkout, sama function dgn bookingsOnDate).
-  const sixDayDates = useMemo(() => {
-    const start = toDateOnly(new Date());
+  // Jendela 6 Tanggal (2026-08-02, permintaan Agus - Daftar Kamar tampil 6 tanggal
+  // HORIZONTAL/ke samping, bukan 1 tanggal seperti sebelumnya). Anchor-nya `filterDate`
+  // (state date-picker "Booking pada" yang SUDAH ADA) - supaya tidak ada state/filter
+  // paralel, date-picker yang sama sekarang menggeser jendela 6 hari, bukan cuma 1 hari.
+  const windowDates = useMemo(() => {
+    const start = toDateOnly(new Date(`${filterDate}T00:00:00`));
     return Array.from({ length: 6 }, (_, i) => new Date(start.getTime() + i * 24 * 3600 * 1000));
-  }, []);
+  }, [filterDate]);
 
-  const sixDayGrid = useMemo(() => {
-    const todayOnly = sixDayDates[0];
-    return rooms.map((r) => {
-      const cells = sixDayDates.map((date, i) => {
-        if (i === 0) {
-          // Sama persis logika effStatus pada kartu utama (lihat render loop di bawah) -
-          // Menginap yang tanggal checkout-nya sudah tiba (walau staf belum klik Checkout
-          // sungguhan) dianggap "kosong" utk tampilan, konsisten dgn keputusan Agus.
-          const lewatCheckout = r.status === "menginap" && bookings.some(b =>
-            b.room_id === r.id && b.tipe === "menginap" &&
-            toDateOnly(new Date(b.jam_selesai)).getTime() <= todayOnly.getTime()
-          );
-          const status = lewatCheckout ? "kosong" : r.status;
-          return { status, nama: status === "kosong" ? null : (r.info?.nama_tamu || null) };
-        }
-        const bk = bookings.find(b => b.room_id === r.id && bookingOccupiesDateOnly(b, date));
-        return { status: bk ? bk.tipe : "kosong", nama: bk ? bk.nama_tamu : null };
-      });
-      return { room: r, cells };
-    });
-  }, [rooms, bookings, sixDayDates]);
+  const todayOnlyTs = useMemo(() => toDateOnly(new Date()).getTime(), []);
+
+  // Bookings per kolom tanggal - generalisasi dari `bookingsOnDate` (yang cuma utk
+  // `filterDate` tunggal) supaya bisa dipakai tiap kolom di grid horizontal.
+  const windowColumns = useMemo(() => {
+    return windowDates.map((date) => ({
+      date,
+      isColToday: date.getTime() === todayOnlyTs,
+      bookingsForCol: bookings.filter(b => bookingOccupiesDateOnly(b, date)),
+    }));
+  }, [windowDates, todayOnlyTs, bookings]);
 
   const isToday = filterDate === todayLocal();
   // BookingDetail dialog state (saat klik room yang punya booking di tanggal filter)
@@ -441,7 +427,7 @@ export default function Dashboard() {
   // Collect sisa pelunasan dialog state
   const [collectDialog, setCollectDialog] = useState(null); // { booking, sisa, nominal, metode }
 
-  const handleRoomClick = (room, upcomingBk, laterTodayBk) => {
+  const handleRoomClick = (room, upcomingBk, laterTodayBk, isColToday) => {
     // Jika tanggal yang dilihat punya booking di room ini → buka detail booking
     if (upcomingBk) {
       setBookingDetail(upcomingBk);
@@ -451,7 +437,7 @@ export default function Dashboard() {
       return;
     }
     // Hanya hari ini yang boleh trigger flow check-in/checkout/action
-    if (!isToday) {
+    if (!isColToday) {
       toast.info("Tanggal ini tidak ada booking. Untuk transaksi gunakan tanggal hari ini.");
       return;
     }
@@ -475,6 +461,116 @@ export default function Dashboard() {
     setActionRoom({ ...room, _laterTodayBk: laterTodayBk });
     setStatusForm({ status: room.status, nama_tamu: room.info?.nama_tamu || "", catatan: room.info?.catatan || "" });
     setHkPetugas(user?.nama || "");
+  };
+
+  // Kartu 1 kamar x 1 tanggal - kartu yang SAMA PERSIS (markup, warna, badge, klik) dgn
+  // sebelum grid ini jadi 6-kolom, cuma di-generalisir dari `isToday`/`bookingsOnDate`
+  // (state tunggal) jadi `isColToday`/`bookingsForCol` (parameter per kolom) supaya bisa
+  // dipanggil ulang 6x per kamar. JANGAN dianggap "komponen grid baru" - ini refactor
+  // ekstraksi kartu yang sudah ada, dipakai ulang apa adanya.
+  const renderRoomCard = (r, isColToday, bookingsForCol, dateKey) => {
+    // KEPUTUSAN FINAL 2026-08-02 (Agus membalik koreksi lifecycle sebelumnya -
+    // "gini aku gunakan pms red dors tamu menginap hari ini tampil hari ini saja
+    // tidak tampil di tanggal 3... ini yang aku mau tetap konsisten"): status kamar
+    // SEKARANG murni berdasarkan TANGGAL (persis cara RedDoorz), bukan lifecycle
+    // checked-in/checked-out staf lagi - begitu tanggal checkout tiba (walau staf
+    // belum sempat klik Checkout sungguhan), kamar dianggap "kosong" utk tampilan &
+    // otomatis masuk jalur upcomingBk (exclusive-checkout-date, sama persis logika
+    // Occupancy Calendar) supaya booking BERIKUTNYA di kamar sama hari ini tetap
+    // kelihatan.
+    const menginapLewatCheckout = (isColToday && r.status === "menginap")
+      ? bookings.find(b => b.room_id === r.id && b.tipe === "menginap" &&
+          toDateOnly(new Date(b.jam_selesai)).getTime() <= toDateOnly(new Date()).getTime())
+      : null;
+    const effStatus = isColToday ? (menginapLewatCheckout ? "kosong" : r.status) : "kosong";
+    // Pengingat staf (BUKAN blokir booking baru - backend check_room_available
+    // tetap jadi penjaga asli anti-double-booking dari data booking sungguhan,
+    // ini cuma nudge visual) - kamar kelihatan "kosong" di atas TAPI tamu lama
+    // belum benar-benar di-checkout staf, supaya tidak lupa diproses.
+    const checkoutHariIniBk = menginapLewatCheckout;
+    // "kosong" ATAU "perlu_dibersihkan" - kamar yang baru saja ditinggal tamu lain
+    // (belum dibersihkan) TIDAK ADA tamu aktif di dalamnya, sama seperti kamar
+    // kosong, jadi booking tamu BERIKUTNYA di tanggal ini tetap harus kelihatan.
+    const belumAdaTamuAktif = effStatus === "kosong" || effStatus === "perlu_dibersihkan";
+    const upcomingBk = belumAdaTamuAktif ? bookingsForCol
+      .filter(b => b.room_id === r.id)
+      .sort((a, c) => a.jam_mulai.localeCompare(c.jam_mulai))[0] : null;
+    const bg = upcomingBk ? (upcomingBk.tipe === "menginap" ? "#3B82F6" : "#92400E") : statusColor(effStatus);
+    const bkLabel = upcomingBk
+      ? new Date(upcomingBk.jam_mulai).toLocaleString("id-ID", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })
+      : null;
+    // Kamar yang MENUMPUK Day Use + Menginap di hari yang sama - cuma relevan utk
+    // kolom hari ini (real-time, jam sungguhan), sama seperti sebelumnya.
+    const laterTodayBk = (isColToday && !belumAdaTamuAktif) ? bookingsForCol
+      .filter(b => b.room_id === r.id && new Date(b.jam_mulai) > new Date())
+      .sort((a, c) => a.jam_mulai.localeCompare(c.jam_mulai))[0] : null;
+    const laterColor = laterTodayBk ? (laterTodayBk.tipe === "menginap" ? "#3B82F6" : "#92400E") : null;
+    const laterLabel = laterTodayBk
+      ? `${laterTodayBk.tipe === "menginap" ? "Menginap" : "Day Use"} ${new Date(laterTodayBk.jam_mulai).toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit" })}`
+      : null;
+    const selectable = isColToday && multiSelectMode && effStatus === "kosong" && !upcomingBk;
+    const isSelected = selectable && selectedIds.includes(r.id);
+    // Testid kolom "hari ini" tetap `room-{nomor}` (backward compat), kolom lain dapat
+    // suffix tanggal supaya tidak ada testid duplikat lintas 6 kolom.
+    const suffix = isColToday ? r.nomor : `${r.nomor}-${dateKey}`;
+    return (
+      <div
+        data-testid={`room-${suffix}`}
+        onClick={() => handleRoomClick(r, upcomingBk, laterTodayBk, isColToday)}
+        role="button" tabIndex={0}
+        onKeyDown={(e) => { if (e.key === "Enter") handleRoomClick(r, upcomingBk, laterTodayBk, isColToday); }}
+        className={`room-card relative rounded-xl text-white p-4 aspect-square flex flex-col justify-between text-left overflow-hidden cursor-pointer ${isSelected ? "ring-4 ring-blue-500 ring-offset-2" : ""} ${selectable && !isSelected ? "ring-2 ring-dashed ring-white/60" : ""}`}
+        style={{ background: bg }}
+      >
+        {isSelected && (
+          <div className="absolute top-1 right-1 w-5 h-5 rounded-full bg-blue-600 border-2 border-white grid place-items-center text-[10px] font-bold z-10">✓</div>
+        )}
+        <div className="flex items-center justify-between">
+          <span className="text-[10px] uppercase font-semibold tracking-wider opacity-90">{r.tipe}</span>
+          <span className="text-[10px] bg-white/25 rounded px-1.5 py-0.5">{upcomingBk ? "Booked" : statusLabel(effStatus)}</span>
+        </div>
+        <div className="text-3xl sm:text-4xl font-extrabold">{r.nomor}</div>
+        <div className="text-[11px] opacity-90 truncate">
+          {upcomingBk ? `${upcomingBk.nama_tamu}` : (effStatus === "kosong" ? fmtRp(r.tarif) : (r.info?.nama_tamu || "—"))}
+        </div>
+        {bkLabel && (
+          <div className="absolute top-0 right-0 bg-amber-900/80 text-[9px] font-bold px-1.5 py-0.5 rounded-bl-md">
+            {bkLabel}
+          </div>
+        )}
+        {laterTodayBk && (
+          <div
+            data-testid={`room-later-${suffix}`}
+            title={`Ada booking lain hari ini: ${laterLabel} — ${laterTodayBk.nama_tamu}`}
+            className="absolute top-7 left-1 right-1 flex items-center justify-center gap-1.5 text-white font-extrabold text-[13px] px-2 py-1.5 rounded-lg shadow-lg z-10 border-2 border-white animate-pulse"
+            style={{ background: laterColor }}
+          >
+            <span className="text-base leading-none">{laterTodayBk.tipe === "menginap" ? "🌙" : "☀️"}</span>
+            <span className="whitespace-nowrap">{laterLabel}</span>
+          </div>
+        )}
+        {upcomingBk && (
+          <button
+            type="button"
+            data-testid={`room-cancel-${suffix}`}
+            onClick={(e) => { e.stopPropagation(); quickCancelBooking(upcomingBk); }}
+            title="Batalkan booking ini"
+            className="absolute top-1 left-1 w-6 h-6 rounded-full bg-white/95 text-red-600 hover:bg-red-600 hover:text-white grid place-items-center transition-colors z-10"
+          >
+            <X className="w-3.5 h-3.5" />
+          </button>
+        )}
+        {checkoutHariIniBk && (
+          <div
+            data-testid={`room-checkout-due-${suffix}`}
+            title={`Kamar tampil kosong sesuai tanggal checkout (${checkoutHariIniBk.nama_tamu}), TAPI staf belum klik Checkout sungguhan - kamar mungkin masih fisik terisi, jangan lupa proses checkout-nya`}
+            className="absolute bottom-0 left-0 right-0 bg-violet-900/85 text-white text-[9px] font-bold text-center px-1.5 py-1"
+          >
+            ⚠ Belum Di-checkout
+          </div>
+        )}
+      </div>
+    );
   };
 
   const cancelBookingDetail = async () => {
@@ -970,169 +1066,46 @@ export default function Dashboard() {
               </div>
             )}
           </div>
-          <div data-testid="room-grid" className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 gap-3">
-            {rooms.map((r) => {
-              // KEPUTUSAN FINAL 2026-08-02 (Agus membalik koreksi lifecycle sebelumnya -
-              // "gini aku gunakan pms red dors tamu menginap hari ini tampil hari ini saja
-              // tidak tampil di tanggal 3... ini yang aku mau tetap konsisten"): status kamar
-              // SEKARANG murni berdasarkan TANGGAL (persis cara RedDoorz), bukan lifecycle
-              // checked-in/checked-out staf lagi - begitu tanggal checkout tiba (walau staf
-              // belum sempat klik Checkout sungguhan), kamar dianggap "kosong" utk tampilan &
-              // otomatis masuk jalur upcomingBk (exclusive-checkout-date, sama persis logika
-              // Occupancy Calendar) supaya booking BERIKUTNYA di kamar sama hari ini tetap
-              // kelihatan. (Riwayat: sempat dicoba status baru "checkout_terlambat" -> ditolak
-              // -> diganti badge info doang mempertahankan lifecycle -> SEKARANG dibalik lagi
-              // ke murni tanggal, ini yang final per keputusan eksplisit Agus.)
-              const menginapLewatCheckout = (isToday && r.status === "menginap")
-                ? bookings.find(b => b.room_id === r.id && b.tipe === "menginap" &&
-                    toDateOnly(new Date(b.jam_selesai)).getTime() <= toDateOnly(new Date()).getTime())
-                : null;
-              const effStatus = isToday ? (menginapLewatCheckout ? "kosong" : r.status) : "kosong";
-              // Pengingat staf (BUKAN blokir booking baru - backend check_room_available
-              // tetap jadi penjaga asli anti-double-booking dari data booking sungguhan,
-              // ini cuma nudge visual) - kamar kelihatan "kosong" di atas TAPI tamu lama
-              // belum benar-benar di-checkout staf, supaya tidak lupa diproses.
-              const checkoutHariIniBk = menginapLewatCheckout;
-              // "kosong" ATAU "perlu_dibersihkan" (2026-08-01, bug nyata ditemukan Agus -
-              // tamu terbooking "Radea" hilang dari dashboard) - kamar yang baru saja
-              // ditinggal tamu lain (belum dibersihkan) TIDAK ADA tamu aktif di dalamnya,
-              // sama seperti kamar kosong, jadi booking tamu BERIKUTNYA hari ini tetap
-              // harus kelihatan - sebelumnya cuma dicek "kosong" doang, jadi begitu kamar
-              // masuk status "perlu_dibersihkan" (mis. tamu lain sempat dipindah ke situ lalu
-              // dipindah lagi), booking tamu yang sudah menunggu jadi tidak terlihat sama
-              // sekali sampai housekeeping selesai - padahal tidak ada hubungannya.
-              const belumAdaTamuAktif = effStatus === "kosong" || effStatus === "perlu_dibersihkan";
-              const upcomingBk = belumAdaTamuAktif ? bookingsOnDate
-                .filter(b => b.room_id === r.id)
-                .sort((a, c) => a.jam_mulai.localeCompare(c.jam_mulai))[0] : null;
-              const bg = upcomingBk ? (upcomingBk.tipe === "menginap" ? "#3B82F6" : "#92400E") : statusColor(effStatus);
-              const bkLabel = upcomingBk
-                ? new Date(upcomingBk.jam_mulai).toLocaleString("id-ID", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })
-                : null;
-              // Kamar yang MENUMPUK Day Use + Menginap di hari yang sama (kasus lapangan
-              // nyata, permintaan user 2026-07-28) - selama ini grid cuma bisa tampilkan 1
-              // warna dari `r.status` (real-time, cuma tau status SAAT INI), jadi kalau kamar
-              // sedang Day Use TAPI juga sudah ada booking Menginap yang akan check-in nanti
-              // hari ini di kamar yang SAMA (diperbolehkan - lihat scheduling_engine.py,
-              // asal tidak overlap waktu), booking Menginap itu jadi tidak kelihatan sama
-              // sekali di dashboard sampai Day Use-nya selesai. Cuma dicek saat kamar BENAR-
-              // BENAR ada tamu aktif sekarang (kosong/perlu_dibersihkan sudah punya jalur
-              // `upcomingBk` sendiri di atas) - cari booking lain hari ini di kamar ini yang
-              // jam_mulai-nya masih di depan (belum mulai).
-              const laterTodayBk = (isToday && !belumAdaTamuAktif) ? bookingsOnDate
-                .filter(b => b.room_id === r.id && new Date(b.jam_mulai) > new Date())
-                .sort((a, c) => a.jam_mulai.localeCompare(c.jam_mulai))[0] : null;
-              const laterColor = laterTodayBk ? (laterTodayBk.tipe === "menginap" ? "#3B82F6" : "#92400E") : null;
-              const laterLabel = laterTodayBk
-                ? `${laterTodayBk.tipe === "menginap" ? "Menginap" : "Day Use"} ${new Date(laterTodayBk.jam_mulai).toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit" })}`
-                : null;
-              const selectable = multiSelectMode && effStatus === "kosong" && !upcomingBk;
-              const isSelected = selectable && selectedIds.includes(r.id);
-              return (
-              <div
-                key={r.id}
-                data-testid={`room-${r.nomor}`}
-                onClick={() => handleRoomClick(r, upcomingBk, laterTodayBk)}
-                role="button" tabIndex={0}
-                onKeyDown={(e) => { if (e.key === "Enter") handleRoomClick(r, upcomingBk, laterTodayBk); }}
-                className={`room-card relative rounded-xl text-white p-4 aspect-square flex flex-col justify-between text-left overflow-hidden cursor-pointer ${isSelected ? "ring-4 ring-blue-500 ring-offset-2" : ""} ${selectable && !isSelected ? "ring-2 ring-dashed ring-white/60" : ""}`}
-                style={{ background: bg }}
-              >
-                {isSelected && (
-                  <div className="absolute top-1 right-1 w-5 h-5 rounded-full bg-blue-600 border-2 border-white grid place-items-center text-[10px] font-bold z-10">✓</div>
-                )}
-                <div className="flex items-center justify-between">
-                  <span className="text-[10px] uppercase font-semibold tracking-wider opacity-90">{r.tipe}</span>
-                  <span className="text-[10px] bg-white/25 rounded px-1.5 py-0.5">{upcomingBk ? "Booked" : statusLabel(effStatus)}</span>
-                </div>
-                <div className="text-3xl sm:text-4xl font-extrabold">{r.nomor}</div>
-                <div className="text-[11px] opacity-90 truncate">
-                  {upcomingBk ? `${upcomingBk.nama_tamu}` : (effStatus === "kosong" ? fmtRp(r.tarif) : (r.info?.nama_tamu || "—"))}
-                </div>
-                {bkLabel && (
-                  <div className="absolute top-0 right-0 bg-amber-900/80 text-[9px] font-bold px-1.5 py-0.5 rounded-bl-md">
-                    {bkLabel}
+          {/* Daftar Kamar - 6 tanggal horizontal (2026-08-02, revisi permintaan Agus: SEBELUMNYA
+              sempat dibuat sbg tabel/grid terpisah yang memanjang ke BAWAH - itu salah paham,
+              dihapus. Yang benar: tanggal jadi HEADER KOLOM ke samping, kamar tetap jadi baris,
+              dan tiap sel MEMAKAI ULANG persis kartu kamar yang sama (lihat renderRoomCard) -
+              bukan komponen/grid baru, cuma dipanggil 6x per kamar (1x per tanggal) alih-alih
+              1x. Kolom pertama = `filterDate` (date-picker "Booking pada" yang sudah ada, jadi
+              tidak ada state filter tanggal baru/paralel), kolom 2-6 = filterDate+1..+5 hari.
+              Kartu ukurannya FIXED (w-36, TIDAK menyusut) - scroll horizontal kalau sempit. */}
+          <div className="overflow-x-auto -mx-1 px-1">
+            <div className="inline-block min-w-full">
+              <div className="flex sticky top-0 z-30 bg-white pb-2">
+                <div className="sticky left-0 z-40 bg-white w-20 shrink-0" />
+                {windowColumns.map(({ date, isColToday }) => (
+                  <div key={date.toISOString()} className="w-36 shrink-0 px-1 text-center">
+                    <div className={`text-xs font-bold rounded-md py-1.5 ${isColToday ? "bg-blue-700 text-white" : "bg-slate-100 text-slate-600"}`}>
+                      {date.toLocaleDateString("id-ID", { weekday: "short", day: "2-digit", month: "short" })}
+                      {isColToday && <span className="block text-[9px] font-normal opacity-90">Hari ini</span>}
+                    </div>
                   </div>
-                )}
-                {laterTodayBk && (
-                  <div
-                    data-testid={`room-later-${r.nomor}`}
-                    title={`Ada booking lain hari ini: ${laterLabel} — ${laterTodayBk.nama_tamu}`}
-                    className="absolute top-7 left-1 right-1 flex items-center justify-center gap-1.5 text-white font-extrabold text-[13px] px-2 py-1.5 rounded-lg shadow-lg z-10 border-2 border-white animate-pulse"
-                    style={{ background: laterColor }}
-                  >
-                    <span className="text-base leading-none">{laterTodayBk.tipe === "menginap" ? "🌙" : "☀️"}</span>
-                    <span className="whitespace-nowrap">{laterLabel}</span>
-                  </div>
-                )}
-                {upcomingBk && (
-                  <button
-                    type="button"
-                    data-testid={`room-cancel-${r.nomor}`}
-                    onClick={(e) => { e.stopPropagation(); quickCancelBooking(upcomingBk); }}
-                    title="Batalkan booking ini"
-                    className="absolute top-1 left-1 w-6 h-6 rounded-full bg-white/95 text-red-600 hover:bg-red-600 hover:text-white grid place-items-center transition-colors z-10"
-                  >
-                    <X className="w-3.5 h-3.5" />
-                  </button>
-                )}
-                {checkoutHariIniBk && (
-                  <div
-                    data-testid={`room-checkout-due-${r.nomor}`}
-                    title={`Kamar tampil kosong sesuai tanggal checkout (${checkoutHariIniBk.nama_tamu}), TAPI staf belum klik Checkout sungguhan - kamar mungkin masih fisik terisi, jangan lupa proses checkout-nya`}
-                    className="absolute bottom-0 left-0 right-0 bg-violet-900/85 text-white text-[9px] font-bold text-center px-1.5 py-1"
-                  >
-                    ⚠ Belum Di-checkout
-                  </div>
-                )}
-              </div>
-              );
-            })}
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* Grid Kamar 6 Hari (2026-08-02, permintaan Agus - tampilan ala channel manager/
-          RedDoorz: kamar sbg baris memanjang ke bawah, tanggal sbg kolom, 6 hari ke depan).
-          Read-only (klik tidak buka aksi apa pun - utk itu tetap pakai kartu di atas atau
-          date-picker) - murni gambaran cepat siapa terisi kapan, warna PERSIS sama dgn
-          statusColor yang sudah ada (tidak ada warna baru: kosong=hijau, menginap=biru,
-          day_use=merah, perlu_dibersihkan=oranye - checkout->dibersihkan tetap lewat alur
-          tombol yang sama di kartu di atas, grid ini cuma cerminan hasilnya). */}
-      <Card className="border-slate-200" data-testid="grid-6-hari">
-        <CardContent className="p-4 sm:p-6">
-          <p className="text-sm font-semibold text-slate-700 mb-3">Grid Kamar — 6 Hari ke Depan</p>
-          <div className="overflow-x-auto">
-            <table className="w-full text-xs border-collapse" data-testid="tabel-grid-6-hari">
-              <thead>
-                <tr>
-                  <th className="sticky left-0 bg-white text-left font-semibold text-slate-500 px-2 py-1.5 border-b border-slate-200">Kamar</th>
-                  {sixDayDates.map((d, i) => (
-                    <th key={i} className="text-center font-semibold text-slate-500 px-1.5 py-1.5 border-b border-slate-200 min-w-[72px]">
-                      {i === 0 ? "Hari ini" : d.toLocaleDateString("id-ID", { weekday: "short", day: "2-digit", month: "short" })}
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {sixDayGrid.map(({ room, cells }) => (
-                  <tr key={room.id}>
-                    <td className="sticky left-0 bg-white font-bold text-slate-700 px-2 py-1.5 border-b border-slate-100">{room.nomor}</td>
-                    {cells.map((c, i) => (
-                      <td key={i} className="px-1 py-1 border-b border-slate-100">
-                        <div
-                          className="rounded-md text-white text-center px-1.5 py-1.5 truncate"
-                          style={{ background: statusColor(c.status) }}
-                          title={c.nama ? `${statusLabel(c.status)} — ${c.nama}` : statusLabel(c.status)}
-                        >
-                          {c.nama || statusLabel(c.status)}
-                        </div>
-                      </td>
-                    ))}
-                  </tr>
                 ))}
-              </tbody>
-            </table>
+              </div>
+              <div data-testid="room-grid" className="flex flex-col gap-3">
+                {rooms.map((r) => (
+                  <div key={r.id} className="flex items-center">
+                    <div className="sticky left-0 z-20 bg-white w-20 shrink-0 pr-2">
+                      <div className="text-sm font-extrabold text-slate-700 leading-tight">{r.nomor}</div>
+                      <div className="text-[10px] text-slate-400 uppercase truncate">{r.tipe}</div>
+                    </div>
+                    {windowColumns.map(({ date, isColToday, bookingsForCol }) => {
+                      const dateKey = date.toISOString().slice(0, 10);
+                      return (
+                        <div key={dateKey} className="w-36 shrink-0 px-1">
+                          {renderRoomCard(r, isColToday, bookingsForCol, dateKey)}
+                        </div>
+                      );
+                    })}
+                  </div>
+                ))}
+              </div>
+            </div>
           </div>
         </CardContent>
       </Card>
