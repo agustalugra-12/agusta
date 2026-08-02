@@ -130,13 +130,16 @@ async def public_availability(tanggal: str, tipe: Optional[str] = None, checkout
     SEMUA kamar Standard hari itu baru checkout menginap jam 12 siang - filter tanggal-saja
     di atas TIDAK tahu soal jam, "hari checkout tidak dihitung menempati" cuma benar kalau
     checkin baru diminta SETELAH jam checkout riil, bukan utk Day Use pagi yang datang
-    SEBELUM tamu lama keluar). HANYA relevan utk Day Use (kalau `checkout` diisi/multi-malam
-    menginap, diabaikan - checkin menginap normalnya jam 14:00, sudah aman dari kasus ini).
-    Kalau diisi, kamar yang lolos filter tanggal di atas DISARING ULANG pakai overlap presisi
-    jam (check_room_available, hard validator yang sama dipakai saat submit sungguhan) thd
-    slot Day Use [jam_checkin, jam_checkin + durasi standar] - supaya kamar yang secara
-    TANGGAL "tersedia" tapi tamu sebelumnya belum checkout pas jam yang diminta, tidak ikut
-    dihitung tersedia.
+    SEBELUM tamu lama keluar). Diperluas 2026-08-02 - dulu HANYA relevan utk Day Use
+    (kalau `checkout` diisi/multi-malam menginap, diabaikan, dgn asumsi checkin menginap
+    selalu jam 14:00 tetap sehingga aman dari bentrok) - asumsi itu tidak berlaku lagi
+    sejak Menginap juga bisa pakai jam_checkin kustom lebih awal (mis. tamu Harmoni chat
+    pagi minta check-in jam 11, lihat _coba_auto_approve_menginap). Kalau diisi, kamar yang
+    lolos filter tanggal di atas DISARING ULANG pakai overlap presisi jam
+    (check_room_available, hard validator yang sama dipakai saat submit sungguhan) thd slot
+    [jam_checkin, jam_checkin + durasi standar Day Use] ATAU [jam_checkin, tanggal checkout
+    jam 12:00] utk Menginap - supaya kamar yang secara TANGGAL "tersedia" tapi tamu
+    sebelumnya belum checkout pas jam yang diminta, tidak ikut dihitung tersedia.
 
     `property_id_override` (Fase 4) - dipakai pemanggil INTERNAL yang sudah tahu properti
     yang benar dari konteksnya sendiri (mis. ai_bot_ketersediaan dari API key ai-chat-bot,
@@ -185,6 +188,18 @@ async def public_availability(tanggal: str, tipe: Optional[str] = None, checkout
     # sudah berupa rentang TANGGAL (bukan cuma pre-filter kasar), jadi hari check-out booking
     # lain TIDAK dihitung menempati (lihat _booking_date_range).
     q_range_start, q_range_end = d_start.date(), d_end.date()
+    # (2026-08-02) Kalau jam_checkin diisi DAN hari ini termasuk dalam rentang - lewatkan HARI
+    # INI dari cek tanggal kasar ini, serahkan sepenuhnya ke filter presisi jam di bawah
+    # (check_room_available). SEBAB: cek tanggal kasar di atas tidak tahu soal jam - booking
+    # Day Use APAPUN jamnya hari ini (mis. jam 09:00-13:00) akan membuat HARI INI dianggap
+    # "menempati" scr keseluruhan (lihat _booking_date_range utk booking checkin/checkout di
+    # hari yang sama), jadi kamar itu ikut ter-exclude di sini WALAU sudah kosong jauh
+    # sebelum jam_checkin yang diminta tamu - filter presisi di bawah jadi percuma karena
+    # kamarnya sudah lebih dulu tersingkir di sini. Malam-malam SETELAH hari ini (night 2
+    # dst utk Menginap) tetap pakai cek tanggal kasar seperti biasa (jam tidak relevan lagi
+    # utk tanggal masa depan).
+    if jam_checkin and is_today:
+        q_range_start = q_range_start + timedelta(days=1)
     out = []
     for r in rooms:
         kandidat = await db.bookings.find(scoped({
@@ -212,19 +227,28 @@ async def public_availability(tanggal: str, tipe: Optional[str] = None, checkout
         if not bk:
             out.append({"id": r["id"], "nomor": r["nomor"], "tipe": r["tipe"], "tarif": r["tarif"], "tarif_menginap": r["tarif_menginap"]})
 
-    # Filter presisi jam utk Day Use (2026-08-01, lihat catatan jam_checkin di docstring) -
-    # HANYA jalan kalau jam_checkin diisi DAN ini bukan query menginap multi-malam (checkout
-    # kosong). Pakai check_room_available yang SAMA persis dgn hard validator submit
-    # sungguhan - kalau lolos di sini, dijamin juga lolos saat benar-benar submit (tidak ada
-    # celah preview-vs-submit yang bisa menyimpang lagi).
-    if jam_checkin and not checkout and out:
+    # Filter presisi jam (2026-08-01 utk Day Use, diperluas 2026-08-02 utk Menginap dgn
+    # jam_checkin kustom - lihat catatan jam_checkin di docstring). Pakai check_room_available
+    # yang SAMA persis dgn hard validator submit sungguhan - kalau lolos di sini, dijamin
+    # juga lolos saat benar-benar submit (tidak ada celah preview-vs-submit yang bisa
+    # menyimpang lagi).
+    # Menginap (checkout diisi) DULU selalu diabaikan di sini (asumsi lama: checkin
+    # menginap selalu jam 14:00 tetap, aman dari bentrok Day Use pagi/siang) - asumsi itu
+    # tidak berlaku lagi sejak Menginap juga bisa pakai jam_checkin kustom lebih awal (mis.
+    # tamu Harmoni chat pagi minta check-in jam 11). End datetime utk Menginap = TANGGAL
+    # CHECKOUT jam 12:00 WIB (bukan +DAYUSE_DURASI_JAM spt Day Use) - checkout aslinya.
+    if jam_checkin and out:
         try:
             jm_mulai_wib = datetime.combine(d.date(), datetime.strptime(jam_checkin, "%H:%M").time(), tzinfo=WIB)
         except ValueError:
             jm_mulai_wib = None
         if jm_mulai_wib:
             jm_mulai_utc = jm_mulai_wib.astimezone(timezone.utc)
-            jm_selesai_utc = jm_mulai_utc + timedelta(hours=DAYUSE_DURASI_JAM)
+            if checkout:
+                jm_selesai_wib = datetime.combine(d_end.date(), datetime.min.time().replace(hour=12), tzinfo=WIB)
+                jm_selesai_utc = jm_selesai_wib.astimezone(timezone.utc)
+            else:
+                jm_selesai_utc = jm_mulai_utc + timedelta(hours=DAYUSE_DURASI_JAM)
             out_presisi = []
             for r in out:
                 try:

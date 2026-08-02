@@ -312,8 +312,16 @@ async def _coba_auto_approve_menginap(doc: Dict[str, Any]) -> None:
         if await property_butuh_reddoorz(doc["property_id"]):
             return  # properti ini tetap wajib direview manual staf (RedDoorz)
 
+        # jam_checkin custom (2026-08-02, sama pola dgn fix _coba_auto_approve_day_use) -
+        # sebelumnya HARDCODE "14:00:00" apa pun jam yang tamu minta (create_booking AI
+        # dulu memang tidak pernah kirim jam_checkin utk menginap sama sekali). Sekarang
+        # pakai jam yang benar-benar diminta tamu kalau ada (mis. tamu Harmoni chat pagi
+        # minta check-in Menginap jam 11 saat kamar masih dipakai Day Use tapi akan kosong
+        # sebelum jam itu) - default tetap "14:00" (standar hotel) kalau tamu tidak minta
+        # jam spesifik.
+        jam_checkin = (doc.get("jam_checkin") or "14:00").strip()
         try:
-            ci = datetime.fromisoformat(f"{doc['tanggal_checkin']}T14:00:00+07:00")
+            ci = datetime.fromisoformat(f"{doc['tanggal_checkin']}T{jam_checkin}:00+07:00")
             co = datetime.fromisoformat(f"{doc['tanggal_checkout']}T12:00:00+07:00")
         except Exception:
             return
@@ -324,7 +332,7 @@ async def _coba_auto_approve_menginap(doc: Dict[str, Any]) -> None:
         from routes.public import public_availability
         avail = await public_availability(
             doc["tanggal_checkin"], tipe=doc.get("room_tipe"), checkout=doc["tanggal_checkout"],
-            property_id_override=doc["property_id"],
+            property_id_override=doc["property_id"], jam_checkin=doc.get("jam_checkin"),
         )
 
         if not avail["rooms"]:
