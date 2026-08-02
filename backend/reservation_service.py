@@ -86,6 +86,35 @@ async def check_room_available(room_id: str, mulai: datetime, selesai: datetime,
     overlap = await db.bookings.find_one(query)
     if overlap:
         raise HTTPException(400, f"Kamar sudah dibooking pada rentang ini ({overlap.get('kode')})")
+
+    # Bug KRITIS ditemukan & diperbaiki 2026-08-02 (permintaan Agus - audit langsung: tamu
+    # walk-in Day Use Harmoni checkin via routes/checkins.py create_checkin() TIDAK PERNAH
+    # menulis ke db.bookings SAMA SEKALI (cuma db.checkins + set room.status="day_use") -
+    # jadi query di atas (yang HANYA baca db.bookings) sama sekali TIDAK TAHU kamar itu
+    # sedang fisik ditempati tamu walk-in. Reproduksi nyata: kamar dgn tamu walk-in aktif
+    # sampai ~17:15 WIB tetap muncul "tersedia" utk booking baru jam 13:00 hari yg sama -
+    # risiko double-booking sungguhan (2 tamu berbeda diarahkan ke kamar fisik yang sama).
+    # Fix: cek juga db.checkins yang masih "aktif" (belum checkout, jam_checkout None) -
+    # durasi belum pasti sampai checkout beneran terjadi, jadi pakai estimasi KONSERVATIF
+    # (6 jam standar Day Use, SAMA persis dgn DAYUSE_DURASI_JAM di scheduling_engine.py -
+    # TIDAK diimport langsung krn scheduling_engine.py sendiri import check_room_available
+    # dari file ini, import balik jadi circular - sama alasan konstanta status di atas
+    # sudah di-hardcode terpisah, ikuti pola yang sama) - lebih baik overestimate durasi
+    # (kadang menolak booking yang sebenarnya sudah boleh) drpd underestimate (approve
+    # booking yang ternyata masih bentrok tamu walk-in sungguhan).
+    checkin_aktif = await db.checkins.find_one(scoped({
+        "room_id": room_id, "status": "aktif",
+    }, property_id))
+    if checkin_aktif and checkin_aktif.get("jam_checkin"):
+        ci_mulai = datetime.fromisoformat(checkin_aktif["jam_checkin"])
+        ci_estimasi_selesai = ci_mulai + timedelta(hours=6)
+        if ci_mulai < selesai and mulai < ci_estimasi_selesai:
+            raise HTTPException(
+                400,
+                f"Kamar sedang dipakai tamu walk-in {checkin_aktif.get('nama_tamu', '-')} "
+                f"(check-in {ci_mulai.astimezone(WIB).strftime('%H:%M')} WIB, perkiraan selesai "
+                f"{ci_estimasi_selesai.astimezone(WIB).strftime('%H:%M')} WIB)"
+            )
     return True
 
 
