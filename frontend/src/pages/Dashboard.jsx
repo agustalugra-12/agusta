@@ -398,6 +398,14 @@ export default function Dashboard() {
   // notify overdue (>=5h since checkin) — simple banner
   const nearDue = active.filter(c => (Date.now() - new Date(c.jam_checkin).getTime()) / 3600000 >= 5);
   const overtime = active.filter(c => (Date.now() - new Date(c.jam_checkin).getTime()) / 3600000 >= 6);
+  // Khusus yang "mendekati" tapi BELUM overtime (5-6 jam) - dipisah dari nearDue supaya
+  // alert "mendekati batas 6 jam" bisa tampilkan nama tamu & nomor kamar-nya sendiri
+  // (2026-08-02, permintaan Agus - sebelumnya cuma tampil angka "1 tamu", tidak jelas
+  // kamar/tamu mana, beda dari alert "overtime" di atasnya yang sudah lengkap).
+  const nearOnly = active.filter(c => {
+    const h = (Date.now() - new Date(c.jam_checkin).getTime()) / 3600000;
+    return h >= 5 && h < 6;
+  });
 
   // Filter bookings: ribbon hanya muncul jika filterDate ada di rentang [checkin_date, checkout_date)
   // — hari CHECK-OUT TIDAK dihitung menempati (tamu sudah checkout), KECUALI day-use yang
@@ -559,7 +567,7 @@ export default function Dashboard() {
         )}
         <div className="flex items-center justify-between">
           <span className="text-[10px] uppercase font-semibold tracking-wider opacity-90">{r.tipe}</span>
-          <span className="text-[10px] bg-white/25 rounded px-1.5 py-0.5">{upcomingBk ? "Booked" : statusLabel(effStatus)}</span>
+          <span className="text-[10px] bg-white/25 rounded px-1.5 py-0.5">{upcomingBk ? (upcomingBk.status === "checked_out" ? "Selesai" : "Booked") : statusLabel(effStatus)}</span>
         </div>
         <div className="text-3xl sm:text-4xl font-extrabold">{r.nomor}</div>
         <div className="text-[11px] opacity-90 truncate">
@@ -843,11 +851,14 @@ export default function Dashboard() {
           </div>
         </div>
       )}
-      {nearDue.length > overtime.length && (
-        <div className="rounded-xl bg-amber-50 border border-amber-200 p-4 flex items-start gap-3">
+      {nearOnly.length > 0 && (
+        <div data-testid="near-due-alert" className="rounded-xl bg-amber-50 border border-amber-200 p-4 flex items-start gap-3">
           <Hourglass className="w-5 h-5 text-amber-600 mt-0.5" />
           <div className="text-sm">
-            <div className="font-semibold text-amber-800">{nearDue.length - overtime.length} tamu mendekati batas 6 jam</div>
+            <div className="font-semibold text-amber-800">{nearOnly.length} tamu mendekati batas 6 jam</div>
+            <div className="text-amber-700">
+              {nearOnly.map(c => `Kamar ${c.room_nomor} (${c.nama_tamu})`).join(", ")}
+            </div>
           </div>
         </div>
       )}
