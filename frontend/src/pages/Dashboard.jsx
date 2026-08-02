@@ -40,6 +40,11 @@ const toDateOnly = (d) => new Date(d.getFullYear(), d.getMonth(), d.getDate());
 // di-checkout staf (status "checked_out"), dipakai di grid Daftar Kamar supaya beda
 // jelas dari biru/coklat (masih occupies tanggal itu TAPI belum di-checkout).
 const MARUN_CHECKOUT = "#7F1D1D";
+// Coklat muda (2026-08-02, permintaan Agus) - booking Day Use yang masih menunggu/belum
+// checkout, sebelumnya #92400E (coklat tua) kelihatan mirip MARUN_CHECKOUT di kartu kecil
+// - dibedakan lebih jelas biar staf tidak salah baca "booking Day Use" sebagai "sudah
+// checkout".
+const DAY_USE_BOOKING_COLOR = "#B08968";
 
 // Exclusive-checkout-date rule (2026-08-02) - diekstrak dari logika bookingsOnDate yang
 // sudah ada supaya bisa dipakai ulang utk Grid 6 Hari (permintaan Agus) TANPA duplikasi
@@ -517,7 +522,7 @@ export default function Dashboard() {
     // (butuh perhatian/pengingat), marun = sudah selesai di-checkout (murni histori).
     const sudahCheckout = upcomingBk?.status === "checked_out";
     const bg = upcomingBk
-      ? (sudahCheckout ? MARUN_CHECKOUT : (upcomingBk.tipe === "menginap" ? "#3B82F6" : "#92400E"))
+      ? (sudahCheckout ? MARUN_CHECKOUT : (upcomingBk.tipe === "menginap" ? "#3B82F6" : DAY_USE_BOOKING_COLOR))
       : statusColor(effStatus);
     const bkLabel = upcomingBk
       ? new Date(upcomingBk.jam_mulai).toLocaleString("id-ID", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })
@@ -527,7 +532,7 @@ export default function Dashboard() {
     const laterTodayBk = (isColToday && !belumAdaTamuAktif) ? bookingsForCol
       .filter(b => b.room_id === r.id && new Date(b.jam_mulai) > new Date())
       .sort((a, c) => a.jam_mulai.localeCompare(c.jam_mulai))[0] : null;
-    const laterColor = laterTodayBk ? (laterTodayBk.tipe === "menginap" ? "#3B82F6" : "#92400E") : null;
+    const laterColor = laterTodayBk ? (laterTodayBk.tipe === "menginap" ? "#3B82F6" : DAY_USE_BOOKING_COLOR) : null;
     const laterLabel = laterTodayBk
       ? `${laterTodayBk.tipe === "menginap" ? "Menginap" : "Day Use"} ${new Date(laterTodayBk.jam_mulai).toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit" })}`
       : null;
@@ -1093,7 +1098,7 @@ export default function Dashboard() {
               </div>
             ))}
             <div className="flex items-center gap-1.5">
-              <span className="w-3 h-3 rounded-sm" style={{ background: "#92400E" }} />
+              <span className="w-3 h-3 rounded-sm" style={{ background: DAY_USE_BOOKING_COLOR }} />
               <span className="text-slate-600">Booked Day Use</span>
             </div>
             <div className="flex items-center gap-1.5">
@@ -1288,7 +1293,7 @@ export default function Dashboard() {
             </div>
             {actionRoom?._laterTodayBk && (
               <div className="rounded-lg bg-amber-50 border border-amber-200 p-2.5 flex items-start gap-2">
-                <span className="w-2.5 h-2.5 rounded-full mt-1 shrink-0" style={{ background: actionRoom._laterTodayBk.tipe === "menginap" ? "#3B82F6" : "#92400E" }} />
+                <span className="w-2.5 h-2.5 rounded-full mt-1 shrink-0" style={{ background: actionRoom._laterTodayBk.tipe === "menginap" ? "#3B82F6" : DAY_USE_BOOKING_COLOR }} />
                 <div>
                   <p className="font-medium text-amber-900">
                     Kamar ini juga sudah ada booking {actionRoom._laterTodayBk.tipe === "menginap" ? "Menginap" : "Day Use"} lain hari ini
