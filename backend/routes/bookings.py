@@ -181,6 +181,31 @@ async def list_bookings(status: Optional[str] = None, tipe: Optional[str] = None
     # mentah (yang tidak bedakan DP dari lunas) dan berujung salah label ke staf.
     for b in items:
         b.update(status_bayar_booking(b))
+    # Info rombongan (group_id, 2026-08-03) — fitur "1 transaksi banyak kamar" (publik
+    # `/book` keranjang kamar & Quick Book staf) SUDAH lama jalan (lihat komentar
+    # `group_id` di create_booking di atas & public_create_booking), tapi endpoint ini
+    # sebelumnya TIDAK PERNAH menyertakan info kamar lain dalam grup yang sama - staf
+    # yang buka Daftar Reservasi/Dashboard cuma lihat booking-booking terpisah tanpa
+    # tanda itu 1 rombongan (beda dari halaman sukses booking tamu, `PublicBook.jsx`,
+    # yang sudah rapi menggabungkannya lewat `group_bookings`). Query TERPISAH dari
+    # filter status/tanggal/search di atas dgn SENGAJA (scoped ke property_id saja) -
+    # rombongan tetap harus lengkap ditampilkan biarpun salah satu kamarnya kebetulan
+    # tidak lolos filter yang sedang aktif di halaman staf.
+    group_ids = {b["group_id"] for b in items if b.get("group_id")}
+    if group_ids:
+        siblings = await db.bookings.find(
+            scoped({"group_id": {"$in": list(group_ids)}}, property_id), {"_id": 0},
+        ).to_list(500)
+        by_group: Dict[str, List[dict]] = {}
+        for s in siblings:
+            by_group.setdefault(s["group_id"], []).append(s)
+        for b in items:
+            if b.get("group_id"):
+                b["group_bookings"] = [
+                    {"id": s["id"], "kode": s["kode"], "room_nomor": s["room_nomor"],
+                     "room_tipe": s["room_tipe"], "total": s["total"], "status": s["status"]}
+                    for s in by_group.get(b["group_id"], []) if s["id"] != b["id"]
+                ]
     return items
 
 @api.post("/bookings/{bid}/cancel-with-fee")
@@ -610,6 +635,19 @@ async def get_booking(bid: str, user: dict = Depends(get_current_user),
     if not b:
         raise HTTPException(404, "Booking tidak ditemukan")
     b.update(status_bayar_booking(b))
+    # Info rombongan (group_id, 2026-08-03) - sama seperti GET /bookings, lihat komentar
+    # lengkap di sana - dialog detail per-booking (Dashboard/Daftar Reservasi) perlu tahu
+    # kamar-kamar lain dalam grup yang sama supaya staf tidak bingung lihat 1 booking
+    # "sendirian" padahal itu bagian dari rombongan yang dipesan/dibayar bersamaan.
+    if b.get("group_id"):
+        siblings = await db.bookings.find(
+            scoped({"group_id": b["group_id"], "id": {"$ne": bid}}, property_id), {"_id": 0},
+        ).to_list(50)
+        b["group_bookings"] = [
+            {"id": s["id"], "kode": s["kode"], "room_nomor": s["room_nomor"],
+             "room_tipe": s["room_tipe"], "total": s["total"], "status": s["status"]}
+            for s in siblings
+        ]
     return b
 
 @api.put("/bookings/{bid}")

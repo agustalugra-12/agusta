@@ -162,7 +162,18 @@ export default function DaftarReservasi() {
                     )}
                   </td>
                   <td className="p-3">{r.nama_tamu}</td>
-                  <td className="p-3">{r.room_nomor} ({r.room_tipe})</td>
+                  <td className="p-3">
+                    {r.room_nomor} ({r.room_tipe})
+                    {r.group_bookings?.length > 0 && (
+                      <span
+                        data-testid={`reservasi-rombongan-badge-${r.kode}`}
+                        title={`Bagian dari 1 transaksi rombongan: ${[r, ...r.group_bookings].map((x) => `${x.room_nomor} (${x.room_tipe})`).join(", ")}`}
+                        className="ml-1.5 inline-flex px-1.5 py-0.5 rounded text-[10px] font-semibold bg-indigo-100 text-indigo-700 align-middle"
+                      >
+                        +{r.group_bookings.length} kamar
+                      </span>
+                    )}
+                  </td>
                   <td className="p-3">{fmtDateTime(r.jam_mulai)}</td>
                   <td className="p-3">{fmtDateTime(r.jam_selesai)}</td>
                   <td className="p-3"><span className={`inline-flex px-2 py-1 rounded-md text-xs font-medium ${SOURCE_BADGE[r.source] || "bg-slate-100 text-slate-700"}`}>{SOURCE_LABEL[r.source] || "Walk-in"}</span></td>
@@ -198,6 +209,19 @@ export default function DaftarReservasi() {
               <div><span className="text-slate-500">Tamu:</span> <b>{selected.nama_tamu}</b></div>
               {selected.no_hp && <div><span className="text-slate-500">HP:</span> {selected.no_hp}</div>}
               <div><span className="text-slate-500">Kamar:</span> {selected.room_nomor} ({selected.room_tipe})</div>
+              {selected.group_bookings?.length > 0 && (
+                <div className="bg-indigo-50 border border-indigo-200 rounded p-2 text-xs space-y-1" data-testid="reservasi-detail-rombongan">
+                  <div className="font-bold text-indigo-800">
+                    Bagian dari Rombongan ({selected.group_bookings.length + 1} kamar, dibayar dalam 1 transaksi)
+                  </div>
+                  {selected.group_bookings.map((g) => (
+                    <div key={g.id} className="flex justify-between">
+                      <span>{g.kode} — {g.room_nomor} ({g.room_tipe})</span>
+                      <span className={`px-1.5 rounded ${STATUS_BADGE[g.status] || "bg-slate-100 text-slate-700"}`}>{STATUS_LABEL[g.status] || g.status}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
               <div><span className="text-slate-500">Jumlah Tamu:</span> {selected.jumlah_tamu}</div>
               <div><span className="text-slate-500">Check-in:</span> {fmtDateTime(selected.jam_mulai)}</div>
               <div><span className="text-slate-500">Check-out:</span> {fmtDateTime(selected.jam_selesai)}</div>

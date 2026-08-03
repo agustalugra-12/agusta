@@ -1435,6 +1435,19 @@ export default function Dashboard() {
               </div>
               <div><span className="text-slate-500">Tamu:</span> <b data-testid="booking-detail-nama">{bookingDetail.nama_tamu}</b></div>
               <div><span className="text-slate-500">Kamar:</span> {bookingDetail.room_nomor} ({bookingDetail.room_tipe})</div>
+              {bookingDetail.group_bookings?.length > 0 && (
+                <div className="bg-indigo-50 border border-indigo-200 rounded p-2 text-xs space-y-1" data-testid="booking-detail-rombongan">
+                  <div className="font-bold text-indigo-800">
+                    Bagian dari Rombongan ({bookingDetail.group_bookings.length + 1} kamar, dibayar dalam 1 transaksi)
+                  </div>
+                  {bookingDetail.group_bookings.map((g) => (
+                    <div key={g.id} className="flex justify-between">
+                      <span>{g.kode} — {g.room_nomor} ({g.room_tipe})</span>
+                      <span className="px-1.5 rounded bg-slate-100 text-slate-700">{g.status}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
               {bookingDetail.no_hp && <div><span className="text-slate-500">HP:</span> {bookingDetail.no_hp}</div>}
               {bookingDetail.jumlah_tamu && <div><span className="text-slate-500">Jumlah Tamu:</span> {bookingDetail.jumlah_tamu}</div>}
               <div><span className="text-slate-500">Jam Mulai:</span> {new Date(bookingDetail.jam_mulai).toLocaleString("id-ID")}</div>
