@@ -445,7 +445,7 @@ export default function Dashboard() {
   // BookingDetail dialog state (saat klik room yang punya booking di tanggal filter)
   const [bookingDetail, setBookingDetail] = useState(null);
   const [rescheduleMode, setRescheduleMode] = useState(false);
-  const [rescheduleForm, setRescheduleForm] = useState({ jam_mulai: "", jam_selesai: "" });
+  const [rescheduleForm, setRescheduleForm] = useState({ jam_mulai: "", jam_selesai: "", room_id: "" });
   // MoveRoom dialog state
   const [moveDialog, setMoveDialog] = useState(null); // { fromRoom }
   const [moveTargetId, setMoveTargetId] = useState("");
@@ -461,7 +461,7 @@ export default function Dashboard() {
       setBookingDetail(upcomingBk);
       setRescheduleMode(false);
       const toLocal = (iso) => { const d = new Date(iso); d.setMinutes(d.getMinutes() - d.getTimezoneOffset()); return d.toISOString().slice(0, 16); };
-      setRescheduleForm({ jam_mulai: toLocal(upcomingBk.jam_mulai), jam_selesai: toLocal(upcomingBk.jam_selesai) });
+      setRescheduleForm({ jam_mulai: toLocal(upcomingBk.jam_mulai), jam_selesai: toLocal(upcomingBk.jam_selesai), room_id: upcomingBk.room_id });
       return;
     }
     // Hanya hari ini yang boleh trigger flow check-in/checkout/action
@@ -525,13 +525,18 @@ export default function Dashboard() {
     // - kolom tanggal LAIN (bukan hari ini) juga masih nunjukin warna coklat muda utk Day
     // Use yang SUDAH checkout, kelihatan spt "histori masih ada" padahal Day Use itu selesai
     // sehari, tidak perlu histori spt Menginap) checked_out DIKECUALIKAN dari kandidat
-    // upcomingBk kalau (a) kolomnya Hari Ini [tidak peduli tipe - "kosong siap tamu baru"],
-    // ATAU (b) tipenya Day Use [tidak peduli kolom tanggal mana - Day Use checked_out
-    // SELALU tampil kosong polos, tidak pernah ada histori warna]. Menginap checked_out di
-    // kolom SELAIN hari ini TETAP disertakan - itu dipakai utk tampilan histori marun
-    // (permintaan Agus terpisah, sengaja dipertahankan).
+    // upcomingBk kalau tipenya Day Use [tidak peduli kolom tanggal mana - Day Use checked_out
+    // SELALU tampil kosong polos, tidak pernah ada histori warna].
+    // Menginap checked_out TETAP disertakan DI SEMUA kolom termasuk Hari Ini (2026-08-03,
+    // dipertegas ulang oleh Agus - sebelumnya ada pengecualian "isColToday" di sini yang
+    // SALAH: kalau tamu menginap tanggal 2/checkout tanggal 3, marun WAJIB muncul di kolom
+    // tanggal 2 - termasuk kalau kebetulan hari ini PERSIS tanggal 2 itu sendiri [checkout
+    // diproses lebih awal dari tanggal checkout resminya]. Tanggal 3 [hari checkout] sendiri
+    // TIDAK PERNAH kebagian booking ini sama sekali di bookingsForCol - sudah otomatis
+    // dikecualikan oleh bookingOccupiesDateOnly (exclusive end date), jadi tidak perlu
+    // pengecualian tambahan apa pun di sini utk Menginap.
     const upcomingBk = belumAdaTamuAktif ? bookingsForCol
-      .filter(b => b.room_id === r.id && !(b.status === "checked_out" && (isColToday || b.tipe === "day_use")))
+      .filter(b => b.room_id === r.id && !(b.status === "checked_out" && b.tipe === "day_use"))
       .sort((a, c) => a.jam_mulai.localeCompare(c.jam_mulai))[0] : null;
     // Marun utk booking MENGINAP yang SUDAH di-checkout (2026-08-02, permintaan Agus -
     // kolom tanggal lain di grid sebelumnya nunjukin biru/menginap terus walau tamunya
@@ -715,13 +720,18 @@ export default function Dashboard() {
   // [bookingDetail], bukan dialog Action Room [actionRoom] yang punya "Selesai
   // Menginap". Aturan tetap: setiap tamu WAJIB di-checkout dulu sebelum kamar bisa
   // dipakai tamu baru (tidak diubah/dilonggarkan) - ini cuma nambah jalur akses ke aksi
-  // checkout yang sama persis (PUT /rooms/{id}/status -> kosong), bukan tombol baru.
+  // checkout yang sama persis (PUT /rooms/{id}/status), bukan tombol baru.
+  // (2026-08-03, permintaan Agus) - SEBELUMNYA langsung set status "kosong", melompati
+  // proses housekeeping sama sekali (beda dari Day Use, checkins.py checkout() sudah
+  // benar set "perlu_dibersihkan" dulu). Sekarang disamakan: checkout Menginap juga
+  // masuk antrian Perlu Dibersihkan dulu (muncul di halaman Housekeeping), staf baru
+  // tandai kamar kembali Kosong setelah beneran dibersihkan (housekeeping-done).
   const checkoutMenginapFromDetail = async () => {
     if (!bookingDetail) return;
-    if (!window.confirm(`Checkout tamu ${bookingDetail.nama_tamu} dari Kamar ${bookingDetail.room_nomor}? Kamar akan berstatus Kosong.`)) return;
+    if (!window.confirm(`Checkout tamu ${bookingDetail.nama_tamu} dari Kamar ${bookingDetail.room_nomor}? Kamar akan masuk antrian Perlu Dibersihkan.`)) return;
     try {
-      await api.put(`/rooms/${bookingDetail.room_id}/status`, { status: "kosong" });
-      toast.success(`Kamar ${bookingDetail.room_nomor} berhasil di-checkout, sekarang Kosong.`);
+      await api.put(`/rooms/${bookingDetail.room_id}/status`, { status: "perlu_dibersihkan" });
+      toast.success(`Kamar ${bookingDetail.room_nomor} berhasil di-checkout, masuk antrian Perlu Dibersihkan.`);
       setBookingDetail(null); load();
     } catch (e) { toast.error(e?.response?.data?.detail || "Gagal checkout"); }
   };
@@ -760,7 +770,7 @@ export default function Dashboard() {
     if (!bookingDetail) return;
     try {
       const payload = {
-        tipe: bookingDetail.tipe, room_id: bookingDetail.room_id,
+        tipe: bookingDetail.tipe, room_id: rescheduleForm.room_id || bookingDetail.room_id,
         nama_tamu: bookingDetail.nama_tamu, no_hp: bookingDetail.no_hp || "",
         no_identitas: bookingDetail.no_identitas || "", kendaraan: bookingDetail.kendaraan || "",
         jumlah_tamu: bookingDetail.jumlah_tamu || 1,
@@ -1477,7 +1487,30 @@ export default function Dashboard() {
           )}
           {bookingDetail && rescheduleMode && (
             <div className="space-y-3 text-sm">
-              <p className="text-slate-600 text-xs">Geser jam mulai dan jam selesai untuk reschedule booking.</p>
+              <p className="text-slate-600 text-xs">Geser jam mulai/selesai dan/atau pindahkan ke kamar lain untuk reschedule booking.</p>
+              <div>
+                <Label>Kamar</Label>
+                <select
+                  data-testid="resched-room"
+                  value={rescheduleForm.room_id}
+                  onChange={(e) => setRescheduleForm(f => ({ ...f, room_id: e.target.value }))}
+                  className="w-full h-10 rounded-md border border-slate-300 px-3 bg-white mt-1.5 text-sm"
+                >
+                  {rooms
+                    .filter(r => r.status !== "maintenance" || r.id === rescheduleForm.room_id)
+                    .map((r) => (
+                      <option key={r.id} value={r.id}>{r.nomor} - {r.tipe} ({r.status})</option>
+                    ))}
+                </select>
+                {/* (2026-08-03, permintaan Agus) - tamu BELUM check-in di sini (reschedule
+                    cuma tersedia utk status aktif/booking_pending/booking_paid, lihat tombol
+                    di bawah) - jadi TIDAK ADA tamu fisik di kamar manapun, kamar tujuan tidak
+                    perlu "kosong/bersih" dulu (beda dari Pindah Kamar di kartu kamar Dashboard
+                    yang khusus tamu SUDAH check-in, itu tetap wajib kamar tujuan kosong).
+                    Backend cuma cek jadwal tidak bentrok (check_room_available), sama seperti
+                    reschedule tanggal biasa. */}
+                <p className="text-[11px] text-slate-500 mt-1">Tamu belum check-in - kamar tujuan tidak harus kosong/sudah dibersihkan, sistem cuma memastikan jadwalnya tidak bentrok.</p>
+              </div>
               <div>
                 <Label>Jam Mulai</Label>
                 <Input data-testid="resched-mulai" type="datetime-local" value={rescheduleForm.jam_mulai} onChange={(e) => setRescheduleForm(f => ({ ...f, jam_mulai: e.target.value }))} />

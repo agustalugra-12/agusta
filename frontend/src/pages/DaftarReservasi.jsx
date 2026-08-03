@@ -45,9 +45,10 @@ export default function DaftarReservasi() {
   const [date, setDate] = useState("");
   const [selected, setSelected] = useState(null);
   const [editMode, setEditMode] = useState(false);
-  const [editForm, setEditForm] = useState({ jam_mulai: "", jam_selesai: "" });
+  const [editForm, setEditForm] = useState({ jam_mulai: "", jam_selesai: "", room_id: "" });
   const [nominalOta, setNominalOta] = useState("");
   const [konfirmasiSaving, setKonfirmasiSaving] = useState(false);
+  const [rooms, setRooms] = useState([]);
 
   const load = async () => {
     const params = {};
@@ -57,23 +58,34 @@ export default function DaftarReservasi() {
     const { data } = await api.get("/bookings", { params });
     setReservations(data);
   };
-  useEffect(() => { load(); }, [status, date]);
+  useEffect(() => { load(); api.get("/rooms").then((r) => setRooms(r.data)); }, [status, date]);
   useEffect(() => { const t = setTimeout(load, 300); return () => clearTimeout(t); }, [search]);
 
   const resetFilters = () => { setSearch(""); setStatus("Semua"); setDate(""); };
   const hasActiveFilter = search || status !== "Semua" || date;
 
   const openEdit = () => {
-    setEditForm({ jam_mulai: toLocalInput(selected.jam_mulai), jam_selesai: toLocalInput(selected.jam_selesai) });
+    setEditForm({ jam_mulai: toLocalInput(selected.jam_mulai), jam_selesai: toLocalInput(selected.jam_selesai), room_id: selected.room_id });
     setEditMode(true);
   };
 
+  // (2026-08-03, perbaikan bug nyata - permintaan Agus "pindah kamar tamu belum check-in"):
+  // SEBELUMNYA cuma kirim jam_mulai/jam_selesai, padahal backend (BookingCreate) mewajibkan
+  // field lain (room_id/tipe/nama_tamu/dst) - dipakai sungguhan akan gagal 422. Sekalian
+  // tambah room_id supaya staf bisa pindahkan kamar tamu yang BELUM check-in dari sini -
+  // backend cuma cek jadwal tidak bentrok (check_room_available), TIDAK mensyaratkan kamar
+  // tujuan kosong/sudah dibersihkan (beda dari Pindah Kamar tamu yang sudah check-in).
   const saveEdit = async () => {
-    if (!window.confirm(`Simpan perubahan jadwal untuk reservasi ${selected.kode}?`)) return;
+    if (!window.confirm(`Simpan perubahan reservasi ${selected.kode}?`)) return;
     try {
       await api.put(`/bookings/${selected.id}`, {
+        tipe: selected.tipe, room_id: editForm.room_id || selected.room_id,
+        nama_tamu: selected.nama_tamu, no_hp: selected.no_hp || "",
+        no_identitas: selected.no_identitas || "", kendaraan: selected.kendaraan || "",
+        jumlah_tamu: selected.jumlah_tamu || 1,
         jam_mulai: new Date(editForm.jam_mulai).toISOString(),
         jam_selesai: new Date(editForm.jam_selesai).toISOString(),
+        catatan: selected.catatan || "",
       });
       toast.success(`Reservasi ${selected.kode} diperbarui`);
       setEditMode(false); setSelected(null); load();
@@ -273,6 +285,26 @@ export default function DaftarReservasi() {
           )}
           {selected && editMode && (
             <div className="space-y-3 text-sm" data-testid="reservasi-edit-form">
+              <div>
+                <Label>Kamar</Label>
+                <select
+                  data-testid="edit-room"
+                  value={editForm.room_id}
+                  onChange={(e) => setEditForm((f) => ({ ...f, room_id: e.target.value }))}
+                  className="w-full h-10 rounded-md border border-slate-300 px-3 bg-white mt-1.5 text-sm"
+                >
+                  {rooms
+                    .filter((r) => r.status !== "maintenance" || r.id === editForm.room_id)
+                    .map((r) => (
+                      <option key={r.id} value={r.id}>{r.nomor} - {r.tipe} ({r.status})</option>
+                    ))}
+                </select>
+                {/* (2026-08-03, permintaan Agus) - reservasi di sini belum check-in (edit
+                    cuma tersedia utk status aktif/booking_pending/booking_paid, lihat
+                    CANCELLABLE di bawah), jadi kamar tujuan tidak harus kosong/bersih dulu -
+                    server cuma cek jadwal tidak bentrok. */}
+                <p className="text-[11px] text-slate-500 mt-1">Tamu belum check-in - kamar tujuan tidak harus kosong/sudah dibersihkan, sistem cuma memastikan jadwalnya tidak bentrok.</p>
+              </div>
               <div><Label>Check-in</Label><Input data-testid="edit-jam-mulai" type="datetime-local" value={editForm.jam_mulai} onChange={(e) => setEditForm((f) => ({ ...f, jam_mulai: e.target.value }))} /></div>
               <div><Label>Check-out</Label><Input data-testid="edit-jam-selesai" type="datetime-local" value={editForm.jam_selesai} onChange={(e) => setEditForm((f) => ({ ...f, jam_selesai: e.target.value }))} /></div>
             </div>
