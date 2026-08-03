@@ -45,6 +45,7 @@ export default function CheckOut() {
     return d.toISOString().slice(0, 16);
   });
   const [pays, setPays] = useState([{ metode: "tunai", jumlah: 0 }]);
+  const [paysManual, setPaysManual] = useState(false);
   const [catatan, setCatatan] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [done, setDone] = useState(null);
@@ -80,12 +81,17 @@ export default function CheckOut() {
   const sudahDibayarSaatCheckin = (ci?.pembayaran || []).reduce((a, p) => a + (Number(p.jumlah) || 0), 0);
   const sisaDitagih = Math.max(0, total - sudahDibayarSaatCheckin);
 
-  // Sync default payment amount when sisa recalculated and user has the default single 'tunai' row at 0
+  // Sync default payment amount tiap kali sisaDitagih berubah (mis. staf mengubah jam
+  // checkout atau override overtime SETELAH nominal ter-autofill) - selama staf belum
+  // menyentuh field pembayaran sendiri (paysManual). Sebelumnya hanya sync kalau nominal
+  // masih persis 0, jadi begitu ter-autofill nonzero sekali saja, perubahan jam/overtime
+  // berikutnya tidak pernah ke-refresh lagi -> staf submit dgn nominal lama yg lebih kecil
+  // -> ditolak backend "Pembayaran extend/overtime kurang" (tampak "checkout gagal" acak).
   useEffect(() => {
-    if (pays.length === 1 && pays[0].metode === "tunai" && (pays[0].jumlah === 0 || pays[0].jumlah === "0")) {
+    if (!paysManual) {
       setPays([{ metode: "tunai", jumlah: sisaDitagih }]);
     }
-  }, [sisaDitagih, pays]);
+  }, [sisaDitagih, paysManual]);
 
   const totalPay = pays.reduce((a, p) => a + (Number(p.jumlah) || 0), 0);
   const kurang = sisaDitagih - totalPay;
@@ -200,18 +206,18 @@ export default function CheckOut() {
             <div className="space-y-2 mt-2">
               {pays.map((p, idx) => (
                 <div key={idx} className="grid grid-cols-[1fr_1fr_auto] gap-2">
-                  <select data-testid={`pay-method-${idx}`} value={p.metode} onChange={(e) => setPays(ps => ps.map((x, i) => i === idx ? { ...x, metode: e.target.value } : x))} className="h-12 rounded-md border border-slate-300 px-3 bg-white">
+                  <select data-testid={`pay-method-${idx}`} value={p.metode} onChange={(e) => { setPaysManual(true); setPays(ps => ps.map((x, i) => i === idx ? { ...x, metode: e.target.value } : x)); }} className="h-12 rounded-md border border-slate-300 px-3 bg-white">
                     <option value="tunai">Tunai</option>
                     <option value="transfer">Transfer</option>
                     <option value="qris">QRIS</option>
                   </select>
-                  <Input data-testid={`pay-amount-${idx}`} type="number" min="0" value={p.jumlah} onChange={(e) => setPays(ps => ps.map((x, i) => i === idx ? { ...x, jumlah: e.target.value } : x))} className="h-12" />
+                  <Input data-testid={`pay-amount-${idx}`} type="number" min="0" value={p.jumlah} onChange={(e) => { setPaysManual(true); setPays(ps => ps.map((x, i) => i === idx ? { ...x, jumlah: e.target.value } : x)); }} className="h-12" />
                   {pays.length > 1 && (
-                    <Button variant="outline" onClick={() => setPays(ps => ps.filter((_, i) => i !== idx))}>Hapus</Button>
+                    <Button variant="outline" onClick={() => { setPaysManual(true); setPays(ps => ps.filter((_, i) => i !== idx)); }}>Hapus</Button>
                   )}
                 </div>
               ))}
-              <Button data-testid="add-payment" variant="outline" type="button" onClick={() => setPays(ps => [...ps, { metode: "transfer", jumlah: 0 }])}>+ Tambah Metode</Button>
+              <Button data-testid="add-payment" variant="outline" type="button" onClick={() => { setPaysManual(true); setPays(ps => [...ps, { metode: "transfer", jumlah: 0 }]); }}>+ Tambah Metode</Button>
             </div>
             <div className="mt-3 text-sm">
               Dibayar Sekarang: <span className="font-bold">{fmtRp(totalPay)}</span> {" • "}

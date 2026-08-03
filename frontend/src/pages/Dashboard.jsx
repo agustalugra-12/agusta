@@ -2,7 +2,7 @@ import { useEffect, useState, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import api, { fmtRp, fmtDate, statusLabel, statusColor, bookingConfirmationWaLink, statusBayarOf, STATUS_BAYAR_LABEL, STATUS_BAYAR_BADGE_CLASS, waLink } from "@/lib/apiClient";
-import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid, Legend } from "recharts";
+import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid } from "recharts";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import {
@@ -1059,29 +1059,46 @@ export default function Dashboard() {
         </Card>
       )}
 
-      {/* Grafik Kedatangan Tamu 30 Hari (2026-07-21, permintaan user) */}
-      <Card className="border-slate-200">
-        <CardContent className="p-4 sm:p-6">
-          <h2 className="text-lg font-bold mb-1">Kedatangan Tamu (30 Hari Terakhir)</h2>
-          <p className="text-xs text-slate-500 mb-4">Jumlah booking per tanggal check-in, semua tipe & channel (kecuali yang dibatalkan)</p>
-          <div className="h-64 w-full">
-            <ResponsiveContainer>
-              {/* Stik dipisah Day Use (ungu) vs Menginap (biru) - permintaan Agus 2026-08-03,
-                  supaya komposisi kedatangan per tanggal kelihatan, bukan cuma total gabungan.
-                  stackId sama -> tetap 1 stik per tanggal (ditumpuk), tinggi total = jumlah. */}
-              <BarChart data={kedatanganHarian} margin={{ top: 5, right: 10, left: -20, bottom: 0 }}>
-                <CartesianGrid strokeDasharray="3 3" vertical={false} />
-                <XAxis dataKey="tanggal" tick={{ fontSize: 10 }} tickFormatter={(d) => d.slice(5)} interval={2} />
-                <YAxis allowDecimals={false} tick={{ fontSize: 11 }} />
-                <Tooltip labelFormatter={(d) => fmtDate(d)} />
-                <Legend wrapperStyle={{ fontSize: 12 }} />
-                <Bar dataKey="day_use" name="Day Use" stackId="kedatangan" fill="#8B5CF6" />
-                <Bar dataKey="menginap" name="Menginap" stackId="kedatangan" fill="#2563EB" radius={[4, 4, 0, 0]} />
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
-        </CardContent>
-      </Card>
+      {/* Grafik Kedatangan Tamu 30 Hari (2026-07-21, permintaan user) - dipecah jadi 2
+          grafik terpisah kiri/kanan (2026-08-03, revisi Agus dari versi stik bertumpuk
+          sebelumnya) - Menginap kiri, Day Use kanan, supaya masing-masing lebih mudah
+          dibaca sendiri-sendiri (skala Y beda kalau volumenya jauh berbeda antar tipe). */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <Card className="border-slate-200">
+          <CardContent className="p-4 sm:p-6">
+            <h2 className="text-lg font-bold mb-1">Kedatangan Menginap (30 Hari Terakhir)</h2>
+            <p className="text-xs text-slate-500 mb-4">Jumlah booking Menginap per tanggal check-in (kecuali yang dibatalkan)</p>
+            <div className="h-64 w-full">
+              <ResponsiveContainer>
+                <BarChart data={kedatanganHarian} margin={{ top: 5, right: 10, left: -20, bottom: 0 }}>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                  <XAxis dataKey="tanggal" tick={{ fontSize: 10 }} tickFormatter={(d) => d.slice(5)} interval={2} />
+                  <YAxis allowDecimals={false} tick={{ fontSize: 11 }} />
+                  <Tooltip labelFormatter={(d) => fmtDate(d)} formatter={(v) => [v, "Menginap"]} />
+                  <Bar dataKey="menginap" name="Menginap" fill="#2563EB" radius={[4, 4, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          </CardContent>
+        </Card>
+        <Card className="border-slate-200">
+          <CardContent className="p-4 sm:p-6">
+            <h2 className="text-lg font-bold mb-1">Kedatangan Day Use (30 Hari Terakhir)</h2>
+            <p className="text-xs text-slate-500 mb-4">Jumlah booking Day Use per tanggal check-in (kecuali yang dibatalkan)</p>
+            <div className="h-64 w-full">
+              <ResponsiveContainer>
+                <BarChart data={kedatanganHarian} margin={{ top: 5, right: 10, left: -20, bottom: 0 }}>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                  <XAxis dataKey="tanggal" tick={{ fontSize: 10 }} tickFormatter={(d) => d.slice(5)} interval={2} />
+                  <YAxis allowDecimals={false} tick={{ fontSize: 11 }} />
+                  <Tooltip labelFormatter={(d) => fmtDate(d)} formatter={(v) => [v, "Day Use"]} />
+                  <Bar dataKey="day_use" name="Day Use" fill="#8B5CF6" radius={[4, 4, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
 
       {/* Room grid */}
       <Card className="border-slate-200">
