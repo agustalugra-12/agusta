@@ -520,17 +520,18 @@ export default function Dashboard() {
     // (belum dibersihkan) TIDAK ADA tamu aktif di dalamnya, sama seperti kamar
     // kosong, jadi booking tamu BERIKUTNYA di tanggal ini tetap harus kelihatan.
     const belumAdaTamuAktif = effStatus === "kosong" || effStatus === "perlu_dibersihkan";
-    // (2026-08-02, bug nyata ditemukan Agus - kamar 1 Harmoni masih nunjukin info tamu
-    // Pranata yang sudah checkout & lunas, walau kamarnya SUDAH benar2 kosong sekarang)
-    // KHUSUS kolom Hari Ini: booking yang statusnya sudah "checked_out" DIKECUALIKAN dari
-    // kandidat upcomingBk - checked_out artinya SUDAH SELESAI, bukan "akan datang", jadi
-    // tidak boleh terus nongol di kartu kamar yang sekarang genuinely kosong & siap tamu
-    // baru (bookingOccupiesDateOnly cuma cek rentang tanggal booking-nya HARI ini, tidak
-    // peduli jam_selesai-nya sudah lewat waktu sungguhan atau belum). Kolom tanggal LAIN
-    // (bukan hari ini) TETAP menyertakan checked_out - itu dipakai utk tampilan histori
-    // marun, beda tujuan dari "kartu kosong siap tamu baru" di hari ini.
+    // (2026-08-02/03, bug nyata ditemukan Agus - kamar 1 Harmoni masih nunjukin info tamu
+    // Pranata yang sudah checkout & lunas walau kamarnya sudah kosong; lanjutannya 2026-08-03
+    // - kolom tanggal LAIN (bukan hari ini) juga masih nunjukin warna coklat muda utk Day
+    // Use yang SUDAH checkout, kelihatan spt "histori masih ada" padahal Day Use itu selesai
+    // sehari, tidak perlu histori spt Menginap) checked_out DIKECUALIKAN dari kandidat
+    // upcomingBk kalau (a) kolomnya Hari Ini [tidak peduli tipe - "kosong siap tamu baru"],
+    // ATAU (b) tipenya Day Use [tidak peduli kolom tanggal mana - Day Use checked_out
+    // SELALU tampil kosong polos, tidak pernah ada histori warna]. Menginap checked_out di
+    // kolom SELAIN hari ini TETAP disertakan - itu dipakai utk tampilan histori marun
+    // (permintaan Agus terpisah, sengaja dipertahankan).
     const upcomingBk = belumAdaTamuAktif ? bookingsForCol
-      .filter(b => b.room_id === r.id && !(isColToday && b.status === "checked_out"))
+      .filter(b => b.room_id === r.id && !(b.status === "checked_out" && (isColToday || b.tipe === "day_use")))
       .sort((a, c) => a.jam_mulai.localeCompare(c.jam_mulai))[0] : null;
     // Marun utk booking MENGINAP yang SUDAH di-checkout (2026-08-02, permintaan Agus -
     // kolom tanggal lain di grid sebelumnya nunjukin biru/menginap terus walau tamunya
