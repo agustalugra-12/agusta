@@ -364,28 +364,40 @@ async def report_kedatangan_harian(user: dict = Depends(get_current_user), prope
     bookings = await db.bookings.find(scoped({
         "status": {"$ne": "cancelled"},
         "jam_mulai": {"$gte": start_dt.isoformat()},
-    }, property_id), {"_id": 0, "jam_mulai": 1}).to_list(5000)
+    }, property_id), {"_id": 0, "jam_mulai": 1, "tipe": 1}).to_list(5000)
     walkin_checkins = await db.checkins.find(scoped({
         "from_booking_id": None,
         "jam_checkin": {"$gte": start_dt.isoformat()},
-    }, property_id), {"_id": 0, "jam_checkin": 1}).to_list(5000)
-    per_tanggal: Dict[str, int] = {}
+    }, property_id), {"_id": 0, "jam_checkin": 1, "tipe": 1}).to_list(5000)
+    # Pisah Day Use vs Menginap (2026-08-03, permintaan Agus - grafik ini sebelumnya cuma
+    # 1 angka gabungan per tanggal, staf tidak bisa lihat komposisi tipe kedatangan).
+    per_tanggal: Dict[str, Dict[str, int]] = {}
+    def _tambah(tgl: str, tipe: Optional[str]):
+        row = per_tanggal.setdefault(tgl, {"day_use": 0, "menginap": 0})
+        if tipe == "menginap":
+            row["menginap"] += 1
+        else:
+            row["day_use"] += 1  # checkins walk-in TIDAK selalu punya field tipe eksplisit, default Day Use (mayoritas kasus nyata)
     for b in bookings:
         try:
             tgl = parse_iso(b["jam_mulai"], "jam_mulai").date().isoformat()
         except Exception:
             continue
-        per_tanggal[tgl] = per_tanggal.get(tgl, 0) + 1
+        _tambah(tgl, b.get("tipe"))
     for c in walkin_checkins:
         try:
             tgl = parse_iso(c["jam_checkin"], "jam_checkin").date().isoformat()
         except Exception:
             continue
-        per_tanggal[tgl] = per_tanggal.get(tgl, 0) + 1
+        _tambah(tgl, c.get("tipe"))
     out = []
     for i in range(30):
         d = (start_date + timedelta(days=i)).isoformat()
-        out.append({"tanggal": d, "jumlah": per_tanggal.get(d, 0)})
+        row = per_tanggal.get(d, {"day_use": 0, "menginap": 0})
+        out.append({
+            "tanggal": d, "day_use": row["day_use"], "menginap": row["menginap"],
+            "jumlah": row["day_use"] + row["menginap"],
+        })
     return out
 
 
