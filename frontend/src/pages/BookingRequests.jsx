@@ -14,12 +14,17 @@ const STATUS_LABEL = {
   waiting_payment: "Menunggu Pembayaran",
   lunas: "Lunas",
   rejected: "Ditolak",
+  // (2026-08-03, bug nyata - lihat catatan status_efektif di backend routes/booking_requests.py)
+  // - beda dari "Menunggu Pembayaran" biasa: link Tripay-nya SUDAH mati, tidak akan pernah
+  // lunas lagi tanpa permintaan baru - dipisah biar staf tidak salah kira masih bisa ditunggu.
+  kadaluarsa: "Kadaluarsa",
 };
 const STATUS_CLS = {
   waiting_approval: "bg-amber-100 text-amber-800",
   waiting_payment: "bg-blue-100 text-blue-800",
   lunas: "bg-emerald-100 text-emerald-700",
   rejected: "bg-red-100 text-red-700",
+  kadaluarsa: "bg-slate-200 text-slate-600",
 };
 const BOOKING_STATUS_LABEL = {
   booking_pending: "Menunggu Bayar", booking_paid: "Lunas", checked_in: "Sudah Check-in",
@@ -356,12 +361,14 @@ export default function BookingRequests() {
     setLoading(true);
     try {
       // "riwayat" bukan status asli — gabungan permintaan yang SUDAH selesai diproses
-      // (lunas + ditolak), diambil semua lalu disaring di sini pakai status_efektif
-      // (backend menghitungnya dari status booking sungguhan yang terkait, karena
+      // (lunas + ditolak + kadaluarsa - 2026-08-03, "kadaluarsa" ditambah krn sama-sama
+      // status akhir/tidak perlu tindak lanjut lagi, jangan nyangkut di tab "Menunggu
+      // Pembayaran"), diambil semua lalu disaring di sini pakai status_efektif (backend
+      // menghitungnya dari status booking sungguhan yang terkait, karena
       // booking_requests.status sendiri berhenti di "waiting_payment" walau tamu sudah bayar).
       const params = statusFilter === "riwayat" ? {} : { status: statusFilter || undefined };
       const { data } = await api.get("/booking-requests", { params });
-      setItems(statusFilter === "riwayat" ? data.filter((it) => ["lunas", "rejected"].includes(it.status_efektif)) : data);
+      setItems(statusFilter === "riwayat" ? data.filter((it) => ["lunas", "rejected", "kadaluarsa"].includes(it.status_efektif)) : data);
     } catch (e) {
       toast.error(e?.response?.data?.detail || "Gagal memuat permintaan booking");
     } finally {
@@ -416,8 +423,11 @@ export default function BookingRequests() {
                   <p className="text-xs text-amber-700 font-semibold">✨ Kedatangan ke-{it.preview_kedatangan_ke}: diskon member {it.preview_diskon_persen}%</p>
                 )}
                 {it.catatan && <p className="text-xs italic text-slate-500">"{it.catatan}"</p>}
-                {it.status === "waiting_payment" && it.status_efektif !== "lunas" && it.checkout_url && (
+                {it.status === "waiting_payment" && it.status_efektif === "waiting_payment" && it.checkout_url && (
                   <a href={it.checkout_url} target="_blank" rel="noreferrer" className="text-xs text-blue-600 underline break-all">Link pembayaran</a>
+                )}
+                {it.status_efektif === "kadaluarsa" && (
+                  <p className="text-xs text-slate-500">Link pembayaran sudah kadaluarsa - tamu perlu diminta booking ulang kalau masih berminat.</p>
                 )}
                 {it.status === "rejected" && it.rejected_reason && (
                   <p className="text-xs text-slate-500 bg-slate-50 border border-slate-200 rounded p-2">Alasan ditolak: {it.rejected_reason}</p>

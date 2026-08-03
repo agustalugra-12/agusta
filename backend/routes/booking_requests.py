@@ -744,6 +744,16 @@ async def list_booking_requests(status: Optional[str] = None, user: dict = Depen
                 } for b in bks]
                 if it["status"] == "waiting_payment" and all(b.get("payment_status") == "paid" for b in bks):
                     it["status_efektif"] = "lunas"
+                # "kadaluarsa" (2026-08-03, bug nyata ditemukan lewat audit - 7 dari 13
+                # permintaan yang statusnya "waiting_payment" ternyata link Tripay-nya SUDAH
+                # expired/failed, bukan sedang ditunggu) - sebelumnya SEMUA booking yang
+                # tidak lunas tetap tampil "Menunggu Pembayaran" (badge biru) di halaman
+                # staf, sama persis dgn yang link-nya MASIH aktif - staf tidak bisa
+                # membedakan mana yang beneran perlu ditindaklanjuti vs yang sudah mati.
+                # Pola SAMA PERSIS dgn "lunas" di atas (derive dari payment_status booking
+                # sungguhan, bukan field mentah), cuma kondisinya kebalikan.
+                elif it["status"] == "waiting_payment" and all(b.get("payment_status") in ("expired", "failed") for b in bks):
+                    it["status_efektif"] = "kadaluarsa"
 
     if status == "lunas":
         items = [it for it in items if it["status_efektif"] == "lunas"]
