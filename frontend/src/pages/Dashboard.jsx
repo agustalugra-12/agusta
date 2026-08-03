@@ -584,8 +584,15 @@ export default function Dashboard() {
           <span className="text-[10px] uppercase font-semibold tracking-wider opacity-90">{r.tipe}</span>
           <span className="text-[10px] bg-white/25 rounded px-1.5 py-0.5">{upcomingBk ? (upcomingBk.status === "checked_out" ? "Selesai" : "Booked") : statusLabel(effStatus)}</span>
         </div>
-        <div className="text-3xl sm:text-4xl font-extrabold">{r.nomor}</div>
-        <div className="text-[11px] opacity-90 truncate">
+        {/* (2026-08-03, permintaan Agus) - nomor kamar diperkecil (dari 3xl/4xl) supaya
+            nama tamu di bawahnya tidak kalah kecil/kepotong - Harmoni khususnya, field
+            `nomor`-nya di database memang tersimpan "kamar 1"/"kamar 2" dst (beda dari
+            Pelangi yang cuma "1"), jadi digabung dgn label tipe "COTTAGE" di atasnya
+            kartu jadi terasa berulang ("Cottage" lalu "kamar 1") - prefix "kamar "
+            dibuang HANYA saat tampil di sini (data asli di database TIDAK diubah, tempat
+            lain yang pakai r.nomor apa adanya tetap sama). */}
+        <div className="text-xl sm:text-2xl font-extrabold leading-tight">{r.nomor.replace(/^kamar\s+/i, "")}</div>
+        <div className="text-xs opacity-90 line-clamp-2 leading-snug">
           {upcomingBk ? `${upcomingBk.nama_tamu}` : (effStatus === "kosong" ? fmtRp(r.tarif) : (r.info?.nama_tamu || "—"))}
         </div>
         {bkLabel && (
