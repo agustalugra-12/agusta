@@ -283,10 +283,16 @@ async def _pendapatan_kamar_per_tipe_hari_ini(property_id: str) -> Dict[str, int
     }
 
 
-async def _laporan_harian_text(property_id: str, property_nama: str = "") -> str:
-    """Laporan akhir hari (dikirim otomatis jam 22:00 WIB ke owner & staff yang terhubung) —
+async def _laporan_harian_text(property_id: str, property_nama: str = "", sertakan_ai_grow: bool = False) -> str:
+    """Laporan akhir hari (dikirim otomatis jam 23:00 WIB ke owner & staff yang terhubung) —
     rinci: pemasukan dipecah menginap/day use (+ jumlah kamar) & metode bayar, pengeluaran
-    dengan total DAN daftar detail per item."""
+    dengan total DAN daftar detail per item.
+
+    `sertakan_ai_grow` (2026-08-04, permintaan Agus) - HANYA True utk versi owner (staf
+    tidak perlu Business Health Score/rekomendasi strategis, sama pola dgn AI Grow yang
+    dari awal owner-only lewat require_owner di ai_grow.py). Brief diambil dari CACHE
+    (bukan generate baru terpisah - lihat ai_grow._generate_dan_cache_brief) supaya narasi
+    yang tampil di sini PERSIS yang barusan di-generate slot 23:00, 1 sumber kebenaran."""
     s = await report_summary(user=_DUMMY_USER, property_id=property_id)
     today_iso = datetime.now(timezone.utc).date().isoformat()
     kas = await report_kas_metode_bayar(from_date=today_iso, to_date=today_iso, user=_DUMMY_USER, property_id=property_id)
@@ -308,6 +314,20 @@ async def _laporan_harian_text(property_id: str, property_nama: str = "") -> str
     else:
         pengeluaran_detail = "  Tidak ada pengeluaran hari ini."
 
+    ai_grow_block = ""
+    if sertakan_ai_grow:
+        try:
+            from routes.ai_grow import _generate_dan_cache_brief
+            brief = await _generate_dan_cache_brief(property_id)
+            skor = brief["health_score"]["skor"]
+            ai_grow_block = (
+                f"\n\n📊 AI Grow — Rekomendasi Akhir Hari\n"
+                f"Business Health Score: {skor}/100\n\n"
+                f"{brief['narasi']}"
+            )
+        except Exception as e:
+            logging.getLogger("telegram_bot").warning(f"Gagal sertakan AI Grow di laporan malam properti {property_id}: {e}")
+
     return (
         f"📋 Laporan Akhir Hari{label} — {tanggal}\n\n"
         f"💰 PEMASUKAN: {_rp(total_pemasukan)}\n"
@@ -318,7 +338,8 @@ async def _laporan_harian_text(property_id: str, property_nama: str = "") -> str
         f"  Metode Bayar (Kasir & Check-In):\n"
         f"    Tunai: {_rp(kas['tunai'])} · QRIS: {_rp(kas['qris'])} · Transfer: {_rp(kas['transfer'])}\n\n"
         f"💸 PENGELUARAN: {_rp(total_pengeluaran)}\n"
-        f"{pengeluaran_detail}\n\n"
+        f"{pengeluaran_detail}"
+        f"{ai_grow_block}\n\n"
         f"Terima kasih atas kerja hari ini! 🙏"
     )
 
@@ -578,37 +599,56 @@ async def kirim_alert_owner(pesan: str):
 
 async def background_telegram_daily_report_loop():
     """Kirim laporan akhir hari ke semua user (owner+staff) yang sudah terhubung Telegram,
-    sekali sehari jam 22:00 WIB. Cek tiap 5 menit, jaga guard `last_sent_date` supaya tidak
-    dobel kirim kalau proses sempat cek 2x dalam jam yang sama.
+    sekali sehari jam 23:00 WIB (2026-08-04, dipindah dari 22:00 - permintaan Agus, data
+    hari itu biasanya sudah masuk semua di jam ini). Versi OWNER menyertakan rekomendasi
+    final AI Grow (Business Health Score + narasi, di-generate & di-cache SEKALI di sini -
+    lihat sertakan_ai_grow di _laporan_harian_text - slot ke-3 dari 3x/hari, 2 slot lain
+    di ai_grow.background_ai_grow_cache_loop cuma refresh cache dashboard). Versi STAFF
+    TIDAK menyertakan (AI Grow owner-only, sama pola dgn require_owner di ai_grow.py).
 
-    Multi-properti (2026-07-25) - staff SELALU dapat laporan properti sendiri (terkunci
-    lewat `property_id` akunnya). Owner belum bisa pilih properti lewat Telegram, jadi
-    dapat SATU pesan terpisah per properti aktif (label nama properti di judul) - sama
-    pola dengan `ai_grow.background_daily_brief_loop`, supaya angka tiap properti tidak
-    tercampur jadi satu laporan yang menyesatkan."""
-    last_sent_date = None
+    Guard anti-dobel-kirim (2026-08-04, bug nyata dilaporkan Agus - laporan kadang
+    terkirim 2x di jam yang sama): SEBELUMNYA guard `last_sent_date` cuma in-memory - kalau
+    proses backend restart (mis. auto-deploy GitHub Actions kebetulan landing persis di
+    jendela jam 23:00-23:05) SAAT/SETELAH laporan terkirim tapi SEBELUM guard sempat
+    diset, proses baru mulai dgn guard kosong lagi & bisa kirim ulang. Sekarang guard
+    disimpan di db.scheduler_state (persisten lintas restart) - dicek DI AWAL sebelum
+    mulai kirim apa pun, ditulis SEGERA setelah lolos cek (bukan di akhir setelah semua
+    pesan terkirim) supaya restart di TENGAH proses kirim juga tidak memicu kirim ulang."""
     while True:
         try:
             now_wib = datetime.now(timezone.utc).astimezone(WIB)
-            if now_wib.hour == 22 and now_wib.date() != last_sent_date:
-                properti_aktif = await db.properties.find({"aktif": True}, {"_id": 0, "id": 1, "nama": 1}).to_list(50)
-                default_property_id = await get_default_property_id()
-                teks_per_properti = {}
-                for p in properti_aktif:
-                    label = p.get("nama") if len(properti_aktif) > 1 else ""
-                    teks_per_properti[p["id"]] = await _laporan_harian_text(p["id"], label)
+            if now_wib.hour == 23:
+                tanggal_ini = now_wib.date().isoformat()
+                state = await db.scheduler_state.find_one({"_id": "laporan_harian_telegram"})
+                if not state or state.get("last_sent_date") != tanggal_ini:
+                    # Tulis guard SEBELUM kirim (bukan setelah) - restart di tengah proses
+                    # kirim tidak akan memicu ulang, risiko terburuk kalau proses benar2
+                    # crash di tengah adalah SEBAGIAN user tidak kebagian hari itu (jauh
+                    # lebih aman drpd owner/staff dapat laporan dobel).
+                    await db.scheduler_state.update_one(
+                        {"_id": "laporan_harian_telegram"},
+                        {"$set": {"last_sent_date": tanggal_ini}},
+                        upsert=True,
+                    )
+                    properti_aktif = await db.properties.find({"aktif": True}, {"_id": 0, "id": 1, "nama": 1}).to_list(50)
+                    default_property_id = await get_default_property_id()
+                    teks_owner_per_properti = {}
+                    teks_staff_per_properti = {}
+                    for p in properti_aktif:
+                        label = p.get("nama") if len(properti_aktif) > 1 else ""
+                        teks_owner_per_properti[p["id"]] = await _laporan_harian_text(p["id"], label, sertakan_ai_grow=True)
+                        teks_staff_per_properti[p["id"]] = await _laporan_harian_text(p["id"], label, sertakan_ai_grow=False)
 
-                users = await db.users.find({"telegram_chat_id": {"$ne": None}}, {"_id": 0}).to_list(200)
-                for u in users:
-                    kind = "owner" if u.get("role") == "owner" else "staff"
-                    if kind == "owner":
-                        for teks in teks_per_properti.values():
+                    users = await db.users.find({"telegram_chat_id": {"$ne": None}}, {"_id": 0}).to_list(200)
+                    for u in users:
+                        kind = "owner" if u.get("role") == "owner" else "staff"
+                        if kind == "owner":
+                            for teks in teks_owner_per_properti.values():
+                                await _kirim_pesan(BOT_CONFIG[kind]["token"], u["telegram_chat_id"], teks)
+                        else:
+                            pid = u.get("property_id") or default_property_id
+                            teks = teks_staff_per_properti.get(pid) or await _laporan_harian_text(pid, sertakan_ai_grow=False)
                             await _kirim_pesan(BOT_CONFIG[kind]["token"], u["telegram_chat_id"], teks)
-                    else:
-                        pid = u.get("property_id") or default_property_id
-                        teks = teks_per_properti.get(pid) or await _laporan_harian_text(pid)
-                        await _kirim_pesan(BOT_CONFIG[kind]["token"], u["telegram_chat_id"], teks)
-                last_sent_date = now_wib.date()
         except Exception as e:
             logging.getLogger("telegram_bot").warning(f"Gagal kirim laporan harian Telegram: {e}")
         await asyncio.sleep(300)

@@ -23,7 +23,7 @@ from routes.sinkronisasi_ketersediaan import background_sync_loop
 from routes.otomasi_email import background_gmail_fetch_loop
 from routes.telegram_bot import background_telegram_daily_report_loop
 from routes.rekening import background_smart_rule_loop
-from routes.ai_grow import background_daily_brief_loop
+from routes.ai_grow import background_ai_grow_cache_loop
 
 app = FastAPI(title="Pelangi Homestay API")
 app.mount("/uploads", StaticFiles(directory=str(ROOT_DIR / "uploads")), name="uploads")
@@ -177,14 +177,20 @@ async def startup():
     # dibuat & modifikasi/pembatalan diproses otomatis tanpa staf klik "Cek Email Baru").
     asyncio.create_task(background_gmail_fetch_loop())
 
-    # Laporan akhir hari otomatis ke Telegram (owner & staff yang sudah terhubung), jam 22:00 WIB.
+    # Laporan akhir hari otomatis ke Telegram (owner & staff yang sudah terhubung), jam
+    # 23:00 WIB (2026-08-04, dipindah dari 22:00 - permintaan Agus, data hari itu biasanya
+    # sudah masuk semua di jam ini) - sekaligus memicu rekomendasi final AI Grow, disatukan
+    # ke pesan yang sama (lihat _laporan_harian_text/background_telegram_daily_report_loop).
     asyncio.create_task(background_telegram_daily_report_loop())
 
     # Cash & Account Intelligence - Smart Allocation Rule trigger tanggal_bulanan (cek 1x/6 jam).
     asyncio.create_task(background_smart_rule_loop())
 
-    # AI Grow - Daily Executive Brief ke Telegram owner tiap jam 07:30 WIB.
-    asyncio.create_task(background_daily_brief_loop())
+    # AI Grow - refresh cache Daily Brief jam 10:00 & 18:00 WIB (2026-08-04, permintaan
+    # Agus - kurangi panggilan OpenAI, dashboard baca cache bukan live-generate tiap
+    # dibuka). Slot ke-3 (23:00 WIB) dipicu dari background_telegram_daily_report_loop
+    # sendiri, lihat catatan di sana.
+    asyncio.create_task(background_ai_grow_cache_loop())
 
 
 @app.on_event("shutdown")

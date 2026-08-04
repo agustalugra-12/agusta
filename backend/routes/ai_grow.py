@@ -429,9 +429,32 @@ async def _generate_daily_brief(property_id: str) -> Dict[str, Any]:
     }
 
 
+async def _generate_dan_cache_brief(property_id: str) -> Dict[str, Any]:
+    """Generate brief SEKALI & simpan ke db.ai_grow_cache (2026-08-04, permintaan Agus -
+    sebelumnya GET /ai-grow/daily-brief panggil OpenAI LIVE setiap kali dashboard dibuka/
+    refresh, boros token kalau dibuka berkali-kali sehari. Sekarang generate cuma
+    terjadwal (10:00 & 18:00 WIB via background_ai_grow_cache_loop di bawah, 23:00 WIB
+    dipicu dari telegram_bot.background_telegram_daily_report_loop supaya brief yang
+    dipakai isi laporan malam PERSIS sama dgn yang di-cache, bukan generate 2x terpisah) -
+    dashboard baca CACHE ini lewat get_daily_brief, bukan live-generate tiap request."""
+    brief = await _generate_daily_brief(property_id)
+    await db.ai_grow_cache.update_one(
+        {"property_id": property_id},
+        {"$set": {"property_id": property_id, **brief, "cached_at": now_iso()}},
+        upsert=True,
+    )
+    return brief
+
+
 @api.get("/ai-grow/daily-brief")
 async def get_daily_brief(user: dict = Depends(require_owner), property_id: str = Depends(get_active_property)):
-    return await _generate_daily_brief(property_id)
+    cached = await db.ai_grow_cache.find_one({"property_id": property_id}, {"_id": 0})
+    if cached:
+        return cached
+    # Belum pernah di-generate sama sekali (properti baru/pertama kali dibuka) - generate
+    # SEKALI sbg fallback awal, request berikutnya baca cache ini sampai jadwal 10/18/23
+    # berikutnya refresh. Tidak pernah live-generate lagi setelah cache pertama ada.
+    return await _generate_dan_cache_brief(property_id)
 
 
 @api.get("/ai-grow/health-score")
@@ -441,41 +464,32 @@ async def get_health_score(user: dict = Depends(require_owner), property_id: str
     return _hitung_health_score(data, risk)
 
 
-async def _kirim_brief_telegram(property_id: str, property_nama: str = ""):
-    from routes.telegram_bot import kirim_alert_owner
-    brief = await _generate_daily_brief(property_id)
-    skor = brief["health_score"]["skor"]
-    label = f" ({property_nama})" if property_nama else ""
-    pesan = (
-        f"\U0001F4CA *AI Grow — Daily Executive Brief{label}*\n"
-        f"Business Health Score: *{skor}/100*\n\n"
-        f"{brief['narasi']}"
-    )
-    await kirim_alert_owner(pesan)
+async def background_ai_grow_cache_loop():
+    """Refresh cache AI Grow Daily Brief 2x/hari, jam 10:00 & 18:00 WIB (2026-08-04,
+    permintaan Agus - "3x saja, jangan berulang terus karena boros token": sebelumnya
+    dashboard live-generate lewat OpenAI SETIAP KALI halaman dibuka, sekarang cuma
+    terjadwal). Slot KETIGA (23:00 WIB) SENGAJA TIDAK di sini - dipicu langsung dari
+    telegram_bot.background_telegram_daily_report_loop pas menyusun laporan malam,
+    supaya brief yang di-cache utk dashboard PERSIS brief yang sama dipakai isi pesan
+    Telegram (bukan generate 2x terpisah / risiko race 2 loop independen kebetulan cek
+    jam yang sama tapi urutan tidak terjamin).
 
-
-async def background_daily_brief_loop():
-    """Kirim Daily Executive Brief ke Telegram owner tiap hari jam 07:30 WIB (beda dari
-    laporan akhir hari yang sudah ada jam 22:00 - brief ini untuk MEMULAI hari, bukan
-    menutup). Cek per menit supaya presisi jamnya, kirim sekali per tanggal (dilacak
-    in-memory - cukup untuk 1 proses uvicorn, sama pola dengan loop lain di server ini).
-
-    Multi-properti (2026-07-25) - kirim 1 brief TERPISAH per properti aktif (owner yang
-    sama menerima beberapa pesan berlabel nama properti kalau propertinya lebih dari 1),
-    bukan 1 brief gabungan - Business Health Score & rekomendasi tiap properti berbeda
-    konteksnya, menggabungkan akan menyesatkan. Kegagalan kirim 1 properti tidak
-    menghentikan properti lain (loop terpisah per properti dengan except sendiri)."""
-    terkirim_tanggal = None
+    Guard in-memory (bukan DB) cukup di sini - beda dari laporan malam Telegram, kalau
+    proses restart & slot ini ke-generate ulang tidak masalah SAMA SEKALI (cuma isi
+    cache lagi, bukan kirim pesan dobel ke siapa pun)."""
+    slot_terakhir = None
+    JAM_REFRESH = (10, 18)
     while True:
         try:
             now_wib = datetime.now(timezone.utc) + timedelta(hours=7)
-            if now_wib.hour == 7 and now_wib.minute >= 30 and terkirim_tanggal != now_wib.date():
+            slot_ini = (now_wib.date(), now_wib.hour)
+            if now_wib.hour in JAM_REFRESH and slot_terakhir != slot_ini:
                 async for p in db.properties.find({"aktif": True}):
                     try:
-                        await _kirim_brief_telegram(p["id"], p.get("nama") or "")
+                        await _generate_dan_cache_brief(p["id"])
                     except Exception as e:
-                        logger.warning(f"Gagal kirim Daily Brief properti {p.get('nama')}: {e}")
-                terkirim_tanggal = now_wib.date()
+                        logger.warning(f"Gagal refresh cache AI Grow properti {p.get('nama')}: {e}")
+                slot_terakhir = slot_ini
         except Exception as e:
-            logger.warning(f"background_daily_brief_loop error: {e}")
+            logger.warning(f"background_ai_grow_cache_loop error: {e}")
         await asyncio.sleep(120)
