@@ -456,8 +456,20 @@ export default function Dashboard() {
   const [collectDialog, setCollectDialog] = useState(null); // { booking, sisa, nominal, metode }
 
   const handleRoomClick = (room, upcomingBk, laterTodayBk, isColToday) => {
+    // Kasus kamar Menginap check-in & checkout SELESAI di hari yang SAMA (2026-08-04,
+    // bug nyata ditemukan Agus - kamar 15: tamu checkout pagi lebih awal dari tanggal
+    // checkout resmi, kamar sudah dibersihkan/kosong lagi, TAPI booking checked_out-nya
+    // masih "menempati" kolom hari ini scr tanggal [lihat marun-history 2026-08-02] jadi
+    // klik kamar selalu buka Booking Detail yang sudah selesai/mati - TIDAK ADA tombol
+    // Tambah Tamu utk tamu BARU sama sekali). Marun/badge "Selesai" tetap tampil apa
+    // adanya (riwayat, sengaja dipertahankan) - yang diperbaiki cuma AKSI klik: kalau
+    // booking yang match itu sendiri sudah checked_out DAN kamar sekarang nyatanya bebas
+    // (kosong/perlu_dibersihkan), rute klik jatuh ke alur normal di bawah (Quick Book/
+    // Tandai Menginap), bukan popup riwayat yang tidak ada tombol aksinya.
+    const upcomingBkSudahSelesai = isColToday && upcomingBk?.status === "checked_out"
+      && (room.status === "kosong" || room.status === "perlu_dibersihkan");
     // Jika tanggal yang dilihat punya booking di room ini → buka detail booking
-    if (upcomingBk) {
+    if (upcomingBk && !upcomingBkSudahSelesai) {
       setBookingDetail(upcomingBk);
       setRescheduleMode(false);
       const toLocal = (iso) => { const d = new Date(iso); d.setMinutes(d.getMinutes() - d.getTimezoneOffset()); return d.toISOString().slice(0, 16); };
@@ -535,8 +547,14 @@ export default function Dashboard() {
     // TIDAK PERNAH kebagian booking ini sama sekali di bookingsForCol - sudah otomatis
     // dikecualikan oleh bookingOccupiesDateOnly (exclusive end date), jadi tidak perlu
     // pengecualian tambahan apa pun di sini utk Menginap.
+    // Booking `cancelled` TIDAK PERNAH dihitung sbg upcomingBk (2026-08-04, bug nyata
+    // ditemukan Agus - kamar 15 sudah dibersihkan & kosong, tapi tidak ada tombol Tambah
+    // Tamu: booking Menginap yang DIBATALKAN [dibuat & dibatalkan hari yang sama] tetap
+    // lolos filter di bawah krn cuma checked_out+day_use yang dikecualikan, jadinya kamar
+    // yang sebenarnya bebas dianggap "Booked" biru [warna occupied] gara2 booking yang
+    // sebenarnya TIDAK PERNAH terjadi).
     const upcomingBk = belumAdaTamuAktif ? bookingsForCol
-      .filter(b => b.room_id === r.id && !(b.status === "checked_out" && b.tipe === "day_use"))
+      .filter(b => b.room_id === r.id && b.status !== "cancelled" && !(b.status === "checked_out" && b.tipe === "day_use"))
       .sort((a, c) => a.jam_mulai.localeCompare(c.jam_mulai))[0] : null;
     // Marun utk booking MENGINAP yang SUDAH di-checkout (2026-08-02, permintaan Agus -
     // kolom tanggal lain di grid sebelumnya nunjukin biru/menginap terus walau tamunya
