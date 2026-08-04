@@ -582,6 +582,25 @@ async def tugas_harian(user: dict = Depends(get_current_user), property_id: str 
 
     day_use_berlangsung = await db.checkins.find(scoped({"status": "aktif"}, property_id), {"_id": 0}).to_list(200)
 
+    # Riwayat checkout SUDAH selesai hari ini (2026-08-04, permintaan Agus - kasus kamar
+    # menginap checkout lalu dipakai Day Use di hari yang sama: begitu checkout
+    # diproses, tamu itu hilang dari daftar "Keberangkatan"/"Day Use Berlangsung" di atas
+    # (keduanya cuma daftar tugas YANG BELUM selesai) - Agus mau riwayat checkout tetap
+    # kelihatan di dashboard, bukan menghilang begitu saja. Dicari dari status akhirnya
+    # (checked_out/selesai) + timestamp checkout HARI INI, independen dari daftar di atas
+    # jadi 1 tamu yang menginap lalu Day Use di kamar sama hari ini akan muncul 2x di
+    # sini (checkout menginap-nya, lalu nanti checkout Day Use-nya) - itu memang benar,
+    # dua transaksi checkout yang berbeda.
+    keberangkatan_menginap_selesai = await db.bookings.find(scoped({
+        "tipe": "menginap", "status": "checked_out",
+        "checked_out_at": {"$regex": f"^{hari_ini}"},
+    }, property_id), {"_id": 0}).sort("checked_out_at", -1).to_list(200)
+
+    day_use_selesai = await db.checkins.find(scoped({
+        "status": "selesai",
+        "jam_checkout": {"$regex": f"^{hari_ini}"},
+    }, property_id), {"_id": 0}).sort("jam_checkout", -1).to_list(200)
+
     tamu_semua = await db.guests.find(scoped({}, property_id), {"_id": 0}).to_list(5000)
     tamu_follow_up = [
         g for g in tamu_semua
@@ -598,6 +617,8 @@ async def tugas_harian(user: dict = Depends(get_current_user), property_id: str 
         "kedatangan_menginap_hari_ini": kedatangan_menginap,
         "keberangkatan_menginap_hari_ini": keberangkatan_menginap,
         "day_use_sedang_berlangsung": day_use_berlangsung,
+        "keberangkatan_menginap_selesai_hari_ini": keberangkatan_menginap_selesai,
+        "day_use_selesai_hari_ini": day_use_selesai,
         "tamu_perlu_follow_up": tamu_follow_up[:20],
         "ulang_tahun_hari_ini": ulang_tahun,
     }

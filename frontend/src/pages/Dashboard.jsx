@@ -15,7 +15,7 @@ import { useAuth } from "@/context/AuthContext";
 import {
   BedDouble, AlertTriangle, Hourglass, Clock, Wallet,
   CalendarRange, Users as UsersIcon, Sparkles, Wrench, Calendar, MessageCircle, X, Inbox, Check, Percent,
-  Gift, ListChecks, LogIn, LogOut, PhoneCall,
+  Gift, ListChecks, LogIn, LogOut, PhoneCall, CheckCircle2,
 } from "lucide-react";
 import { SetujuiDialog, TolakDialog, ActionRequiredRedDoorz } from "@/pages/BookingRequests";
 import { PembatalanAlert } from "@/pages/Pembatalan";
@@ -929,7 +929,9 @@ export default function Dashboard() {
           hari ini, deterministik dari data yang sudah ada (bukan generate GPT) */}
       {tugasHarian && (
         tugasHarian.kedatangan_menginap_hari_ini.length + tugasHarian.keberangkatan_menginap_hari_ini.length
-          + tugasHarian.day_use_sedang_berlangsung.length + tugasHarian.tamu_perlu_follow_up.length > 0
+          + tugasHarian.day_use_sedang_berlangsung.length + tugasHarian.tamu_perlu_follow_up.length
+          + (tugasHarian.keberangkatan_menginap_selesai_hari_ini?.length || 0)
+          + (tugasHarian.day_use_selesai_hari_ini?.length || 0) > 0
       ) && (
         <Card className="border-slate-200" data-testid="tugas-harian-card">
           <CardContent className="p-4 sm:p-5">
@@ -960,6 +962,33 @@ export default function Dashboard() {
                   {tugasHarian.day_use_sedang_berlangsung.map((c) => (
                     <div key={c.id} className="text-xs text-slate-500 py-0.5">{c.nama_tamu} - kamar {c.room_nomor}</div>
                   ))}
+                </div>
+              )}
+              {((tugasHarian.keberangkatan_menginap_selesai_hari_ini?.length || 0)
+                + (tugasHarian.day_use_selesai_hari_ini?.length || 0)) > 0 && (
+                <div className="border border-slate-200 rounded-lg p-3">
+                  <div className="flex items-center gap-1.5 font-semibold text-slate-700 mb-1.5">
+                    <CheckCircle2 className="w-3.5 h-3.5" /> Sudah Checkout Hari Ini (
+                    {(tugasHarian.keberangkatan_menginap_selesai_hari_ini?.length || 0)
+                      + (tugasHarian.day_use_selesai_hari_ini?.length || 0)}
+                    )
+                  </div>
+                  {[
+                    ...(tugasHarian.keberangkatan_menginap_selesai_hari_ini || []).map((b) => ({
+                      key: `menginap-${b.id}`, nama: b.nama_tamu, kamar: b.room_nomor,
+                      tipe: "Menginap", waktu: b.checked_out_at,
+                    })),
+                    ...(tugasHarian.day_use_selesai_hari_ini || []).map((c) => ({
+                      key: `dayuse-${c.id}`, nama: c.nama_tamu, kamar: c.room_nomor,
+                      tipe: "Day Use", waktu: c.jam_checkout,
+                    })),
+                  ]
+                    .sort((a, b) => (b.waktu || "").localeCompare(a.waktu || ""))
+                    .map((item) => (
+                      <div key={item.key} className="text-xs text-slate-500 py-0.5">
+                        {item.nama} - kamar {item.kamar} <span className="text-slate-400">({item.tipe})</span>
+                      </div>
+                    ))}
                 </div>
               )}
               {tugasHarian.tamu_perlu_follow_up.length > 0 && (
