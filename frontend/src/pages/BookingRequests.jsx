@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
-import { Copy, ExternalLink, Check, X, AlertOctagon } from "lucide-react";
+import { Copy, ExternalLink, Check, X, AlertOctagon, RefreshCw } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
 
 const STATUS_LABEL = {
@@ -60,7 +60,11 @@ function badgeInfo(it) {
 // silang manual ke PMS RedDoorz, sesuatu yang tidak bisa dicek otomatis oleh sistem ini),
 // lalu sistem langsung membuat booking sungguhan + link bayar Tripay & mengirimkannya ke
 // tamu via WhatsApp (lihat POST /booking-requests/{id}/approve di backend).
-export function SetujuiDialog({ req, onOpenChange, onApproved }) {
+// `mode="resend"` (2026-08-04) - dialog IDENTIK dgn approve (pilih kamar ulang karena kamar
+// lama belum tentu masih kosong, pilih channel/opsi bayar), cuma beda endpoint & teks - reuse
+// komponen yang sama daripada duplikasi UI, lihat resend_payment_link di backend utk kenapa
+// endpointnya beda (link lama sudah mati, ini booking+transaksi baru sepenuhnya).
+export function SetujuiDialog({ req, onOpenChange, onApproved, mode = "approve" }) {
   const { properties } = useAuth();
   const [rooms, setRooms] = useState([]);
   const [channels, setChannels] = useState([]);
@@ -126,13 +130,14 @@ export function SetujuiDialog({ req, onOpenChange, onApproved }) {
     setSubmitting(true);
     setError("");
     try {
-      const { data } = await api.post(`/booking-requests/${req.id}/approve`, {
+      const endpoint = mode === "resend" ? "resend-link" : "approve";
+      const { data } = await api.post(`/booking-requests/${req.id}/${endpoint}`, {
         room_ids: selected, payment_option: opsi, method,
       });
       setHasil(data);
       onApproved(); // refresh daftar di belakang layar — dialog tetap terbuka menampilkan link bayar
     } catch (e) {
-      setError(e?.response?.data?.detail || "Gagal menyetujui permintaan");
+      setError(e?.response?.data?.detail || `Gagal ${mode === "resend" ? "kirim ulang link" : "menyetujui permintaan"}`);
     } finally {
       setSubmitting(false);
     }
@@ -147,7 +152,7 @@ export function SetujuiDialog({ req, onOpenChange, onApproved }) {
     <Dialog open={!!req} onOpenChange={(o) => { if (!o) onOpenChange(false); }}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Terima Permintaan {req.kode}</DialogTitle>
+          <DialogTitle>{mode === "resend" ? `Kirim Ulang Link — ${req.kode}` : `Terima Permintaan ${req.kode}`}</DialogTitle>
         </DialogHeader>
         {!hasil ? (
           <div className="space-y-3 text-sm">
@@ -228,7 +233,9 @@ export function SetujuiDialog({ req, onOpenChange, onApproved }) {
           </div>
         ) : (
           <div className="space-y-3 text-sm">
-            <p className="text-emerald-700 bg-emerald-50 border border-emerald-200 rounded p-2">Disetujui — link pembayaran sudah dikirim ke tamu via WhatsApp.</p>
+            <p className="text-emerald-700 bg-emerald-50 border border-emerald-200 rounded p-2">
+              {mode === "resend" ? "Link baru sudah dikirim ke tamu via WhatsApp." : "Disetujui — link pembayaran sudah dikirim ke tamu via WhatsApp."}
+            </p>
             <div className="flex items-center gap-2">
               <input readOnly value={hasil.checkout_url || ""} className="flex-1 h-10 rounded-md border border-slate-300 px-3 font-mono text-xs" />
               <Button variant="outline" size="icon" onClick={salinLink}><Copy className="w-3.5 h-3.5" /></Button>
@@ -241,7 +248,7 @@ export function SetujuiDialog({ req, onOpenChange, onApproved }) {
         <DialogFooter>
           {!hasil ? (
             <Button onClick={setujui} disabled={selected.length !== butuh || !method || submitting || (req.tipe === "menginap" && propertiButuhReddoorz && !redDoorzChecked)} className="bg-blue-700 hover:bg-blue-800">
-              {submitting ? "Menerima…" : "Terima & Kirim Link Bayar"}
+              {submitting ? "Mengirim…" : mode === "resend" ? "Kirim Link Baru" : "Terima & Kirim Link Bayar"}
             </Button>
           ) : (
             <Button onClick={() => onOpenChange(false)} className="bg-blue-700 hover:bg-blue-800">Selesai</Button>
@@ -356,6 +363,7 @@ export default function BookingRequests() {
   const [loading, setLoading] = useState(true);
   const [approveTarget, setApproveTarget] = useState(null);
   const [rejectTarget, setRejectTarget] = useState(null);
+  const [resendTarget, setResendTarget] = useState(null);
 
   const load = async () => {
     setLoading(true);
@@ -427,7 +435,7 @@ export default function BookingRequests() {
                   <a href={it.checkout_url} target="_blank" rel="noreferrer" className="text-xs text-blue-600 underline break-all">Link pembayaran</a>
                 )}
                 {it.status_efektif === "kadaluarsa" && (
-                  <p className="text-xs text-slate-500">Link pembayaran sudah kadaluarsa - tamu perlu diminta booking ulang kalau masih berminat.</p>
+                  <p className="text-xs text-slate-500">Link pembayaran sudah kadaluarsa.</p>
                 )}
                 {it.status === "rejected" && it.rejected_reason && (
                   <p className="text-xs text-slate-500 bg-slate-50 border border-slate-200 rounded p-2">Alasan ditolak: {it.rejected_reason}</p>
@@ -473,6 +481,13 @@ export default function BookingRequests() {
                     </Button>
                   </div>
                 )}
+                {it.status_efektif === "kadaluarsa" && (
+                  <div className="flex gap-2 pt-1">
+                    <Button size="sm" className="bg-blue-700 hover:bg-blue-800" onClick={() => setResendTarget(it)}>
+                      <RefreshCw className="w-3.5 h-3.5 mr-1" /> Kirim Ulang Link
+                    </Button>
+                  </div>
+                )}
               </CardContent>
             </Card>
           ))}
@@ -480,6 +495,7 @@ export default function BookingRequests() {
       )}
 
       <SetujuiDialog req={approveTarget} onOpenChange={(o) => { if (!o) setApproveTarget(null); }} onApproved={load} />
+      <SetujuiDialog req={resendTarget} onOpenChange={(o) => { if (!o) setResendTarget(null); }} onApproved={load} mode="resend" />
       <TolakDialog req={rejectTarget} onOpenChange={(o) => { if (!o) setRejectTarget(null); }} onDone={() => { setRejectTarget(null); load(); }} />
     </div>
   );

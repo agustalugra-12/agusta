@@ -701,6 +701,146 @@ async def buat_booking_request(data: Dict[str, Any], property_id: Optional[str] 
     return doc
 
 
+def _hitung_status_efektif(raw_status: str, bks: list) -> str:
+    """Derive status virtual (lunas/kadaluarsa) dari payment_status booking sungguhan yang
+    terkait - diekstrak dari list_booking_requests() (2026-08-04) supaya resend_payment_link
+    di bawah bisa pakai logika PERSIS SAMA untuk memutuskan boleh/tidaknya kirim ulang link,
+    bukan menghitung ulang terpisah (sumber kebenaran tunggal, sama pola dgn _fetch_site_facts
+    di AI Blog)."""
+    if raw_status == "waiting_payment" and bks:
+        if all(b.get("payment_status") == "paid" for b in bks):
+            return "lunas"
+        if all(b.get("payment_status") in ("expired", "failed") for b in bks):
+            return "kadaluarsa"
+    return raw_status
+
+
+async def _proses_kamar_dan_kirim_link(req: dict, room_ids: list, payment_option: str, method: str,
+                                        user: dict, property_id: str, pesan_pembuka: str,
+                                        log_action: str, log_desc: str) -> dict:
+    """Inti pembuatan booking sungguhan + transaksi Tripay + kirim link WA - dipakai
+    approve_booking_request (permintaan baru, status waiting_approval) DAN
+    resend_payment_link (link lama sudah kadaluarsa, status TETAP waiting_payment) supaya
+    tidak ada 2 jalur pembayaran paralel yang beda logika (diekstrak 2026-08-04 dari
+    approve_booking_request yang sebelumnya berdiri sendiri). `pesan_pembuka` beda kalimat
+    di pesan WA supaya tamu tidak bingung antara "permintaan disetujui" vs "ini link baru
+    menggantikan link lama yang sudah mati"."""
+    if len(room_ids) != req.get("jumlah_kamar", 1):
+        raise HTTPException(400, f"Pilih tepat {req.get('jumlah_kamar', 1)} kamar sesuai permintaan")
+
+    tipe = req["tipe"]
+    if tipe == "menginap":
+        if not req.get("tanggal_checkout"):
+            raise HTTPException(400, "Permintaan ini tidak punya tanggal_checkout — tidak bisa diproses sebagai menginap")
+        try:
+            ci = datetime.fromisoformat(f"{req['tanggal_checkin']}T14:00:00+07:00")
+            co = datetime.fromisoformat(f"{req['tanggal_checkout']}T12:00:00+07:00")
+        except Exception:
+            raise HTTPException(400, "Tanggal check-in/checkout pada permintaan tidak valid")
+        if co <= ci:
+            raise HTTPException(400, "Tanggal check-out harus setelah check-in")
+        start, end = ci.astimezone(timezone.utc), co.astimezone(timezone.utc)
+        nights = max(1, (co.date() - ci.date()).days)
+    else:
+        try:
+            jam = req.get("jam_checkin") or "14:00"
+            start = datetime.fromisoformat(f"{req['tanggal_checkin']}T{jam}:00+07:00").astimezone(timezone.utc)
+        except Exception:
+            raise HTTPException(400, "Tanggal/jam check-in pada permintaan tidak valid")
+        end = start + timedelta(hours=6)
+        nights = 1
+
+    created_bookings = []
+    try:
+        for room_id in room_ids:
+            r = await db.rooms.find_one(scoped({"id": room_id}, property_id))
+            if not r:
+                raise HTTPException(404, f"Kamar tidak ditemukan (id {room_id})")
+            harga_override = None
+            if tipe == "menginap":
+                subtotal = int(r["tarif_menginap"]) * nights
+                service_fee = round(subtotal * SERVICE_FEE_PCT)
+                total = subtotal + service_fee
+                harga_override = {"subtotal": subtotal, "service_fee": service_fee, "total": total, "dp_min": round(total * 0.5)}
+            data = {
+                "room_id": room_id, "nama_tamu": req["nama_tamu"], "no_hp": req["no_hp"],
+                "email": "", "no_identitas": "", "kendaraan": "",
+                "jumlah_tamu": req.get("jumlah_tamu", 1),
+                "jam_mulai": start, "jam_selesai": end,
+                "catatan": req.get("catatan") or "", "created_by": user["nama"],
+                "tipe": tipe, "dengan_sarapan": False,
+            }
+            booking = await create_reservation(data, property_id, source="whatsapp_request", harga_override=harga_override)
+            sync_status = "waiting_reddoorz_input" if (tipe == "menginap" and await property_butuh_reddoorz(property_id)) else "not_required"
+            await db.bookings.update_one({"id": booking["id"]}, {"$set": {"sync_status": sync_status}})
+            booking["sync_status"] = sync_status
+            created_bookings.append(booking)
+
+        group_id = None
+        if len(created_bookings) > 1:
+            group_id = str(uuid.uuid4())
+            for b in created_bookings:
+                await db.bookings.update_one({"id": b["id"]}, {"$set": {"group_id": group_id}})
+
+        total_group = sum(int(b["total"]) for b in created_bookings)
+
+        from routes.tripay import tripay_create_transaction
+        trx = await tripay_create_transaction(TripayCreateTransactionBody(
+            booking_id=created_bookings[0]["id"], payment_option=payment_option, method=method,
+        ))
+
+        now = now_iso()
+        # Simpan booking_ids/checkout_url LAMA ke riwayat_link sebelum ditimpa (2026-08-04,
+        # permintaan Agus - fitur kirim ulang) - supaya kalau nanti perlu ditelusuri, jelas
+        # link mana yang sudah mati vs yang aktif, bukan hilang begitu saja.
+        riwayat_baru = {
+            "booking_ids": req.get("booking_ids") or [], "checkout_url": req.get("checkout_url"),
+            "total": req.get("total"), "diganti_at": now, "diganti_oleh": user["nama"],
+        } if req.get("checkout_url") else None
+        update_set = {
+            "status": "waiting_payment", "booking_ids": [b["id"] for b in created_bookings], "group_id": group_id,
+            "approved_by": user["nama"], "approved_at": now, "updated_at": now,
+            "checkout_url": trx.get("checkout_url"), "total": total_group,
+        }
+        update_ops = {"$set": update_set}
+        if riwayat_baru:
+            update_ops["$push"] = {"riwayat_link": riwayat_baru}
+        await db.booking_requests.update_one({"id": req["id"]}, update_ops)
+        await log_activity(user, log_action, f"{log_desc} {req['kode']} ({req['nama_tamu']})")
+
+        pesan = (
+            f"{pesan_pembuka}\n\n"
+            f"Total: Rp{total_group:,}".replace(",", ".") + "\n"
+            f"Silakan selesaikan pembayaran melalui link berikut:\n{trx.get('checkout_url')}"
+        )
+        try:
+            from routes.pesan_whatsapp import _kirim_dengan_alert
+            nama_prop = await nama_properti(property_id)
+            total_str = f"{total_group:,}".replace(",", ".")
+            tanggal_str = f"{req.get('tanggal_checkin', '')} - {req.get('tanggal_checkout') or req.get('tanggal_checkin', '')}"
+            await _kirim_dengan_alert(
+                req["no_hp"], pesan, konteks=f"{log_action} {req['id']}",
+                template_name="menginap_disetujui_v1",
+                template_params=[req["nama_tamu"], nama_prop, tanggal_str, total_str, trx.get("checkout_url") or ""],
+                property_id=property_id,
+            )
+        except Exception as e:
+            logging.getLogger("booking_requests").warning(f"Gagal kirim link bayar ke {req['no_hp']}: {e}")
+    except Exception:
+        for b in created_bookings:
+            await db.bookings.update_one({"id": b["id"]}, {"$set": {
+                "status": "cancelled", "cancelled_at": now_iso(),
+                "cancelled_by": "system_rollback_approve_gagal",
+            }})
+            await log_availability_change(
+                b["room_id"], b.get("room_tipe", ""), 1, "booking_dibatalkan_rollback_approve_gagal",
+                b.get("property_id"), booking_id=b["id"],
+            )
+        raise
+
+    return await db.booking_requests.find_one(scoped({"id": req["id"]}, property_id), {"_id": 0})
+
+
 @api.get("/booking-requests")
 async def list_booking_requests(status: Optional[str] = None, user: dict = Depends(get_current_user),
                                  property_id: str = Depends(get_active_property)):
@@ -742,18 +882,7 @@ async def list_booking_requests(status: Optional[str] = None, user: dict = Depen
                     "payment_option": b.get("payment_option"),
                     **status_bayar_booking(b),  # status_bayar, jumlah_dibayar, sisa_tagihan
                 } for b in bks]
-                if it["status"] == "waiting_payment" and all(b.get("payment_status") == "paid" for b in bks):
-                    it["status_efektif"] = "lunas"
-                # "kadaluarsa" (2026-08-03, bug nyata ditemukan lewat audit - 7 dari 13
-                # permintaan yang statusnya "waiting_payment" ternyata link Tripay-nya SUDAH
-                # expired/failed, bukan sedang ditunggu) - sebelumnya SEMUA booking yang
-                # tidak lunas tetap tampil "Menunggu Pembayaran" (badge biru) di halaman
-                # staf, sama persis dgn yang link-nya MASIH aktif - staf tidak bisa
-                # membedakan mana yang beneran perlu ditindaklanjuti vs yang sudah mati.
-                # Pola SAMA PERSIS dgn "lunas" di atas (derive dari payment_status booking
-                # sungguhan, bukan field mentah), cuma kondisinya kebalikan.
-                elif it["status"] == "waiting_payment" and all(b.get("payment_status") in ("expired", "failed") for b in bks):
-                    it["status_efektif"] = "kadaluarsa"
+                it["status_efektif"] = _hitung_status_efektif(it["status"], bks)
 
     if status == "lunas":
         items = [it for it in items if it["status_efektif"] == "lunas"]
@@ -793,125 +922,57 @@ async def approve_booking_request(rid: str, body: BookingRequestApprove, user: d
         if body.payment_option not in ("dp50", "full"):
             raise HTTPException(400, "payment_option harus 'dp50' atau 'full'")
         room_ids = list(dict.fromkeys(body.room_ids or []))
-        if len(room_ids) != req.get("jumlah_kamar", 1):
-            raise HTTPException(400, f"Pilih tepat {req.get('jumlah_kamar', 1)} kamar sesuai permintaan")
+        pesan_pembuka = f"Halo {req['nama_tamu']}, permintaan booking Anda kami *setujui*!"
+        return await _proses_kamar_dan_kirim_link(
+            req, room_ids, body.payment_option, body.method, user, property_id,
+            pesan_pembuka=pesan_pembuka, log_action="approve_booking_request",
+            log_desc="Setujui permintaan booking",
+        )
 
-        tipe = req["tipe"]
-        if tipe == "menginap":
-            if not req.get("tanggal_checkout"):
-                raise HTTPException(400, "Permintaan ini tidak punya tanggal_checkout — tidak bisa disetujui sebagai menginap")
-            try:
-                ci = datetime.fromisoformat(f"{req['tanggal_checkin']}T14:00:00+07:00")
-                co = datetime.fromisoformat(f"{req['tanggal_checkout']}T12:00:00+07:00")
-            except Exception:
-                raise HTTPException(400, "Tanggal check-in/checkout pada permintaan tidak valid")
-            if co <= ci:
-                raise HTTPException(400, "Tanggal check-out harus setelah check-in")
-            start, end = ci.astimezone(timezone.utc), co.astimezone(timezone.utc)
-            nights = max(1, (co.date() - ci.date()).days)
-        else:
-            try:
-                jam = req.get("jam_checkin") or "14:00"
-                start = datetime.fromisoformat(f"{req['tanggal_checkin']}T{jam}:00+07:00").astimezone(timezone.utc)
-            except Exception:
-                raise HTTPException(400, "Tanggal/jam check-in pada permintaan tidak valid")
-            end = start + timedelta(hours=6)
-            nights = 1
 
-        # Dari titik ini, kalau ADA yang gagal (mis. Tripay error) SETELAH booking asli
-        # sempat dibuat, rollback booking yang sudah terlanjur dibuat & biarkan
-        # booking_request tetap "waiting_approval" (2026-07-19, audit anti-race-condition
-        # lanjutan) - supaya staf bisa klik Terima lagi dengan aman tanpa meninggalkan
-        # booking "yatim" yang mengunci kamar tanpa pembayaran/transaksi, dan tanpa
-        # menghasilkan booking DOBEL kalau retry dilakukan.
-        created_bookings = []
-        try:
-            for room_id in room_ids:
-                r = await db.rooms.find_one(scoped({"id": room_id}, property_id))
-                if not r:
-                    raise HTTPException(404, f"Kamar tidak ditemukan (id {room_id})")
-                harga_override = None
-                if tipe == "menginap":
-                    subtotal = int(r["tarif_menginap"]) * nights
-                    service_fee = round(subtotal * SERVICE_FEE_PCT)
-                    total = subtotal + service_fee
-                    harga_override = {"subtotal": subtotal, "service_fee": service_fee, "total": total, "dp_min": round(total * 0.5)}
-                data = {
-                    "room_id": room_id, "nama_tamu": req["nama_tamu"], "no_hp": req["no_hp"],
-                    "email": "", "no_identitas": "", "kendaraan": "",
-                    "jumlah_tamu": req.get("jumlah_tamu", 1),
-                    "jam_mulai": start, "jam_selesai": end,
-                    "catatan": req.get("catatan") or "", "created_by": user["nama"],
-                    "tipe": tipe, "dengan_sarapan": False,
-                }
-                booking = await create_reservation(data, property_id, source="whatsapp_request", harga_override=harga_override)
-                # Tahap 2 (PRD Modul Reservasi): booking Menginap dari Booking Request TIDAK langsung
-                # dianggap "Confirmed" — admin harus input manual ke PMS RedDoorz dulu, baru dianggap
-                # pasti setelah email konfirmasi RedDoorz cocok (lihat otomasi_email.py). Day Use tidak
-                # pernah masuk RedDoorz (aturan lama, tidak berubah), jadi langsung "not_required".
-                # Properti yang tidak butuh sinkron RedDoorz (2026-07-26, mis. harmoni) juga langsung
-                # "not_required" apa pun tipenya - biasanya Menginap-nya sudah kena auto-approve duluan
-                # (lihat _coba_auto_approve_menginap), ini jaga-jaga untuk kasus yang tetap lewat review
-                # manual staf (mis. grup >1 kamar).
-                sync_status = "waiting_reddoorz_input" if (tipe == "menginap" and await property_butuh_reddoorz(property_id)) else "not_required"
-                await db.bookings.update_one({"id": booking["id"]}, {"$set": {"sync_status": sync_status}})
-                booking["sync_status"] = sync_status
-                created_bookings.append(booking)
-
-            group_id = None
-            if len(created_bookings) > 1:
-                group_id = str(uuid.uuid4())
-                for b in created_bookings:
-                    await db.bookings.update_one({"id": b["id"]}, {"$set": {"group_id": group_id}})
-
-            total_group = sum(int(b["total"]) for b in created_bookings)
-
-            from routes.tripay import tripay_create_transaction
-            trx = await tripay_create_transaction(TripayCreateTransactionBody(
-                booking_id=created_bookings[0]["id"], payment_option=body.payment_option, method=body.method,
-            ))
-
-            now = now_iso()
-            await db.booking_requests.update_one({"id": rid}, {"$set": {
-                "status": "waiting_payment", "booking_ids": [b["id"] for b in created_bookings], "group_id": group_id,
-                "approved_by": user["nama"], "approved_at": now, "updated_at": now,
-                "checkout_url": trx.get("checkout_url"), "total": total_group,
-            }})
-            await log_activity(user, "approve_booking_request", f"Setujui permintaan booking {req['kode']} ({req['nama_tamu']})")
-
-            pesan = (
-                f"Halo {req['nama_tamu']}, permintaan booking Anda kami *setujui*!\n\n"
-                f"Total: Rp{total_group:,}".replace(",", ".") + "\n"
-                f"Silakan selesaikan pembayaran melalui link berikut:\n{trx.get('checkout_url')}"
+@api.post("/booking-requests/{rid}/resend-link")
+async def resend_payment_link(rid: str, body: BookingRequestApprove, user: dict = Depends(get_current_user),
+                               property_id: str = Depends(get_active_property)):
+    """Kirim ulang link pembayaran (2026-08-04, permintaan Agus) - khusus untuk permintaan
+    yang link Tripay-nya SUDAH KADALUARSA (status_efektif "kadaluarsa", lihat
+    _hitung_status_efektif) - booking lama sudah otomatis cancelled begitu link mati (lihat
+    reservation_service.py), jadi ini BUKAN menghidupkan lagi link lama, tapi bikin booking
+    + transaksi Tripay baru sepenuhnya (sama seperti approve_booking_request), lalu kirim
+    link baru itu ke tamu. Staf pilih ulang kamar (kamar lama belum tentu masih kosong) &
+    boleh ganti metode pembayaran (mis. dari QRIS yang cuma 1 jam ke Virtual Account yang
+    24 jam - lihat catatan expired_time di tripay.py)."""
+    async with _request_lock(rid):
+        req = await db.booking_requests.find_one(scoped({"id": rid}, property_id))
+        if not req:
+            raise HTTPException(404, "Permintaan booking tidak ditemukan")
+        bks = []
+        if req.get("booking_ids"):
+            bks = await db.bookings.find(scoped({"id": {"$in": req["booking_ids"]}}, property_id), {"_id": 0}).to_list(20)
+        status_efektif = _hitung_status_efektif(req["status"], bks)
+        if status_efektif != "kadaluarsa":
+            raise HTTPException(
+                400,
+                f"Kirim ulang cuma untuk permintaan yang link-nya sudah kadaluarsa (status saat ini: {status_efektif}) - "
+                "kalau masih menunggu pembayaran, link lama masih berlaku, tidak perlu link baru.",
             )
-            try:
-                # Antre review staf bisa berjam-jam/berhari - hampir pasti di luar jendela
-                # 24 jam Meta (2026-07-26), WAJIB sertakan template.
-                from routes.pesan_whatsapp import _kirim_dengan_alert
-                nama_prop = await nama_properti(property_id)
-                total_str = f"{total_group:,}".replace(",", ".")
-                tanggal_str = f"{req.get('tanggal_checkin', '')} - {req.get('tanggal_checkout') or req.get('tanggal_checkin', '')}"
-                await _kirim_dengan_alert(
-                    req["no_hp"], pesan, konteks=f"approve booking request {rid}",
-                    template_name="menginap_disetujui_v1",
-                    template_params=[req["nama_tamu"], nama_prop, tanggal_str, total_str, trx.get("checkout_url") or ""],
-                    property_id=property_id,
-                )
-            except Exception as e:
-                logging.getLogger("booking_requests").warning(f"Gagal kirim link bayar ke {req['no_hp']}: {e}")
-        except Exception:
-            for b in created_bookings:
-                await db.bookings.update_one({"id": b["id"]}, {"$set": {
-                    "status": "cancelled", "cancelled_at": now_iso(),
-                    "cancelled_by": "system_rollback_approve_gagal",
-                }})
-                await log_availability_change(
-                    b["room_id"], b.get("room_tipe", ""), 1, "booking_dibatalkan_rollback_approve_gagal",
-                    b.get("property_id"), booking_id=b["id"],
-                )
-            raise
-
-    return await db.booking_requests.find_one(scoped({"id": rid}, property_id), {"_id": 0})
+        if datetime.fromisoformat(req["tanggal_checkin"]).date() < datetime.now().date():
+            raise HTTPException(
+                400,
+                "Tanggal check-in permintaan ini sudah lewat - tidak bisa kirim ulang link untuk tanggal lama, "
+                "buat permintaan booking baru dengan tanggal yang benar.",
+            )
+        if body.payment_option not in ("dp50", "full"):
+            raise HTTPException(400, "payment_option harus 'dp50' atau 'full'")
+        room_ids = list(dict.fromkeys(body.room_ids or []))
+        pesan_pembuka = (
+            f"Halo {req['nama_tamu']}, link pembayaran sebelumnya sudah *kadaluarsa*. "
+            f"Berikut link pembayaran *baru* untuk booking Anda:"
+        )
+        return await _proses_kamar_dan_kirim_link(
+            req, room_ids, body.payment_option, body.method, user, property_id,
+            pesan_pembuka=pesan_pembuka, log_action="resend_payment_link",
+            log_desc="Kirim ulang link pembayaran (link lama kadaluarsa)",
+        )
 
 
 @api.post("/booking-requests/{rid}/reject")
