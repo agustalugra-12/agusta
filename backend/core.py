@@ -16,6 +16,9 @@ import re
 import uuid
 import hashlib
 import logging
+import asyncio
+from collections import defaultdict
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone, timedelta
 from typing import List, Optional, Dict, Any
 
@@ -496,6 +499,46 @@ def hitung_peluang_kembali(riwayat_kunjungan: Optional[List[Dict[str, Any]]], ha
             "hari_sejak_kunjungan_terakhir": hari_sejak_terakhir}
 
 
+# Lock in-process per identitas tamu (2026-08-05, audit lanjutan setelah bug nyata Kamar 16
+# ditemukan Agus - upsert_guest ternyata punya TOCTOU YANG SAMA dgn create_checkin: cari_guest
+# (read) lalu, kalau tidak ketemu, insert_one tamu baru (write) jauh setelahnya - 2 request
+# check-in nyaris bersamaan utk tamu yg SAMA (blm pernah tercatat sebelumnya) bisa SAMA-SAMA
+# tidak menemukan siapa pun lalu SAMA-SAMA insert data tamu baru, menghasilkan >1 data tamu utk
+# 1 orang yg sama (persis yg terjadi pada 4 dokumen guests Kamar 16). Beda dari fix create_checkin
+# (atomic find_one_and_update di MongoDB) krn di sini kuncinya bukan 1 field sederhana (no_hp
+# butuh phone_variants dgn banyak variasi format, no_identitas fallback ke nama tanpa kontak) -
+# pola yg SUDAH dipakai & didokumentasikan codebase ini utk kasus serupa (room_locks,
+# reservation_service.py) adalah asyncio.Lock in-process per kunci - CUKUP & efektif karena
+# backend jalan 1 proses uvicorn (tanpa --workers), TIDAK cukup lagi kalau suatu saat di-scale
+# ke multi-worker/multi-instance (sama catatan seperti room_locks).
+_guest_locks: Dict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
+
+
+def _guest_lock_key(no_hp: str, no_identitas: str, nama: str, property_id: str) -> str:
+    """Kunci yang SAMA persis dgn urutan pencarian cari_guest()/cari_atau_upsert_guest_tanpa_kontak
+    di atas: no_identitas dulu (paling pasti unik), lalu no_hp (dinormalisasi ke 1 bentuk kanonik
+    - 62xxx - supaya 0xxx & 62xxx dari tamu yg sama mengunci kunci yg SAMA, bukan 2 kunci beda yg
+    lolos lock-nya masing2), fallback nama (case-insensitive) kalau benar2 tanpa kontak sama sekali."""
+    if no_identitas:
+        return f"{property_id}:id:{no_identitas}"
+    if no_hp:
+        digits = re.sub(r"\D", "", no_hp or "")
+        canon = "62" + digits[1:] if digits.startswith("0") else digits
+        return f"{property_id}:hp:{canon}"
+    return f"{property_id}:nama:{(nama or '').strip().lower()}"
+
+
+@asynccontextmanager
+async def guest_lock(no_hp: str, no_identitas: str, nama: str, property_id: str):
+    key = _guest_lock_key(no_hp, no_identitas, nama, property_id)
+    lock = _guest_locks[key]
+    await lock.acquire()
+    try:
+        yield
+    finally:
+        lock.release()
+
+
 async def upsert_guest(nama: str, no_hp: str, no_identitas: str, kendaraan: str, property_id: str,
                         count_kunjungan: bool = True, room_nomor: str = "") -> str:
     """Catat/perbarui 1 data tamu di `db.guests` — dipanggil dari SEMUA jalur yang menghasilkan
@@ -523,43 +566,46 @@ async def upsert_guest(nama: str, no_hp: str, no_identitas: str, kendaraan: str,
     ditambah saat `count_kunjungan=True` (kedatangan sungguhan, sinkron persis dengan kapan
     `total_kunjungan` naik - booking yang belum/tidak check-in TIDAK masuk daftar ini)."""
     nama = (nama or "").strip()
-    guest = await cari_guest(property_id, no_hp, no_identitas)
-    if not guest and not no_hp and not no_identitas:
-        guest = await cari_atau_upsert_guest_tanpa_kontak(nama, property_id)
-    if guest:
-        varian = dict(guest.get("nama_varian") or {})
-        if not varian and guest.get("nama"):
-            varian[guest["nama"]] = 1  # migrasi data lama yang belum punya nama_varian
-        if nama:
-            varian[nama] = varian.get(nama, 0) + 1
-        nama_utama = max(varian, key=varian.get) if varian else nama
-        update: Dict[str, Any] = {"$set": {
-            "nama": nama_utama,
-            "nama_varian": varian,
-            "no_hp": no_hp or guest.get("no_hp", ""),
-            "kendaraan": kendaraan or guest.get("kendaraan", ""),
+    # guest_lock membungkus SELURUH celah cari-lalu-tulis (baik update maupun insert) -
+    # request lain dgn identitas SAMA menunggu giliran, bukan lolos bersamaan.
+    async with guest_lock(no_hp, no_identitas, nama, property_id):
+        guest = await cari_guest(property_id, no_hp, no_identitas)
+        if not guest and not no_hp and not no_identitas:
+            guest = await cari_atau_upsert_guest_tanpa_kontak(nama, property_id)
+        if guest:
+            varian = dict(guest.get("nama_varian") or {})
+            if not varian and guest.get("nama"):
+                varian[guest["nama"]] = 1  # migrasi data lama yang belum punya nama_varian
+            if nama:
+                varian[nama] = varian.get(nama, 0) + 1
+            nama_utama = max(varian, key=varian.get) if varian else nama
+            update: Dict[str, Any] = {"$set": {
+                "nama": nama_utama,
+                "nama_varian": varian,
+                "no_hp": no_hp or guest.get("no_hp", ""),
+                "kendaraan": kendaraan or guest.get("kendaraan", ""),
+                "last_visit": now_iso(),
+            }}
+            if count_kunjungan:
+                update["$inc"] = {"total_kunjungan": 1}
+                update["$push"] = {"riwayat_kunjungan": {"id": str(uuid.uuid4()), "tanggal": now_iso(), "room_nomor": room_nomor, "source": "checkin"}}
+            await db.guests.update_one({"id": guest["id"]}, update)
+            return guest["id"]
+        guest_id = str(uuid.uuid4())
+        await db.guests.insert_one({
+            "id": guest_id,
+            "nama": nama,
+            "nama_varian": {nama: 1} if nama else {},
+            "no_hp": no_hp,
+            "no_identitas": no_identitas,
+            "kendaraan": kendaraan,
+            "total_kunjungan": 1 if count_kunjungan else 0,
+            "riwayat_kunjungan": [{"id": str(uuid.uuid4()), "tanggal": now_iso(), "room_nomor": room_nomor, "source": "checkin"}] if count_kunjungan else [],
             "last_visit": now_iso(),
-        }}
-        if count_kunjungan:
-            update["$inc"] = {"total_kunjungan": 1}
-            update["$push"] = {"riwayat_kunjungan": {"id": str(uuid.uuid4()), "tanggal": now_iso(), "room_nomor": room_nomor, "source": "checkin"}}
-        await db.guests.update_one({"id": guest["id"]}, update)
-        return guest["id"]
-    guest_id = str(uuid.uuid4())
-    await db.guests.insert_one({
-        "id": guest_id,
-        "nama": nama,
-        "nama_varian": {nama: 1} if nama else {},
-        "no_hp": no_hp,
-        "no_identitas": no_identitas,
-        "kendaraan": kendaraan,
-        "total_kunjungan": 1 if count_kunjungan else 0,
-        "riwayat_kunjungan": [{"id": str(uuid.uuid4()), "tanggal": now_iso(), "room_nomor": room_nomor, "source": "checkin"}] if count_kunjungan else [],
-        "last_visit": now_iso(),
-        "created_at": now_iso(),
-        "property_id": property_id,
-    })
-    return guest_id
+            "created_at": now_iso(),
+            "property_id": property_id,
+        })
+        return guest_id
 
 
 async def push_sync_event(data_type: str, detail: str) -> None:

@@ -238,7 +238,20 @@ async def checkout(checkin_id: str, body: CheckoutIn, user: dict = Depends(get_c
         "petugas_checkout_id": user["id"],
         "catatan_checkout": body.catatan,
     }
-    await db.checkins.update_one({"id": checkin_id}, {"$set": updates})
+    # ATOMIC transition "aktif" -> "selesai" (2026-08-05, pola sama dgn fix create_checkin
+    # di atas - audit lanjutan setelah bug nyata Kamar 16 ditemukan Agus). Cek status di
+    # baris 202 (read) TOCTOU dgn write ini kalau tombol Checkout di-klik ganda/nyaris
+    # bersamaan - tanpa filter status di query yg SAMA, semua request bisa lolos & efek
+    # samping di bawah (housekeeping_log, total_transaksi tamu, auto_posting akuntansi,
+    # notifikasi) ke-DUPLIKAT. Filter status="aktif" di query find_one_and_update SENDIRI
+    # yg jamin cuma 1 request menang - request lain otomatis dapat None (kalah klaim) &
+    # ditolak bersih SEBELUM efek samping mana pun terjadi.
+    claimed = await db.checkins.find_one_and_update(
+        {"id": checkin_id, "property_id": property_id, "status": "aktif"},
+        {"$set": updates}, return_document=True,
+    )
+    if not claimed:
+        raise HTTPException(400, "Check-in sudah selesai (kemungkinan sudah diproses request lain)")
     await db.rooms.update_one({"id": c["room_id"]}, {"$set": {"status": "perlu_dibersihkan", "info": {}}})
     # (2026-08-02, bug KRITIS nyata ditemukan - tamu Vina di kamar 5, RIAN RIAN tidak bisa
     # dipindah ke kamar 5 walau tamu sebelumnya sudah checkout & kamar sudah dibersihkan)
