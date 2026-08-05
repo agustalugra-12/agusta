@@ -101,6 +101,14 @@ async def public_rooms_catalog(properti: Optional[str] = None):
                 # (2026-07-31) - Harmoni tidak menyediakan sarapan sama sekali, beda dari
                 # Pelangi - frontend pakai ini utk sembunyikan toggle "dengan sarapan".
                 "ada_sarapan": ada_sarapan,
+                # (2026-08-05, permintaan Agus - konsumen luar (web-pelangi Knowledge Base
+                # utk KontenPilot AI) sempat pakai harga "priceFrom" versi web (SUDAH termasuk
+                # sarapan, di-maintain manual terpisah di CMS) yg ketinggalan/basi dibanding
+                # PMS - lihat _fetch_site_facts di web-pelangi). Sekarang harga dgn sarapan
+                # DIHITUNG di sini (satu sumber kebenaran, sama persis formula create_reservation/
+                # BREAKFAST_PRICE di core.py) supaya konsumen luar tidak perlu duplikasi
+                # konstanta breakfast price sendiri (rawan basi lagi kalau harganya berubah).
+                "tarif_menginap_dengan_sarapan": (r["tarif_menginap"] + BREAKFAST_PRICE) if ada_sarapan else None,
                 "image": m.get("image", ""),
                 "size": m.get("size", ""),
                 "capacity": m.get("capacity", ""),
