@@ -18,100 +18,140 @@ async def create_checkin(body: CheckinCreate, user: dict = Depends(get_current_u
     if body.tarif_override is not None and body.tarif_override <= 0:
         raise HTTPException(400, "Harga custom harus lebih dari 0")
 
+    # ATOMIC claim per kamar (2026-08-05, bug nyata ditemukan Agus - dashboard tampil
+    # "3 kamar overtime" tapi ISINYA sama persis: Kamar 16 (kadek widiarta) x3. Dicek
+    # langsung ke DB: 3 dokumen checkins TERPISAH utk kamar+tamu yg SAMA, jam_checkin
+    # SAMA, created_at cuma beda ~1-2 milidetik (kemungkinan besar staf klik tombol
+    # Check-in berkali-kali sebelum request pertama selesai). Root cause: kode LAMA cek
+    # `r["status"] != "kosong"` di SATU loop (read), lalu baru update status jadi
+    # "day_use" di loop TERPISAH jauh di bawah (write) - request paralel/nyaris
+    # bersamaan bisa SAMA-SAMA lolos cek "kosong" sebelum salah satu sempat menulis
+    # status baru (TOCTOU - time-of-check-to-time-of-use race condition).
+    #
+    # Fix: `find_one_and_update` ATOMIC per kamar - filter WAJIB sertakan status="kosong"
+    # di query yg SAMA dgn update-nya, jadi MongoDB sendiri yg jamin cuma SATU request
+    # yg berhasil mengklaim kamar itu, request lain yg nyaris bersamaan otomatis dapat
+    # None (kalah klaim) meski keduanya SEMPAT baca status "kosong" sebelumnya. Klaim
+    # SEMUA kamar DULU (loop ini) sebelum bikin dokumen checkin apa pun - kalau ada 1
+    # kamar gagal diklaim di tengah rombongan >1 kamar, ROLLBACK kamar yg SUDAH
+    # terklaim balik ke "kosong" (bukan biarkan sebagian sukses/sebagian gagal).
     rooms = []
-    for rid in room_ids:
-        r = await db.rooms.find_one(scoped({"id": rid}, property_id))
-        if not r:
-            raise HTTPException(404, f"Kamar tidak ditemukan (id {rid})")
-        if r["status"] != "kosong":
-            raise HTTPException(400, f"Kamar {r['nomor']} belum tersedia dan tidak dapat digunakan untuk check-in.")
-        rooms.append(r)
+    claimed_room_ids = []
 
-    # Tarif dasar (6 jam) WAJIB lunas saat check-in (2026-07-31, keputusan bisnis Agus:
-    # "semua payment di lakukan di depan kecuali extend/overtime" - sebelumnya Day Use
-    # TIDAK ada pembayaran sama sekali sampai checkout, tamu bisa pergi tanpa bayar).
-    # service_fee dihitung dari tarif dasar SAJA di sini (bukan calc_tagihan, yg baru bisa
-    # tahu overtime pas checkout) - selisihnya (kalau ada overtime) ditagih terpisah saat
-    # checkout, lihat fungsi checkout di bawah.
-    base_per_room = []
-    for r in rooms:
-        tarif_dasar = body.tarif_override if body.tarif_override else r["tarif"]
-        base_subtotal = int(tarif_dasar)
-        base_service_fee = round(base_subtotal * SERVICE_FEE_PCT)
-        base_per_room.append({"tarif_dasar": tarif_dasar, "subtotal": base_subtotal, "service_fee": base_service_fee, "total": base_subtotal + base_service_fee})
-    total_base_needed = sum(x["total"] for x in base_per_room)
-    total_dibayar = sum(int(p.get("jumlah", 0)) for p in body.pembayaran)
-    if total_dibayar < total_base_needed:
-        raise HTTPException(400, f"Pembayaran kurang. Tarif dasar Day Use (6 jam{'/kamar' if len(rooms) > 1 else ''}) wajib dibayar lunas saat check-in: Rp{total_base_needed:,}".replace(",", "."))
+    async def _rollback_claims():
+        # Lepas kamar yg SUDAH terklaim balik ke "kosong" - dipanggil kalau ADA error
+        # apa pun (validasi pembayaran, format jam, dst) SETELAH klaim atomic tapi
+        # SEBELUM checkin benar2 selesai dibuat, supaya kamar tidak stuck selamanya di
+        # status sementara "_checkin_pending".
+        for claimed_rid in claimed_room_ids:
+            await db.rooms.update_one(scoped({"id": claimed_rid}, property_id), {"$set": {"status": "kosong"}})
 
-    # Save / upsert guest — 1 data tamu dipakai bersama untuk semua kamar dalam grup ini.
-    room_nomor_gabung = ", ".join(r["nomor"] for r in rooms)
-    guest_id = await upsert_guest(body.nama_tamu, body.no_hp, body.no_identitas, body.kendaraan, property_id, room_nomor=room_nomor_gabung)
-    # parse jam_checkin
-    jam_ci_iso = now_iso()
-    if body.jam_checkin:
-        try:
-            d = datetime.fromisoformat(body.jam_checkin.replace("Z", "+00:00"))
-            if d.tzinfo is None:
-                d = d.replace(tzinfo=timezone.utc)
-            jam_ci_iso = d.astimezone(timezone.utc).isoformat()
-        except Exception:
-            raise HTTPException(400, "Format jam check-in tidak valid")
+    try:
+        for rid in room_ids:
+            r_check = await db.rooms.find_one(scoped({"id": rid}, property_id))
+            if not r_check:
+                raise HTTPException(404, f"Kamar tidak ditemukan (id {rid})")
+            r = await db.rooms.find_one_and_update(
+                scoped({"id": rid, "status": "kosong"}, property_id),
+                {"$set": {"status": "_checkin_pending"}},
+                return_document=True,
+            )
+            if not r:
+                raise HTTPException(400, f"Kamar {r_check['nomor']} belum tersedia dan tidak dapat digunakan untuk check-in.")
+            claimed_room_ids.append(rid)
+            rooms.append(r)
 
-    group_id = str(uuid.uuid4()) if len(rooms) > 1 else None
-    created = []
-    for i, r in enumerate(rooms):
-        base = base_per_room[i]
-        # Pembayaran dicatat apa adanya di kamar pertama kalau 1 kamar (kasus umum); utk
-        # rombongan >1 kamar dalam 1 transaksi, alokasikan proporsional ke tarif dasar
-        # tiap kamar supaya total per-kamar tetap masuk akal di laporan/riwayat, bukan
-        # dobel-dicatat di semua kamar.
-        if len(rooms) == 1:
-            pembayaran_kamar = body.pembayaran
-        else:
-            share = base["total"] / total_base_needed if total_base_needed else 0
-            pembayaran_kamar = [
-                {**p, "jumlah": round(int(p.get("jumlah", 0)) * share)} for p in body.pembayaran
-            ]
-        trx_no = f"CI-{datetime.now().strftime('%Y%m%d%H%M%S')}-{uuid.uuid4().hex[:4].upper()}"
-        doc = {
-            "id": str(uuid.uuid4()),
-            "trx_no": trx_no,
-            "guest_id": guest_id,
-            "nama_tamu": body.nama_tamu,
-            "no_hp": body.no_hp,
-            "no_identitas": body.no_identitas,
-            "kendaraan": body.kendaraan,
-            "jumlah_tamu": body.jumlah_tamu,
-            "room_id": r["id"],
-            "room_nomor": r["nomor"],
-            "room_tipe": r["tipe"],
-            "tarif_dasar": base["tarif_dasar"],
-            "jam_checkin": jam_ci_iso,
-            "jam_checkout": None,
-            "durasi_jam": 0,
-            "overtime_jam": 0,
-            "biaya_tambahan": 0,
-            # (2026-07-31) subtotal/service_fee/total SEKARANG diisi dari tarif dasar yang
-            # sudah lunas dibayar di depan (bukan 0 lagi) - checkout nanti menghitung ULANG
-            # dari calc_tagihan (termasuk overtime kalau ada) & menagih SELISIHnya saja.
-            "subtotal": base["subtotal"], "service_fee": base["service_fee"], "total": base["total"],
-            "status": "aktif",
-            "catatan": body.catatan,
-            "foto_identitas_url": body.foto_identitas_url or "",
-            "pembayaran": pembayaran_kamar,
-            "petugas_checkin": user["nama"],
-            "petugas_checkin_id": user["id"],
-            "created_at": now_iso(),
-            "property_id": property_id,
-        }
-        if group_id:
-            doc["group_id"] = group_id
-        await db.checkins.insert_one(doc)
-        await db.rooms.update_one({"id": r["id"]}, {"$set": {"status": "day_use", "info": {"checkin_id": doc["id"], "nama_tamu": body.nama_tamu}}})
-        await log_activity(user, "checkin", f"Check-in {body.nama_tamu} ke kamar {r['nomor']}", entity=r["nomor"])
-        doc.pop("_id", None)
-        created.append(doc)
+        # Tarif dasar (6 jam) WAJIB lunas saat check-in (2026-07-31, keputusan bisnis Agus:
+        # "semua payment di lakukan di depan kecuali extend/overtime" - sebelumnya Day Use
+        # TIDAK ada pembayaran sama sekali sampai checkout, tamu bisa pergi tanpa bayar).
+        # service_fee dihitung dari tarif dasar SAJA di sini (bukan calc_tagihan, yg baru bisa
+        # tahu overtime pas checkout) - selisihnya (kalau ada overtime) ditagih terpisah saat
+        # checkout, lihat fungsi checkout di bawah.
+        base_per_room = []
+        for r in rooms:
+            tarif_dasar = body.tarif_override if body.tarif_override else r["tarif"]
+            base_subtotal = int(tarif_dasar)
+            base_service_fee = round(base_subtotal * SERVICE_FEE_PCT)
+            base_per_room.append({"tarif_dasar": tarif_dasar, "subtotal": base_subtotal, "service_fee": base_service_fee, "total": base_subtotal + base_service_fee})
+        total_base_needed = sum(x["total"] for x in base_per_room)
+        total_dibayar = sum(int(p.get("jumlah", 0)) for p in body.pembayaran)
+        if total_dibayar < total_base_needed:
+            raise HTTPException(400, f"Pembayaran kurang. Tarif dasar Day Use (6 jam{'/kamar' if len(rooms) > 1 else ''}) wajib dibayar lunas saat check-in: Rp{total_base_needed:,}".replace(",", "."))
+
+        # Save / upsert guest — 1 data tamu dipakai bersama untuk semua kamar dalam grup ini.
+        room_nomor_gabung = ", ".join(r["nomor"] for r in rooms)
+        guest_id = await upsert_guest(body.nama_tamu, body.no_hp, body.no_identitas, body.kendaraan, property_id, room_nomor=room_nomor_gabung)
+        # parse jam_checkin
+        jam_ci_iso = now_iso()
+        if body.jam_checkin:
+            try:
+                d = datetime.fromisoformat(body.jam_checkin.replace("Z", "+00:00"))
+                if d.tzinfo is None:
+                    d = d.replace(tzinfo=timezone.utc)
+                jam_ci_iso = d.astimezone(timezone.utc).isoformat()
+            except Exception:
+                raise HTTPException(400, "Format jam check-in tidak valid")
+
+        group_id = str(uuid.uuid4()) if len(rooms) > 1 else None
+        created = []
+        for i, r in enumerate(rooms):
+            base = base_per_room[i]
+            # Pembayaran dicatat apa adanya di kamar pertama kalau 1 kamar (kasus umum); utk
+            # rombongan >1 kamar dalam 1 transaksi, alokasikan proporsional ke tarif dasar
+            # tiap kamar supaya total per-kamar tetap masuk akal di laporan/riwayat, bukan
+            # dobel-dicatat di semua kamar.
+            if len(rooms) == 1:
+                pembayaran_kamar = body.pembayaran
+            else:
+                share = base["total"] / total_base_needed if total_base_needed else 0
+                pembayaran_kamar = [
+                    {**p, "jumlah": round(int(p.get("jumlah", 0)) * share)} for p in body.pembayaran
+                ]
+            trx_no = f"CI-{datetime.now().strftime('%Y%m%d%H%M%S')}-{uuid.uuid4().hex[:4].upper()}"
+            doc = {
+                "id": str(uuid.uuid4()),
+                "trx_no": trx_no,
+                "guest_id": guest_id,
+                "nama_tamu": body.nama_tamu,
+                "no_hp": body.no_hp,
+                "no_identitas": body.no_identitas,
+                "kendaraan": body.kendaraan,
+                "jumlah_tamu": body.jumlah_tamu,
+                "room_id": r["id"],
+                "room_nomor": r["nomor"],
+                "room_tipe": r["tipe"],
+                "tarif_dasar": base["tarif_dasar"],
+                "jam_checkin": jam_ci_iso,
+                "jam_checkout": None,
+                "durasi_jam": 0,
+                "overtime_jam": 0,
+                "biaya_tambahan": 0,
+                # (2026-07-31) subtotal/service_fee/total SEKARANG diisi dari tarif dasar yang
+                # sudah lunas dibayar di depan (bukan 0 lagi) - checkout nanti menghitung ULANG
+                # dari calc_tagihan (termasuk overtime kalau ada) & menagih SELISIHnya saja.
+                "subtotal": base["subtotal"], "service_fee": base["service_fee"], "total": base["total"],
+                "status": "aktif",
+                "catatan": body.catatan,
+                "foto_identitas_url": body.foto_identitas_url or "",
+                "pembayaran": pembayaran_kamar,
+                "petugas_checkin": user["nama"],
+                "petugas_checkin_id": user["id"],
+                "created_at": now_iso(),
+                "property_id": property_id,
+            }
+            if group_id:
+                doc["group_id"] = group_id
+            await db.checkins.insert_one(doc)
+            await db.rooms.update_one({"id": r["id"]}, {"$set": {"status": "day_use", "info": {"checkin_id": doc["id"], "nama_tamu": body.nama_tamu}}})
+            await log_activity(user, "checkin", f"Check-in {body.nama_tamu} ke kamar {r['nomor']}", entity=r["nomor"])
+            doc.pop("_id", None)
+            created.append(doc)
+    except HTTPException:
+        await _rollback_claims()
+        raise
+    except Exception:
+        await _rollback_claims()
+        raise
 
     if len(created) == 1:
         return created[0]
