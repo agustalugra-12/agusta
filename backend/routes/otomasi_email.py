@@ -6,6 +6,7 @@ import base64
 import io
 import json
 import logging
+import re
 import httpx
 from fastapi.responses import RedirectResponse
 from openai import OpenAI
@@ -253,7 +254,8 @@ Jika email notifikasi RESERVASI BARU, balas:
   "jumlah_tamu": <integer, jumlah tamu PER KAMAR — kalau email menyebut field "Jumlah Tamu" berformat "A*B" (mis. "2*3"), A adalah jumlah tamu per kamar dan B adalah jumlah kamar (harus sama dengan "Jumlah Kamar" di bawah); ambil HANYA A untuk field ini>,
   "harga": <integer, TOTAL harga SELURUH kamar dalam Rupiah tanpa simbol/pemisah ribuan (kalau ada field "Jumlah Yang Dibayarkan", itu totalnya)>,
   "status_pembayaran": "<salah satu persis: Lunas | Belum Bayar | Dibatalkan>",
-  "jumlah_kamar": <integer, dari field "Jumlah Kamar" di email kalau ada disebutkan eksplisit, kalau tidak disebutkan asumsikan 1>
+  "jumlah_kamar": <integer, dari field "Jumlah Kamar" di email kalau ada disebutkan eksplisit, kalau tidak disebutkan asumsikan 1>,
+  "permintaan_khusus": "<string, isi field 'Permintaan Khusus' PERSIS apa adanya kalau ada di email, string kosong "" kalau tidak ada field itu sama sekali - JANGAN diringkas/diterjemahkan/dirapikan, salin verbatim>"
 }}
 
 Jika email notifikasi MODIFIKASI (perubahan tanggal/kamar/detail atas reservasi yang SUDAH ADA
@@ -360,6 +362,61 @@ async def _resolve_property_dari_subjek(subjek: str) -> Optional[str]:
     return cocok[0] if len(cocok) == 1 else None
 
 
+KODE_BOOKING_PATTERN = re.compile(r"BKO-\d{14}-[0-9A-F]{4}")
+
+
+async def _cocokkan_via_kode_pms(log_id: str, data: dict, property_id: str) -> bool:
+    """Sinkron Kode-Anchor (2026-08-07, diskusi langsung dgn Agus, akar masalah asli:
+    setiap email konfirmasi RedDoorz SELALU dianggap "lunas via RedDoorz" oleh sistem,
+    padahal sumber uang aslinya beda-beda - WA (sudah bayar/DP via Tripay ke PMS
+    langsung), Direct (tunai di lokasi), OTA/RedDoorz asli (lewat RedDoorz beneran).
+    Pencocokan lama (_cocokkan_booking_pending_reddoorz, fuzzy nama+tanggal+status)
+    TERBUKTI rapuh thd race condition (kasus nyata Ni Komang Arika Dewi, 2026-08-07).
+
+    Mekanisme baru: staf yang input booking WA manual ke RedDoorz WAJIB tempel kode
+    booking PMS (mis. "BKO-20260804181711-8A09") ke kolom "Permintaan Khusus" RedDoorz -
+    field itu TERBUKTI ikut ke email konfirmasi (dicek langsung ke email asli). Kalau
+    kode ketemu di sini, itu BUKTI PASTI (bukan tebakan fuzzy) booking ini SUDAH ada &
+    sudah diproses di PMS - PMS jadi SATU-SATUNYA sumber kebenaran harga/DP/sisa, data
+    harga/status_pembayaran dari email SAMA SEKALI tidak dipakai, cuma nomor reservasi
+    OTA-nya yang diserap utk keperluan modifikasi/pembatalan nanti.
+
+    Booking Direct (bayar tunai di lokasi) SENGAJA TIDAK diberi kode saat staf input ke
+    RedDoorz (keputusan bisnis Agus) - kalau tidak ketemu kode sama sekali di sini,
+    fungsi ini return False & pemanggil lanjut ke alur lama (dianggap lunas seperti
+    biasa) - berlaku SAMA utk Direct maupun OTA/RedDoorz asli, TIDAK dibedakan lewat
+    field "Tipe Booking" (Agus konfirmasi: field itu SELALU "Bayar Di Hotel" utk
+    booking yang diinput manual staf apa pun asalnya, tidak bisa dipakai membedakan)."""
+    permintaan_khusus = data.get("permintaan_khusus") or ""
+    m = KODE_BOOKING_PATTERN.search(permintaan_khusus.upper())
+    if not m:
+        return False
+    kode = m.group(0)
+    booking = await db.bookings.find_one(scoped({"kode": kode}, property_id))
+    if not booking:
+        logging.getLogger("otomasi_email").warning(
+            f"Kode {kode} ditemukan di Permintaan Khusus email tapi tidak cocok booking PMS manapun (properti {property_id}) - lanjut alur biasa"
+        )
+        return False
+    grup = [booking]
+    if booking.get("group_id"):
+        grup = await db.bookings.find(scoped({"group_id": booking["group_id"]}, property_id), {"_id": 0}).to_list(20)
+    for b in grup:
+        await db.bookings.update_one(
+            {"id": b["id"]},
+            {"$set": {"sync_status": "synced", "ota_reservation_no": data.get("no_reservasi")}},
+        )
+    await db.email_logs.update_one({"id": log_id}, {"$set": {
+        "status": "Parsed_Success", "aksi": "sinkron_via_kode_pms",
+        "reservation_id": booking["id"], "reservation_ids": [b["id"] for b in grup],
+    }})
+    logging.getLogger("otomasi_email").info(
+        f"Email disinkronkan ke booking PMS existing via kode {kode} ({len(grup)} kamar) - "
+        f"data harga/pembayaran dari email diabaikan, PMS tetap sumber kebenaran"
+    )
+    return True
+
+
 async def buat_reservasi_otomatis(log_id: str, data: dict, sumber: str, subjek: str) -> None:
     """Reservation Automation (PRD): dari data hasil AI Email Parser, buat reservasi
     otomatis di Pelangi PMS tanpa input manual staf — asalkan (a) tipe kamar OTA sudah
@@ -378,6 +435,13 @@ async def buat_reservasi_otomatis(log_id: str, data: dict, sumber: str, subjek: 
     # fallback ke STOPGAP lama (properti pertama dibuat) kalau tidak ketemu/ambigu -
     # lihat _resolve_property_dari_subjek.
     property_id = await _resolve_property_dari_subjek(subjek) or await get_default_property_id()
+
+    # Kode-Anchor CEK DULU sebelum apa pun lain (2026-08-07, lihat _cocokkan_via_kode_pms) -
+    # kalau ketemu, ini booking WA yang SUDAH ada & sudah diproses PMS, tidak perlu (dan
+    # BERBAHAYA kalau) lanjut ke alur "buat reservasi baru" di bawah.
+    if await _cocokkan_via_kode_pms(log_id, data, property_id):
+        return
+
     mapping = await db.room_mappings.find_one({"ota_nama": data.get("tipe_kamar"), "sumber": sumber})
     if not mapping:
         await db.email_logs.update_one({"id": log_id}, {"$set": {
