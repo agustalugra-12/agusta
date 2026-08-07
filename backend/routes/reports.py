@@ -414,7 +414,12 @@ async def report_daily(from_date: str = Query(...), to_date: str = Query(...),
     duplikasi dengan checkins karena booking online/OTA/WA tidak pernah menghasilkan
     dokumen checkins terpisah di sistem ini (dua alur guest-arrival yang independen)."""
     start, end = wita_date_range_to_utc(from_date, to_date)
-    ci = await db.checkins.find(scoped({"jam_checkout": {"$gte": start, "$lte": end}, "status": "selesai"}, property_id), {"_id": 0}).to_list(5000)
+    # Walk-in (checkins) dibucket per jam_checkin, BUKAN jam_checkout (2026-08-07, sama
+    # keputusan dgn report_rooms - konsisten "tanggal 7" berarti tamu yg DATANG tanggal
+    # 7). Booking Menginap TETAP pakai accrual malam-inap di bawah (tidak diubah - itu
+    # soal spread lintas BANYAK malam, beda persoalan dari Day Use walk-in yg cuma
+    # kadang lewat tengah malam sekali).
+    ci = await db.checkins.find(scoped({"jam_checkin": {"$gte": start, "$lte": end}, "status": "selesai"}, property_id), {"_id": 0}).to_list(5000)
     bk = await db.bookings.find(scoped({
         "source": {"$in": ["ota", "online", "whatsapp"]},
         "payment_status": "paid",
@@ -430,7 +435,7 @@ async def report_daily(from_date: str = Query(...), to_date: str = Query(...),
         return iso[:10]
     def _init(): return {"kamar": 0, "makanan": 0, "minuman": 0, "laundry": 0, "service": 0, "pengeluaran": 0}
     for c in ci:
-        d = bucket(c["jam_checkout"])
+        d = bucket(c["jam_checkin"])
         by_day.setdefault(d, _init())
         by_day[d]["kamar"] += c.get("total", 0)
     for b in bk:
@@ -549,16 +554,24 @@ async def report_rooms(from_date: str = Query(...), to_date: str = Query(...),
 
     `detail_pembayaran` per item (2026-08-02, permintaan Agus) - rincian DP/pelunasan
     & metode-nya (cash/Tripay/QR/dll), lihat _ambil_detail_pembayaran_booking &
-    _detail_pembayaran_checkin."""
+    _detail_pembayaran_checkin.
+
+    Basis TANGGAL KEDATANGAN (jam_checkin/jam_mulai), BUKAN checkout/paid_at (2026-08-07,
+    permintaan Agus - bug nyata dilaporkan: tamu Gede Widana & Sangtu Satria check-in
+    tanggal 6, check-out tanggal 7 (Day Use lewat tengah malam) - ikut ke laporan tanggal
+    7 padahal Agus mengharapkan cuma tamu yg BENAR-BENAR datang tanggal itu ("harusnya
+    cuma 3 transaksi"). Keputusan bisnis eksplisit dari Agus - laporan ini soal "siapa
+    yang datang hari ini", bukan akuntansi accrual (beda dari report_daily yg tetap
+    pakai malam-inap utk booking Menginap lintas hari, itu keputusan terpisah)."""
     start, end = wita_date_range_to_utc(from_date, to_date)
     items = await db.checkins.find(
-        scoped({"jam_checkout": {"$gte": start, "$lte": end}, "status": "selesai"}, property_id),
+        scoped({"jam_checkin": {"$gte": start, "$lte": end}, "status": "selesai"}, property_id),
         {"_id": 0}
     ).to_list(5000)
     bk = await db.bookings.find(scoped({
         "source": {"$in": ["ota", "online", "whatsapp"]},
         "payment_status": "paid",
-        "paid_at": {"$gte": start, "$lte": end},
+        "jam_mulai": {"$gte": start, "$lte": end},
         "ota_harga_dikonfirmasi": {"$ne": False},
     }, property_id), {"_id": 0}).to_list(5000)
     # Booking asal utk checkins yang berasal dari booking (perlu payment_option-nya
