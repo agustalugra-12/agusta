@@ -366,7 +366,7 @@ export function ActionRequiredRedDoorz() {
         <AlertOctagon className="w-5 h-5 text-amber-600 mt-0.5 shrink-0" />
         <div className="text-sm">
           <div className="font-semibold text-amber-900">Action Required — Perlu Input ke PMS RedDoorz</div>
-          <div className="text-amber-700">Booking Menginap ini sudah lunas — input manual ke PMS RedDoorz, lalu tandai selesai di sini. Baru dianggap "Confirmed" setelah email konfirmasi RedDoorz diterima.</div>
+          <div className="text-amber-700">Booking Menginap ini sudah lunas — input manual ke PMS RedDoorz, <b>tempel kode di bawah ini ke kolom "Permintaan Khusus"</b> pada form RedDoorz supaya email konfirmasinya nanti otomatis sinkron pakai data PMS (bukan data dari email), lalu tandai selesai di sini. Baru dianggap "Confirmed" setelah email konfirmasi RedDoorz diterima.</div>
         </div>
       </div>
       {loading ? (
@@ -377,7 +377,18 @@ export function ActionRequiredRedDoorz() {
             <div key={b.id} className="flex items-center justify-between gap-3 bg-white border border-amber-100 rounded-lg p-2.5 text-sm">
               <div>
                 <div className="font-semibold">{b.nama_tamu} — Kamar {b.room_nomor} ({b.room_tipe})</div>
-                <div className="text-xs text-slate-500">{b.kode} · check-in {fmtDateTime(b.jam_mulai)}</div>
+                <div className="text-xs text-slate-500">check-in {fmtDateTime(b.jam_mulai)}</div>
+                <div className="flex items-center gap-1.5 mt-1">
+                  <code className="text-xs font-mono bg-amber-50 border border-amber-200 rounded px-1.5 py-0.5">{b.kode}</code>
+                  <button
+                    type="button"
+                    title="Salin kode untuk kolom Permintaan Khusus RedDoorz"
+                    onClick={() => { navigator.clipboard?.writeText(b.kode); toast.success("Kode disalin — tempel ke kolom Permintaan Khusus RedDoorz"); }}
+                    className="text-amber-700 hover:text-amber-900"
+                  >
+                    <Copy className="w-3 h-3" />
+                  </button>
+                </div>
               </div>
               <Button size="sm" className="bg-amber-600 hover:bg-amber-700 shrink-0" disabled={busyId === b.id} onClick={() => tandaiSelesai(b)}>
                 {busyId === b.id ? "Menyimpan…" : "Sudah Input ke RedDoorz"}
