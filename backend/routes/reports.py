@@ -223,10 +223,23 @@ async def report_service_revenue(from_date: str = Query(...), to_date: str = Que
 
 @api.get("/reports/summary")
 async def report_summary(user: dict = Depends(get_current_user), property_id: str = Depends(get_active_property)):
-    today_iso = datetime.now(timezone.utc).date().isoformat()
-    month_start = datetime.now(timezone.utc).replace(day=1, hour=0, minute=0, second=0, microsecond=0).isoformat()
-    today_date = datetime.now(timezone.utc).date()
-    today_start_dt = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+    # WITA boundaries (2026-08-07, bug nyata - Dashboard/Laporan dilaporkan "tidak sinkron"
+    # oleh Agus) - endpoint ini (dipakai Dashboard utama) TERLEWAT dari audit WITA-boundary
+    # sebelumnya hari ini (commit d8f4c3a) karena tidak punya query param from_date/to_date
+    # spt endpoint /reports/* lain, jadi tidak kena pola "start = from_date" yang diaudit -
+    # tapi tetap punya bug yang SAMA PERSIS: "hari ini"/"bulan ini" dihitung dari tanggal UTC
+    # mentah, bukan WITA. Dini hari WITA (00:00-07:59 WITA = masih tanggal KEMARIN di UTC)
+    # bikin Dashboard "ketinggalan" transaksi yang sudah masuk hitungan "hari ini" di Laporan
+    # (yang sudah benar pakai WITA). Sama helper (wita_date_range_to_utc) yang sudah dipakai
+    # endpoint /reports/* lain, cukup diberi tanggal WITA hari ini sbg from_date=to_date.
+    today_wita = datetime.now(timezone.utc).astimezone(timezone(timedelta(hours=8))).date()
+    today_start_iso, today_end_iso = wita_date_range_to_utc(today_wita.isoformat(), today_wita.isoformat())
+    month_start_wita = today_wita.replace(day=1)
+    month_start_iso, _ = wita_date_range_to_utc(month_start_wita.isoformat(), month_start_wita.isoformat())
+    today_iso = today_start_iso
+    month_start = month_start_iso
+    today_date = today_wita
+    today_start_dt = datetime.fromisoformat(today_start_iso)
     today_end_dt = today_start_dt + timedelta(days=1)
 
     # 13 query di bawah SEMUANYA independen satu sama lain (tidak ada yang butuh hasil query
@@ -272,8 +285,11 @@ async def report_summary(user: dict = Depends(get_current_user), property_id: st
     # exclusive checkout, kecuali day-use (checkin=checkout, tetap terhitung).
     rooms_dipesan_hari_ini = set()
     for b in today_bookings:
-        b_start = parse_iso(b["jam_mulai"], "jam_mulai").date()
-        b_end = parse_iso(b["jam_selesai"], "jam_selesai").date()
+        # .date() di sini WAJIB dari waktu WITA, bukan UTC mentah (2026-08-07, sama fix
+        # dgn today_date di atas) - `today_date` sekarang WITA, jadi sisi kanan perbandingan
+        # ini harus konsisten WITA juga, bukan dibandingkan silang dgn tanggal UTC.
+        b_start = parse_iso(b["jam_mulai"], "jam_mulai").astimezone(timezone(timedelta(hours=8))).date()
+        b_end = parse_iso(b["jam_selesai"], "jam_selesai").astimezone(timezone(timedelta(hours=8))).date()
         occupies_today = today_date == b_start if b_start == b_end else b_start <= today_date < b_end
         if occupies_today:
             rooms_dipesan_hari_ini.add(b["room_id"])
