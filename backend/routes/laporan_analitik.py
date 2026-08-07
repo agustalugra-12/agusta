@@ -19,8 +19,7 @@ async def laporan_pendapatan(from_date: str = Query(...), to_date: str = Query(.
     kebagi proporsional ke tiap bulan sesuai malam yang benar-benar terpakai, bukan numpuk
     semua di tanggal paid_at. Konsisten dengan /reports/daily. Tidak termasuk pendapatan
     walk-in (sudah ada di /reports/daily)."""
-    start = from_date
-    end = to_date + "T23:59:59"
+    start, end = wita_date_range_to_utc(from_date, to_date)
     bks = await db.bookings.find(scoped({
         "payment_status": "paid",
         "jam_mulai": {"$lte": end},

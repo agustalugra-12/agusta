@@ -121,6 +121,28 @@ def rate_limiter(max_requests: int, window_seconds: int):
 def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
+# Rentang tanggal laporan WITA -> UTC (2026-08-07, bug nyata dilaporkan Agus - "laporan
+# kamar tanggal 7 harusnya 3 transaksi tapi transaksi tanggal 6 ikut masuk"). Root cause
+# NYATA ditemukan lewat audit langsung ke seluruh routes/reports.py + laporan_analitik.py:
+# SEMUA endpoint laporan (8 tempat, pola sama persis copy-paste) membandingkan tanggal
+# yang diketik user (mis. "2026-08-07") LANGSUNG sbg string terhadap field datetime yang
+# tersimpan dalam UTC ("2026-08-07T02:42:00+00:00") - TIDAK ADA konversi WITA (UTC+8)
+# sama sekali di seluruh codebase PMS ini padahal bisnisnya di Bali. Akibatnya batas
+# tanggal laporan bergeser sampai 8 jam dari yang WITA-nya benar: transaksi WITA pagi
+# (00:00-07:59 WITA) tanggal target justru punya timestamp UTC tanggal SEBELUMNYA
+# (ke-exclude keliru), sementara transaksi UTC malam tanggal target (16:00-23:59 UTC)
+# sebenarnya sudah WITA tanggal BERIKUTNYA (ke-include keliru). WITA = UTC+8 TETAP
+# (Asia/Makassar, tanpa DST) - aman dihitung manual, tidak perlu dependency timezone baru.
+def wita_date_range_to_utc(from_date: str, to_date: str) -> tuple[str, str]:
+    """`from_date`/`to_date` = "YYYY-MM-DD" yang diketik user (dimaksud sbg tanggal WITA).
+    Return (start_utc_iso, end_utc_iso) - batas UTC yang PERSIS cocok dgn 00:00:00 s/d
+    23:59:59 WITA pada tanggal itu, aman dipakai langsung sbg $gte/$lte thd field datetime
+    UTC yang tersimpan (string comparison ISO 8601 tetap urut benar selama format
+    konsisten)."""
+    start_wita = datetime.fromisoformat(f"{from_date}T00:00:00+08:00")
+    end_wita = datetime.fromisoformat(f"{to_date}T23:59:59+08:00")
+    return start_wita.astimezone(timezone.utc).isoformat(), end_wita.astimezone(timezone.utc).isoformat()
+
 def hash_password(p: str) -> str:
     return bcrypt.hashpw(p.encode(), bcrypt.gensalt()).decode()
 

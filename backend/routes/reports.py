@@ -122,8 +122,7 @@ async def report_service_revenue(from_date: str = Query(...), to_date: str = Que
     - booking_service_fee: service_fee 3% dari bookings publik (payment_status=paid, source=online)
     - manual_services: layanan tambahan manual (nominal fleksibel dari staff)
     """
-    start = from_date
-    end = to_date + "T23:59:59"
+    start, end = wita_date_range_to_utc(from_date, to_date)
 
     # 1) service_fee 3% dari checkins (walk-in)
     ci = await db.checkins.find(
@@ -414,8 +413,7 @@ async def report_daily(from_date: str = Query(...), to_date: str = Query(...),
     terpakai di bulan itu — konsisten dengan /laporan-analitik/pendapatan. Tidak ada
     duplikasi dengan checkins karena booking online/OTA/WA tidak pernah menghasilkan
     dokumen checkins terpisah di sistem ini (dua alur guest-arrival yang independen)."""
-    start = from_date
-    end = to_date + "T23:59:59"
+    start, end = wita_date_range_to_utc(from_date, to_date)
     ci = await db.checkins.find(scoped({"jam_checkout": {"$gte": start, "$lte": end}, "status": "selesai"}, property_id), {"_id": 0}).to_list(5000)
     bk = await db.bookings.find(scoped({
         "source": {"$in": ["ota", "online", "whatsapp"]},
@@ -484,8 +482,7 @@ async def report_kas_metode_bayar(from_date: str = Query(...), to_date: str = Qu
     SENGAJA tidak termasuk booking online/OTA (Tripay) karena uangnya masuk ke rekening/payment
     gateway, tidak pernah melewati laci fisik — lihat /reports/daily untuk total pendapatan
     kamar yang mencakup semua saluran."""
-    start = from_date
-    end = to_date + "T23:59:59"
+    start, end = wita_date_range_to_utc(from_date, to_date)
     totals = {"tunai": 0, "qris": 0, "transfer": 0}
     ks = await db.kasir.find(scoped({"timestamp": {"$gte": start, "$lte": end}}, property_id), {"_id": 0, "pembayaran": 1}).to_list(5000)
     ci = await db.checkins.find(
@@ -553,8 +550,7 @@ async def report_rooms(from_date: str = Query(...), to_date: str = Query(...),
     `detail_pembayaran` per item (2026-08-02, permintaan Agus) - rincian DP/pelunasan
     & metode-nya (cash/Tripay/QR/dll), lihat _ambil_detail_pembayaran_booking &
     _detail_pembayaran_checkin."""
-    start = from_date
-    end = to_date + "T23:59:59"
+    start, end = wita_date_range_to_utc(from_date, to_date)
     items = await db.checkins.find(
         scoped({"jam_checkout": {"$gte": start, "$lte": end}, "status": "selesai"}, property_id),
         {"_id": 0}
@@ -606,8 +602,7 @@ async def report_rooms(from_date: str = Query(...), to_date: str = Query(...),
 async def report_kasir_detail(from_date: str = Query(...), to_date: str = Query(...),
                               user: dict = Depends(get_current_user),
                               property_id: str = Depends(get_active_property)):
-    start = from_date
-    end = to_date + "T23:59:59"
+    start, end = wita_date_range_to_utc(from_date, to_date)
     trxs = await db.kasir.find(
         scoped({"timestamp": {"$gte": start, "$lte": end}}, property_id),
         {"_id": 0}
@@ -630,8 +625,7 @@ async def report_kasir_detail(from_date: str = Query(...), to_date: str = Query(
 async def report_items_sold(from_date: str = Query(...), to_date: str = Query(...),
                             user: dict = Depends(get_current_user),
                             property_id: str = Depends(get_active_property)):
-    start = from_date
-    end = to_date + "T23:59:59"
+    start, end = wita_date_range_to_utc(from_date, to_date)
     trxs = await db.kasir.find(scoped({"timestamp": {"$gte": start, "$lte": end}}, property_id), {"_id": 0}).to_list(5000)
     agg: Dict[str, Dict[str, Any]] = {}
     for t in trxs:
@@ -679,8 +673,7 @@ async def report_shift(from_date: str = Query(...), to_date: str = Query(...),
     shift asli — laporan ini dirangkum dari jejak petugas yang sudah tercatat di tiap modul
     (kasir, check-in/out, pengeluaran, housekeeping), dikelompokkan per tanggal + nama
     petugas, supaya owner tetap bisa melihat kontribusi/aktivitas tiap staf per hari."""
-    start = from_date
-    end = to_date + "T23:59:59"
+    start, end = wita_date_range_to_utc(from_date, to_date)
 
     def bucket(iso: str) -> str:
         return (iso or "")[:10]
