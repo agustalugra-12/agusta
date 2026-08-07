@@ -71,6 +71,7 @@ export function SetujuiDialog({ req, onOpenChange, onApproved, mode = "approve" 
   const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState([]);
   const [method, setMethod] = useState("");
+  const [methodManualOverride, setMethodManualOverride] = useState(false);
   const [opsi, setOpsi] = useState("dp50");
   const [manualOverride, setManualOverride] = useState(false);
   const [hasil, setHasil] = useState(null);
@@ -98,6 +99,11 @@ export function SetujuiDialog({ req, onOpenChange, onApproved, mode = "approve" 
     // (payment_option_diminta kosong), tetap tampil pilihan manual seperti biasa.
     setOpsi(req.payment_option_diminta || "dp50");
     setManualOverride(!req.payment_option_diminta);
+    // Resend (2026-08-07) SENGAJA tidak di-auto-lock (beda dari approve pertama) -
+    // resend biasanya justru krn tamu/staf mau GANTI metode (mis. QRIS yang 1 jam
+    // kadaluarsa -> VA yang 24 jam, lihat catatan resend_payment_link di backend),
+    // auto-lock ke metode LAMA yang sudah gagal/kadaluarsa kontraproduktif di sini.
+    setMethodManualOverride(mode === "resend" || !req.metode_pembayaran_diminta);
     const params = { tanggal: req.tanggal_checkin, tipe: req.room_tipe || undefined };
     if (req.tipe === "menginap" && req.tanggal_checkout) params.checkout = req.tanggal_checkout;
     Promise.all([
@@ -107,11 +113,20 @@ export function SetujuiDialog({ req, onOpenChange, onApproved, mode = "approve" 
       .then(([rRes, cRes]) => {
         setRooms(rRes.data.rooms || []);
         setChannels(cRes.data);
-        setMethod(cRes.data[0]?.code || "");
+        // Channel pembayaran yang tamu MINTA sendiri di chat (metode_pembayaran_diminta,
+        // kode Tripay - QRIS2/BNIVA/dst, sama format persis dgn channel.code) otomatis
+        // dipakai (2026-08-07, permintaan Agus - "staff tidak memilih lagi qr atau
+        // virtual akun") - pola SAMA dgn payment_option_diminta di atas: auto-terapan,
+        // bukan cuma default, tombol "Ubah" tetap ada utk koreksi. Fallback ke channel
+        // pertama kalau tamu tidak sebutkan preferensi ATAU channel yg diminta ternyata
+        // tidak ada di daftar aktif Tripay saat ini.
+        const diminta = req.metode_pembayaran_diminta;
+        const dimintaValid = diminta && cRes.data.some((c) => c.code === diminta);
+        setMethod(dimintaValid ? diminta : cRes.data[0]?.code || "");
       })
       .catch((e) => setError(e?.response?.data?.detail || "Gagal memuat ketersediaan kamar/channel Tripay"))
       .finally(() => setLoading(false));
-  }, [req]);
+  }, [req, mode]);
 
   if (!req) return null;
   const butuh = req.jumlah_kamar || 1;
@@ -163,6 +178,11 @@ export function SetujuiDialog({ req, onOpenChange, onApproved, mode = "approve" 
               {req.payment_option_diminta && (
                 <div className="text-blue-700 font-semibold">Tamu minta: {req.payment_option_diminta === "dp50" ? "DP 50%" : "Bayar Penuh"}</div>
               )}
+              {req.metode_pembayaran_diminta && (
+                <div className="text-blue-700 font-semibold">
+                  Channel diminta: {channels.find((c) => c.code === req.metode_pembayaran_diminta)?.name || req.metode_pembayaran_diminta}
+                </div>
+              )}
               {req.catatan && <div className="italic text-slate-500">"{req.catatan}"</div>}
             </div>
 
@@ -192,9 +212,19 @@ export function SetujuiDialog({ req, onOpenChange, onApproved, mode = "approve" 
               <>
                 <div>
                   <Label>Channel Pembayaran</Label>
-                  <select value={method} onChange={(e) => setMethod(e.target.value)} className="w-full h-10 rounded-md border border-slate-300 px-3 bg-white mt-1.5">
-                    {channels.map((c) => <option key={c.code} value={c.code}>{c.name}</option>)}
-                  </select>
+                  {req.metode_pembayaran_diminta && !methodManualOverride ? (
+                    <div className="mt-1.5 flex items-center justify-between p-2.5 rounded-lg border-2 border-blue-600 bg-blue-50 text-xs" data-testid="channel-locked">
+                      <div>
+                        <div className="font-semibold">{channels.find((c) => c.code === method)?.name || method}</div>
+                        <div className="text-slate-500">Otomatis — sesuai permintaan tamu di chat</div>
+                      </div>
+                      <button type="button" onClick={() => setMethodManualOverride(true)} className="text-blue-700 underline shrink-0" data-testid="channel-ubah">Ubah</button>
+                    </div>
+                  ) : (
+                    <select value={method} onChange={(e) => setMethod(e.target.value)} className="w-full h-10 rounded-md border border-slate-300 px-3 bg-white mt-1.5">
+                      {channels.map((c) => <option key={c.code} value={c.code}>{c.name}</option>)}
+                    </select>
+                  )}
                 </div>
                 <div>
                   <Label>Opsi Bayar</Label>
