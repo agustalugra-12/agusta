@@ -635,6 +635,29 @@ async def buat_booking_request(data: Dict[str, Any], property_id: Optional[str] 
             "datang (format HH:MM, contoh 10:00) sebelum lanjut booking.",
         )
 
+    # Guard tanggal_checkout wajib untuk Menginap (2026-08-07, bug nyata - tamu Lugra
+    # Agusta bilang "menginap 1 malam" tanpa sebut tanggal checkout eksplisit, AI tidak
+    # pernah menghitung/mengisi tanggal_checkout sendiri, booking_request tersimpan dengan
+    # tanggal_checkout None - baru ketahuan pas STAF klik Terima ("Permintaan ini tidak
+    # punya tanggal_checkout — tidak bisa diproses sebagai menginap" di
+    # _proses_kamar_dan_kirim_link), padahal tamu sudah dikasih tahu "booking berhasil
+    # diajukan". Sama pola dengan guard jam_checkin di atas - tolak SEKARANG di titik
+    # masuk satu-satunya booking_request AI, supaya AI dapat error jelas & tahu harus
+    # tanya/hitung ulang tanggal checkout SEBELUM mengaku sukses ke tamu, bukan nyangkut
+    # diam-diam sampai staf approve.
+    if data.get("tipe") == "menginap":
+        try:
+            tanggal_checkout_date = datetime.fromisoformat(data.get("tanggal_checkout") or "").date()
+        except (ValueError, TypeError):
+            raise HTTPException(
+                400,
+                "Tanggal checkout wajib diisi & valid untuk Menginap - kalau tamu cuma "
+                "sebutkan jumlah malam (mis. \"1 malam\"), hitung sendiri tanggal checkout "
+                "= tanggal checkin + jumlah malam, jangan dibiarkan kosong.",
+            )
+        if tanggal_checkout_date <= tanggal_checkin_date:
+            raise HTTPException(400, "Tanggal checkout harus setelah tanggal checkin - cek ulang perhitungannya")
+
     property_id = property_id or await get_default_property_id()
     diskon_info, diskon_ai_persen, diskon_persen_efektif, preview_harga = await _hitung_diskon_gabungan(data, property_id)
 
