@@ -175,6 +175,9 @@ export function SetujuiDialog({ req, onOpenChange, onApproved, mode = "approve" 
               <div><b>{req.nama_tamu}</b> — {req.no_hp}</div>
               <div>{req.tipe === "menginap" ? "Menginap" : "Day Use"} · {req.room_tipe || "(tipe bebas)"} · {butuh} kamar · {req.jumlah_tamu} tamu</div>
               <div>Check-in {req.tanggal_checkin}{req.jam_checkin ? ` ${req.jam_checkin}` : ""}{req.tanggal_checkout ? ` — Check-out ${req.tanggal_checkout}` : ""}</div>
+              {req.tipe === "menginap" && (
+                <div>Sarapan: {req.dengan_sarapan ? <span className="text-emerald-700 font-semibold">Termasuk</span> : "Tidak termasuk"}</div>
+              )}
               {req.payment_option_diminta && (
                 <div className="text-blue-700 font-semibold">Tamu minta: {req.payment_option_diminta === "dp50" ? "DP 50%" : "Bayar Penuh"}</div>
               )}

@@ -1536,6 +1536,14 @@ export default function Dashboard() {
               )}
               {bookingDetail.no_hp && <div><span className="text-slate-500">HP:</span> {bookingDetail.no_hp}</div>}
               {bookingDetail.jumlah_tamu && <div><span className="text-slate-500">Jumlah Tamu:</span> {bookingDetail.jumlah_tamu}</div>}
+              {bookingDetail.tipe === "menginap" && (
+                <div>
+                  <span className="text-slate-500">Sarapan:</span>{" "}
+                  {bookingDetail.dengan_sarapan
+                    ? <span className="text-emerald-700 font-medium">Termasuk</span>
+                    : <span className="text-slate-500">Tidak Termasuk</span>}
+                </div>
+              )}
               <div><span className="text-slate-500">Jam Mulai:</span> {new Date(bookingDetail.jam_mulai).toLocaleString("id-ID")}</div>
               <div><span className="text-slate-500">Jam Selesai:</span> {new Date(bookingDetail.jam_selesai).toLocaleString("id-ID")}</div>
               {(bookingDetail.total != null) && (() => {

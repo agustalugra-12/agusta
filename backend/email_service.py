@@ -132,8 +132,8 @@ def generate_voucher_pdf(b: dict, branding: dict | None = None) -> bytes:
     baris("Jumlah Tamu", b.get("jumlah_tamu", 1))
     if b.get("extra_bed_qty"):
         baris("Extra Bed", f"x{b['extra_bed_qty']}")
-    if b.get("dengan_sarapan"):
-        baris("Sarapan Pagi", "Termasuk")
+    if b.get("tipe") == "menginap":
+        baris("Sarapan Pagi", "Termasuk" if b.get("dengan_sarapan") else "Tidak Termasuk")
     y -= 3 * mm
     c.line(15 * mm, y, w - 15 * mm, y)
     y -= 8 * mm
@@ -192,6 +192,7 @@ def _voucher_email_html(b: dict, branding: dict) -> str:
       <h2 style="margin-bottom:4px">Terima kasih, {b.get('nama_tamu', 'Tamu')}!</h2>
       <p>Reservasi Anda di <b>{nama_properti_}</b> dengan kode <b>{b.get('kode', '')}</b> sudah dikonfirmasi.</p>
       <p>Kamar {b.get('room_nomor', '')} ({b.get('room_tipe', '')}) — Check-in {_fmt_tanggal(b.get('jam_mulai', ''))}.</p>
+      {f"<p>Sarapan Pagi: <b>{'Termasuk' if b.get('dengan_sarapan') else 'Tidak Termasuk'}</b></p>" if b.get('tipe') == 'menginap' else ''}
       {sisa_html}
       <p>Voucher/bukti reservasi terlampir dalam bentuk PDF. Mohon tunjukkan voucher ini saat kedatangan.</p>
       <p style="margin-top:24px">Sampai jumpa!<br/>{nama_properti_}</p>
@@ -272,6 +273,8 @@ def _voucher_wa_caption(b: dict, branding: dict) -> str:
     ]
     if b.get("tipe") == "menginap" and b.get("jam_selesai"):
         baris.append(f"Check-out: {_fmt_tanggal(b['jam_selesai'])}")
+    if b.get("tipe") == "menginap":
+        baris.append(f"Sarapan: {'Termasuk' if b.get('dengan_sarapan') else 'Tidak termasuk'}")
     if sb["status_bayar"] == "dp":
         baris.append(f"\nStatus: *DP diterima* — sisa {_fmt_rp(sb['sisa_tagihan'])} dilunasi saat check-in di lokasi.")
     else:
