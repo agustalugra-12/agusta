@@ -294,6 +294,24 @@ async def move_room(room_id: str, body: MoveRoomBody, user: dict = Depends(get_c
                     "move_reason": body.alasan or "",
                 }}
             )
+        # update booking Day Use aktif juga (2026-08-07, bug nyata ditemukan: tamu "Artha"
+        # dipindah kamar 9 -> 15, db.checkins ke-update tapi db.bookings.room_nomor tetap
+        # "9" selamanya - tamu jadi kelihatan nongol di 2 kamar sekaligus di UI. Cabang
+        # "menginap" di bawah sudah lebih dulu diperbaiki utk masalah identik [2026-08-01],
+        # cabang day_use ini kelupaan - sekarang disamakan.
+        bk = await db.bookings.find_one(scoped({
+            "room_id": old["id"], "tipe": "day_use", "status": "checked_in",
+        }, property_id), sort=[("jam_mulai", -1)])
+        if bk:
+            await db.bookings.update_one(
+                {"id": bk["id"]},
+                {"$set": {
+                    "room_id": new["id"], "room_nomor": new["nomor"], "room_tipe": new["tipe"],
+                    "moved_from_room_id": old["id"], "moved_from_room_nomor": old["nomor"],
+                    "moved_at": now_iso(), "moved_by": user["nama"],
+                    "move_reason": body.alasan or "",
+                }}
+            )
     # update booking Menginap aktif juga (2026-08-01, bug nyata ditemukan: laporan user
     # "kamar 16 kosong tapi tidak bisa dimasukkan tamu day use" - cabang menginap di atas
     # cuma memindahkan `info` di db.rooms, TIDAK PERNAH update db.bookings.room_id/
