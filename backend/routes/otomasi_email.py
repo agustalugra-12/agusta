@@ -307,9 +307,20 @@ async def _cocokkan_booking_pending_reddoorz(nama_tamu: str, room_tipe: str, che
     sinkron bersamaan tanggal berdekatan - email konfirmasi utk tanggal 4 Agustus sempat
     salah nyantol ke booking tanggal 3 Agustus krn keduanya sama-sama lolos toleransi ±1 hari
     & urutan hasil query tidak menjamin yang PALING cocok duluan. Cocok persis (0 hari) HARUS
-    selalu menang daripada cocok kira-kira, kalau ada beberapa kandidat memenuhi syarat."""
+    selalu menang daripada cocok kira-kira, kalau ada beberapa kandidat memenuhi syarat.
+
+    Match jg "waiting_reddoorz_input" (2026-08-07, race condition NYATA ditemukan - tamu Ni
+    Komang Arika Dewi: bayar lunas QRIS jam 11:19, tapi staf BELUM klik "Sudah Input ke
+    RedDoorz" (masih status "waiting_reddoorz_input") ketika email konfirmasi RedDoorz-nya
+    SENDIRI sudah masuk & diproses jam 12:00 [41 menit kemudian, RedDoorz kirim konfirmasi
+    lebih cepat drpd staf sempat klik tombol kita] - filter lama CUMA cari "waiting_reddoorz_
+    sync" jadi nol kandidat ketemu, sistem bikin booking BARU (kamar beda!) drpd nyambungin
+    ke yang sudah ada & lunas - PERSIS jenis duplikat yang fungsi ini dibuat utk dicegah.
+    Klik tombol staf itu cuma penanda UI "saya sudah kerjakan", BUKAN syarat sah utk
+    pencocokan - email yang benar2 masuk dari RedDoorz itu sendiri sudah bukti kuat cukup."""
     kandidat = await db.bookings.find({
-        "source": "whatsapp_request", "sync_status": "waiting_reddoorz_sync",
+        "source": "whatsapp_request",
+        "sync_status": {"$in": ["waiting_reddoorz_sync", "waiting_reddoorz_input"]},
         "room_tipe": room_tipe, "tipe": "menginap",
     }, {"_id": 0}).to_list(50)
     nama_norm = re.sub(r"[^a-z0-9]", "", (nama_tamu or "").lower())
