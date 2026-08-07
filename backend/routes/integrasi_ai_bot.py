@@ -412,6 +412,11 @@ class AiBotBookingRequestIn(BaseModel):
     # dipercaya dari sini - dihitung ulang server dari data booking (hitung_diskon_ai_diskresi
     # di core.py), field ini cuma sinyal boolean "apakah diskon berlaku sama sekali".
     diskon_diminta_tamu: bool = False
+    # Sarapan (2026-08-07, bug nyata ditemukan - tamu Riyan Sumardika minta Menginap
+    # dengan sarapan tapi lapangan ini tidak pernah ada sebelumnya, jadi selalu kena
+    # tarif tanpa sarapan) - HANYA relevan untuk tipe menginap, lihat BREAKFAST_PRICE
+    # di core.py & _hitung_preview_harga.
+    dengan_sarapan: bool = False
 
 
 class AiBotPreviewHargaIn(BaseModel):
@@ -422,6 +427,7 @@ class AiBotPreviewHargaIn(BaseModel):
     tanggal_checkout: Optional[str] = None
     jumlah_kamar: Optional[int] = None
     diskon_diminta_tamu: bool = False
+    dengan_sarapan: bool = False
 
 
 @api.post("/integrasi-ai-bot/preview-harga")

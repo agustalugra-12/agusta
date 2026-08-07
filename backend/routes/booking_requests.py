@@ -101,7 +101,17 @@ async def _hitung_preview_harga(data: Dict[str, Any], diskon_persen: int, proper
     jumlah_kamar = max(1, int(data.get("jumlah_kamar") or 1))
     if data.get("tipe") == "menginap":
         nights = _hitung_malam(data)
-        tarif_per_kamar = int(room["tarif_menginap"]) * nights
+        # Sarapan (2026-08-07, bug nyata ditemukan - tamu Riyan Sumardika: AI benar
+        # menyebutkan harga "dengan sarapan Rp175.000" ke tamu, TAPI create_booking
+        # tool-nya tidak pernah punya parameter dengan_sarapan sama sekali - preview
+        # & booking_request selalu pakai tarif TANPA sarapan (150.000) walau tamu
+        # eksplisit minta sarapan. Sama pola BREAKFAST_PRICE yang SUDAH benar di
+        # routes/public.py & routes/bookings.py, cuma alur booking_request (AI
+        # WhatsApp) yang kelupaan dari awal.
+        tarif_dasar_per_malam = int(room["tarif_menginap"])
+        if data.get("dengan_sarapan") and await property_ada_sarapan(property_id):
+            tarif_dasar_per_malam += BREAKFAST_PRICE
+        tarif_per_kamar = tarif_dasar_per_malam * nights
     else:
         tarif_per_kamar = int(room["tarif"])
     subtotal_sebelum_diskon = tarif_per_kamar * jumlah_kamar
@@ -399,8 +409,13 @@ async def _coba_auto_approve_menginap(doc: Dict[str, Any]) -> None:
         room = None
         booking = None
         last_conflict: Optional[Exception] = None
+        # Sarapan (2026-08-07) - sama fix dgn _hitung_preview_harga, alur auto-approve
+        # ini sebelumnya JUGA hardcode dengan_sarapan=False & tidak pernah tambah
+        # BREAKFAST_PRICE walau tamu eksplisit minta.
+        dengan_sarapan_req = bool(doc.get("dengan_sarapan")) and await property_ada_sarapan(doc["property_id"])
         for kandidat_room in avail["rooms"]:
-            subtotal = int(kandidat_room["tarif_menginap"]) * nights
+            tarif_per_malam = int(kandidat_room["tarif_menginap"]) + (BREAKFAST_PRICE if dengan_sarapan_req else 0)
+            subtotal = tarif_per_malam * nights
             service_fee = round(subtotal * SERVICE_FEE_PCT)
             total = subtotal + service_fee
             harga_override = {"subtotal": subtotal, "service_fee": service_fee, "total": total, "dp_min": round(total * 0.5)}
@@ -411,7 +426,7 @@ async def _coba_auto_approve_menginap(doc: Dict[str, Any]) -> None:
                     "jumlah_tamu": doc.get("jumlah_tamu", 1),
                     "jam_mulai": start, "jam_selesai": end,
                     "catatan": doc.get("catatan") or "", "created_by": "AI WhatsApp (otomatis)",
-                    "tipe": "menginap", "dengan_sarapan": False,
+                    "tipe": "menginap", "dengan_sarapan": dengan_sarapan_req,
                 }, doc["property_id"], source="whatsapp_auto", harga_override=harga_override,
                    diskon_ai_persen=doc.get("diskon_ai_persen") or 0)
                 room = kandidat_room
@@ -632,6 +647,7 @@ async def buat_booking_request(data: Dict[str, Any], property_id: Optional[str] 
         "jumlah_tamu": int(data.get("jumlah_tamu") or 1),
         "tanggal_checkin": data["tanggal_checkin"], "jam_checkin": data.get("jam_checkin"),
         "tanggal_checkout": data.get("tanggal_checkout"), "catatan": data.get("catatan") or "",
+        "dengan_sarapan": bool(data.get("dengan_sarapan")) if data.get("tipe") == "menginap" else False,
         "payment_option_diminta": payment_option if payment_option in ("dp50", "full") else None,
         "metode_pembayaran_diminta": (
             data.get("metode_pembayaran") if data.get("metode_pembayaran") in TRIPAY_METODE_VALID else None
@@ -750,6 +766,12 @@ async def _proses_kamar_dan_kirim_link(req: dict, room_ids: list, payment_option
         end = start + timedelta(hours=6)
         nights = 1
 
+    # Sarapan (2026-08-07) - sama fix dgn _hitung_preview_harga/_coba_auto_approve_menginap,
+    # jalur approve MANUAL staf ini JUGA hardcode dengan_sarapan=False & tidak pernah
+    # tambah BREAKFAST_PRICE walau tamu eksplisit minta - akar masalah nyata tamu Riyan
+    # Sumardika kena tarif tanpa sarapan padahal minta dengan sarapan.
+    dengan_sarapan_req = tipe == "menginap" and bool(req.get("dengan_sarapan")) and await property_ada_sarapan(property_id)
+
     created_bookings = []
     try:
         for room_id in room_ids:
@@ -758,7 +780,8 @@ async def _proses_kamar_dan_kirim_link(req: dict, room_ids: list, payment_option
                 raise HTTPException(404, f"Kamar tidak ditemukan (id {room_id})")
             harga_override = None
             if tipe == "menginap":
-                subtotal = int(r["tarif_menginap"]) * nights
+                tarif_per_malam = int(r["tarif_menginap"]) + (BREAKFAST_PRICE if dengan_sarapan_req else 0)
+                subtotal = tarif_per_malam * nights
                 service_fee = round(subtotal * SERVICE_FEE_PCT)
                 total = subtotal + service_fee
                 harga_override = {"subtotal": subtotal, "service_fee": service_fee, "total": total, "dp_min": round(total * 0.5)}
@@ -768,7 +791,7 @@ async def _proses_kamar_dan_kirim_link(req: dict, room_ids: list, payment_option
                 "jumlah_tamu": req.get("jumlah_tamu", 1),
                 "jam_mulai": start, "jam_selesai": end,
                 "catatan": req.get("catatan") or "", "created_by": user["nama"],
-                "tipe": tipe, "dengan_sarapan": False,
+                "tipe": tipe, "dengan_sarapan": dengan_sarapan_req,
             }
             booking = await create_reservation(data, property_id, source="whatsapp_request", harga_override=harga_override)
             sync_status = "waiting_reddoorz_input" if (tipe == "menginap" and await property_butuh_reddoorz(property_id)) else "not_required"
