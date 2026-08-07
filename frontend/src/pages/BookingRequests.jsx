@@ -276,6 +276,22 @@ export function SetujuiDialog({ req, onOpenChange, onApproved, mode = "approve" 
                 <a href={hasil.checkout_url} target="_blank" rel="noreferrer"><ExternalLink className="w-3.5 h-3.5" /></a>
               </Button>
             </div>
+            {req.tipe === "menginap" && hasil.booking_kodes?.length > 0 && (
+              <div className="space-y-1.5">
+                <Label className="text-xs text-slate-500">Kode PMS (tempel ke kolom "Permintaan Khusus" RedDoorz saat input manual nanti)</Label>
+                {hasil.booking_kodes.map((kode) => (
+                  <div key={kode} className="flex items-center gap-2">
+                    <code className="flex-1 h-9 flex items-center rounded-md border border-slate-300 px-3 font-mono text-xs bg-slate-50">{kode}</code>
+                    <Button
+                      variant="outline" size="icon"
+                      onClick={() => { navigator.clipboard?.writeText(kode); toast.success("Kode booking disalin"); }}
+                    >
+                      <Copy className="w-3.5 h-3.5" />
+                    </Button>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         )}
         <DialogFooter>

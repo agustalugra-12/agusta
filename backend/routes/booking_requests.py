@@ -884,7 +884,13 @@ async def _proses_kamar_dan_kirim_link(req: dict, room_ids: list, payment_option
             )
         raise
 
-    return await db.booking_requests.find_one(scoped({"id": req["id"]}, property_id), {"_id": 0})
+    hasil = await db.booking_requests.find_one(scoped({"id": req["id"]}, property_id), {"_id": 0})
+    # booking_kodes (2026-08-07, permintaan Agus) - staf butuh kode PMS (BKO-...) segera
+    # setelah approve untuk ditempel ke kolom "Permintaan Khusus" RedDoorz (lihat
+    # _cocokkan_via_kode_pms, otomasi_email.py) - sebelumnya cuma checkout_url yang
+    # ditampilkan di layar sukses, kode harus dicari manual di tempat lain.
+    hasil["booking_kodes"] = [b["kode"] for b in created_bookings]
+    return hasil
 
 
 @api.get("/booking-requests")
