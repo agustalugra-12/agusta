@@ -206,8 +206,11 @@ async def _coba_auto_approve_day_use(doc: Dict[str, Any]) -> None:
             await _auto_reject_penuh(doc)
             return
 
+        # +08:00 = WITA (Bedugul/Bali), BUKAN WIB (+07:00) - diperbaiki 2026-08-07 di semua
+        # 6 titik parsing jam di file ini sekaligus, lihat catatan lengkap kenapa & dampaknya
+        # (147/148 booking historis) di reservation_service.py.
         jam = doc.get("jam_checkin") or "14:00"
-        start = datetime.fromisoformat(f"{doc['tanggal_checkin']}T{jam}:00+07:00").astimezone(timezone.utc)
+        start = datetime.fromisoformat(f"{doc['tanggal_checkin']}T{jam}:00+08:00").astimezone(timezone.utc)
         end = start + timedelta(hours=6)
 
         # `public_availability` cuma cek bentrok di granularitas TANGGAL (checkout day
@@ -331,8 +334,8 @@ async def _coba_auto_approve_menginap(doc: Dict[str, Any]) -> None:
         # jam spesifik.
         jam_checkin = (doc.get("jam_checkin") or "14:00").strip()
         try:
-            ci = datetime.fromisoformat(f"{doc['tanggal_checkin']}T{jam_checkin}:00+07:00")
-            co = datetime.fromisoformat(f"{doc['tanggal_checkout']}T12:00:00+07:00")
+            ci = datetime.fromisoformat(f"{doc['tanggal_checkin']}T{jam_checkin}:00+08:00")
+            co = datetime.fromisoformat(f"{doc['tanggal_checkout']}T12:00:00+08:00")
         except Exception:
             return
         if co <= ci:
@@ -360,7 +363,7 @@ async def _coba_auto_approve_menginap(doc: Dict[str, Any]) -> None:
             # Guard: request untuk tanggal yang SUDAH LEWAT (mis. dibuat larut malam utk
             # "hari ini", lalu di-retry setelah lewat tengah malam) - jangan diam-diam
             # dianggap "masih menunggu hari ini" selamanya, tidak masuk akal diproses lagi.
-            today_local = datetime.now().strftime("%Y-%m-%d")
+            today_local = (datetime.now(timezone.utc) + timedelta(hours=8)).strftime("%Y-%m-%d")  # WITA, bukan jam sistem (WIB) - lihat reservation_service.py
             if doc["tanggal_checkin"] < today_local:
                 if doc.get("auto_retry_dayuse"):
                     await db.booking_requests.update_one({"id": doc["id"]}, {"$set": {"auto_retry_dayuse": False}})
@@ -614,7 +617,7 @@ async def buat_booking_request(data: Dict[str, Any], property_id: Optional[str] 
         tanggal_checkin_date = datetime.fromisoformat(data["tanggal_checkin"]).date()
     except (ValueError, TypeError):
         raise HTTPException(400, "Format tanggal_checkin tidak valid (harus YYYY-MM-DD)")
-    if tanggal_checkin_date < datetime.now().date():
+    if tanggal_checkin_date < (datetime.now(timezone.utc) + timedelta(hours=8)).date():  # WITA, bukan jam sistem (WIB)
         raise HTTPException(400, "Tanggal check-in tidak boleh di masa lalu - tanya ulang tanggal yang benar ke tamu")
 
     # Guard jam_checkin wajib untuk Day Use (2026-07-26, permintaan user - berlaku SEMUA
@@ -772,8 +775,8 @@ async def _proses_kamar_dan_kirim_link(req: dict, room_ids: list, payment_option
         if not req.get("tanggal_checkout"):
             raise HTTPException(400, "Permintaan ini tidak punya tanggal_checkout — tidak bisa diproses sebagai menginap")
         try:
-            ci = datetime.fromisoformat(f"{req['tanggal_checkin']}T14:00:00+07:00")
-            co = datetime.fromisoformat(f"{req['tanggal_checkout']}T12:00:00+07:00")
+            ci = datetime.fromisoformat(f"{req['tanggal_checkin']}T14:00:00+08:00")
+            co = datetime.fromisoformat(f"{req['tanggal_checkout']}T12:00:00+08:00")
         except Exception:
             raise HTTPException(400, "Tanggal check-in/checkout pada permintaan tidak valid")
         if co <= ci:
@@ -783,7 +786,7 @@ async def _proses_kamar_dan_kirim_link(req: dict, room_ids: list, payment_option
     else:
         try:
             jam = req.get("jam_checkin") or "14:00"
-            start = datetime.fromisoformat(f"{req['tanggal_checkin']}T{jam}:00+07:00").astimezone(timezone.utc)
+            start = datetime.fromisoformat(f"{req['tanggal_checkin']}T{jam}:00+08:00").astimezone(timezone.utc)
         except Exception:
             raise HTTPException(400, "Tanggal/jam check-in pada permintaan tidak valid")
         end = start + timedelta(hours=6)
@@ -1007,7 +1010,7 @@ async def resend_payment_link(rid: str, body: BookingRequestApprove, user: dict 
                 f"Kirim ulang cuma untuk permintaan yang link-nya sudah kadaluarsa (status saat ini: {status_efektif}) - "
                 "kalau masih menunggu pembayaran, link lama masih berlaku, tidak perlu link baru.",
             )
-        if datetime.fromisoformat(req["tanggal_checkin"]).date() < datetime.now().date():
+        if datetime.fromisoformat(req["tanggal_checkin"]).date() < (datetime.now(timezone.utc) + timedelta(hours=8)).date():  # WITA, bukan jam sistem (WIB)
             raise HTTPException(
                 400,
                 "Tanggal check-in permintaan ini sudah lewat - tidak bisa kirim ulang link untuk tanggal lama, "

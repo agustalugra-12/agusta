@@ -484,10 +484,10 @@ async def jalankan_smart_rules_tanggal_bulanan():
     sekarang), transfer otomatis kalau saldo asal cukup (kalau tidak cukup, dilewati - dicoba
     lagi otomatis besok kalau masih hari yang sama... tidak, cukup dilewati bulan ini, owner
     akan lihat saldo tidak berubah & bisa transfer manual - tidak perlu retry kompleks utk V2)."""
-    now_wib = datetime.now(timezone.utc) + timedelta(hours=7)
-    period = now_wib.strftime("%Y-%m")
+    now_wita = datetime.now(timezone.utc) + timedelta(hours=8)  # WITA - Bedugul/Bali, lihat catatan perbaikan 2026-08-07 di reservation_service.py
+    period = now_wita.strftime("%Y-%m")
     rules = await db.rekening_smart_rule.find({
-        "trigger_tipe": "tanggal_bulanan", "aktif": True, "tanggal_hari": now_wib.day,
+        "trigger_tipe": "tanggal_bulanan", "aktif": True, "tanggal_hari": now_wita.day,
         "last_triggered_period": {"$ne": period},
     }).to_list(50)
     if not rules:

@@ -19,7 +19,7 @@ from reservation_service import check_room_available
 
 DAYUSE_DURASI_JAM = 6
 BUFFER_HOUSEKEEPING_MENIT = 30
-WIB = timezone(timedelta(hours=7))  # konsisten dengan konvensi WIB di public.py/pesan_whatsapp.py/dll
+WITA = timezone(timedelta(hours=8))  # Bedugul/Bali = WITA (UTC+8), bukan WIB - lihat catatan lengkap perbaikan 2026-08-07 di reservation_service.py
 
 BOOKING_AKTIF_STATUS = ["aktif", "booking_paid", "checked_in"]
 BOOKING_TERKONFIRMASI_STATUS = ["aktif", "booking_pending", "booking_paid", "checked_in"]
@@ -54,7 +54,7 @@ async def estimasi_kamar_siap(room_id: str, property_id: str) -> Optional[dateti
     }, property_id), sort=[("jam_selesai", 1)])
     if menginap_aktif and menginap_aktif.get("jam_selesai"):
         checkout_dt = datetime.fromisoformat(menginap_aktif["jam_selesai"])
-        if checkout_dt.astimezone(WIB).date() == now.astimezone(WIB).date():
+        if checkout_dt.astimezone(WITA).date() == now.astimezone(WITA).date():
             kandidat_siap.append(max(now, checkout_dt) + timedelta(minutes=BUFFER_HOUSEKEEPING_MENIT))
 
     aktif = await db.bookings.find_one(scoped({
@@ -221,7 +221,7 @@ async def slot_dayuse_aman(room_id: str, mulai: datetime, property_id: str, dura
         "jam_mulai": mulai, "jam_selesai_ideal": jam_selesai_ideal,
         "jam_selesai_aman": max(mulai, batas_aman), "dipersingkat": True,
         "alasan": (
-            f"Ada booking menginap check-in {checkin_menginap.astimezone(WIB).strftime('%H:%M')} WIB "
+            f"Ada booking menginap check-in {checkin_menginap.astimezone(WITA).strftime('%H:%M')} WITA "
             f"— Day Use disarankan selesai lebih awal supaya housekeeping "
             f"({BUFFER_HOUSEKEEPING_MENIT} menit) selesai tepat waktu."
         ),

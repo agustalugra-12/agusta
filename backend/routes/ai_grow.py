@@ -481,9 +481,9 @@ async def background_ai_grow_cache_loop():
     JAM_REFRESH = (10, 18)
     while True:
         try:
-            now_wib = datetime.now(timezone.utc) + timedelta(hours=7)
-            slot_ini = (now_wib.date(), now_wib.hour)
-            if now_wib.hour in JAM_REFRESH and slot_terakhir != slot_ini:
+            now_wita = datetime.now(timezone.utc) + timedelta(hours=8)  # WITA - Bedugul/Bali, lihat catatan perbaikan 2026-08-07 di reservation_service.py
+            slot_ini = (now_wita.date(), now_wita.hour)
+            if now_wita.hour in JAM_REFRESH and slot_terakhir != slot_ini:
                 async for p in db.properties.find({"aktif": True}):
                     try:
                         await _generate_dan_cache_brief(p["id"])

@@ -575,7 +575,9 @@ async def mark_no_show(bid: str, body: NoShowBody, user: dict = Depends(get_curr
 async def booking_availability(room_id: str, from_date: str, days: int = 14,
                                user: dict = Depends(get_current_user),
                                property_id: str = Depends(get_active_property)):
-    """Cek ketersediaan kamar per hari (zona lokal +07:00 / WIB)
+    """Cek ketersediaan kamar per hari (pakai UTC langsung sbg fallback kalau `from_date`
+    tanpa jam - komentar lama sebut "+07:00/WIB" tapi kode di bawah sebenarnya tidak pernah
+    memaksa offset itu, cuma dokumentasi lama yang keliru, dibetulkan 2026-08-07)
     untuk menampilkan saran tanggal alternatif jika kamar penuh.
     Returns: { from_date, room_id, slots: [{date, available, reason}] }
     """

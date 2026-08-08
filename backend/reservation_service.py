@@ -31,7 +31,7 @@ from contextlib import asynccontextmanager
 
 _room_locks: Dict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
 
-WIB = timezone(timedelta(hours=7))
+WITA = timezone(timedelta(hours=8))
 
 
 @asynccontextmanager
@@ -112,8 +112,8 @@ async def check_room_available(room_id: str, mulai: datetime, selesai: datetime,
             raise HTTPException(
                 400,
                 f"Kamar sedang dipakai tamu walk-in {checkin_aktif.get('nama_tamu', '-')} "
-                f"(check-in {ci_mulai.astimezone(WIB).strftime('%H:%M')} WIB, perkiraan selesai "
-                f"{ci_estimasi_selesai.astimezone(WIB).strftime('%H:%M')} WIB)"
+                f"(check-in {ci_mulai.astimezone(WITA).strftime('%H:%M')} WITA, perkiraan selesai "
+                f"{ci_estimasi_selesai.astimezone(WITA).strftime('%H:%M')} WITA)"
             )
     return True
 

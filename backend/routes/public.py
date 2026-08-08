@@ -3,7 +3,7 @@ from core import *
 from reservation_service import check_room_available, create_reservation, room_locks
 from email_service import generate_voucher_pdf, send_voucher_email, get_property_branding
 from routes.push import send_push
-from scheduling_engine import slot_dayuse_aman, DAYUSE_DURASI_JAM, WIB
+from scheduling_engine import slot_dayuse_aman, DAYUSE_DURASI_JAM, WITA
 import httpx
 import io
 from fastapi.responses import StreamingResponse
@@ -133,7 +133,7 @@ async def public_availability(tanggal: str, tipe: Optional[str] = None, checkout
     1 hari — supaya kamar yang sudah dibooking di salah satu malam dalam rentang itu
     tidak muncul sebagai tersedia.
 
-    `jam_checkin` (opsional, "HH:MM" WIB, 2026-08-01 - bug nyata ditemukan lewat laporan
+    `jam_checkin` (opsional, "HH:MM" WITA, 2026-08-01 - bug nyata ditemukan lewat laporan
     user: tamu Vina tanya Day Use BESOK jam 10 pagi, AI jawab "tersedia banyak" padahal
     SEMUA kamar Standard hari itu baru checkout menginap jam 12 siang - filter tanggal-saja
     di atas TIDAK tahu soal jam, "hari checkout tidak dihitung menempati" cuma benar kalau
@@ -171,7 +171,12 @@ async def public_availability(tanggal: str, tipe: Optional[str] = None, checkout
     # Untuk hari INI, kamar yang sedang dipakai (day_use/menginap/perlu_dibersihkan) tidak tersedia.
     # Untuk hari LAIN (masa depan), hanya 'maintenance' yang dikecualikan.
     property_id = property_id_override or await _resolve_property(properti)
-    today_local = datetime.now().strftime("%Y-%m-%d")
+    # datetime.now() TANPA anchor UTC eksplisit (2026-08-07, bug nyata ditemukan) bergantung
+    # ke timezone SISTEM server - server ini disetel Asia/Jakarta (WIB, UTC+7), padahal
+    # properti fisiknya di Bedugul/Bali (WITA, UTC+8). "Hari ini" WAJIB dihitung dari WITA
+    # asli, bukan ikut jam sistem yang salah zona - lihat catatan lengkap di
+    # reservation_service.py.
+    today_local = (datetime.now(timezone.utc) + timedelta(hours=8)).strftime("%Y-%m-%d")
     is_today = tanggal == today_local
     q: Dict[str, Any] = {}
     if tipe:
@@ -244,17 +249,17 @@ async def public_availability(tanggal: str, tipe: Optional[str] = None, checkout
     # menginap selalu jam 14:00 tetap, aman dari bentrok Day Use pagi/siang) - asumsi itu
     # tidak berlaku lagi sejak Menginap juga bisa pakai jam_checkin kustom lebih awal (mis.
     # tamu Harmoni chat pagi minta check-in jam 11). End datetime utk Menginap = TANGGAL
-    # CHECKOUT jam 12:00 WIB (bukan +DAYUSE_DURASI_JAM spt Day Use) - checkout aslinya.
+    # CHECKOUT jam 12:00 WITA (bukan +DAYUSE_DURASI_JAM spt Day Use) - checkout aslinya.
     if jam_checkin and out:
         try:
-            jm_mulai_wib = datetime.combine(d.date(), datetime.strptime(jam_checkin, "%H:%M").time(), tzinfo=WIB)
+            jm_mulai_wita = datetime.combine(d.date(), datetime.strptime(jam_checkin, "%H:%M").time(), tzinfo=WITA)
         except ValueError:
-            jm_mulai_wib = None
-        if jm_mulai_wib:
-            jm_mulai_utc = jm_mulai_wib.astimezone(timezone.utc)
+            jm_mulai_wita = None
+        if jm_mulai_wita:
+            jm_mulai_utc = jm_mulai_wita.astimezone(timezone.utc)
             if checkout:
-                jm_selesai_wib = datetime.combine(d_end.date(), datetime.min.time().replace(hour=12), tzinfo=WIB)
-                jm_selesai_utc = jm_selesai_wib.astimezone(timezone.utc)
+                jm_selesai_wita = datetime.combine(d_end.date(), datetime.min.time().replace(hour=12), tzinfo=WITA)
+                jm_selesai_utc = jm_selesai_wita.astimezone(timezone.utc)
             else:
                 jm_selesai_utc = jm_mulai_utc + timedelta(hours=DAYUSE_DURASI_JAM)
             out_presisi = []
@@ -294,7 +299,7 @@ async def public_create_booking(body: PublicBookingCreate, properti: Optional[st
     `group_id` supaya bisa dibayar dalam SATU transaksi Tripay (lihat tripay.py) dan
     ditampilkan bersama di halaman sukses/voucher. Membuat booking dengan status
     'booking_pending'. Wajib bayar (DP 50% min) via Tripay. Day use: 6 jam dari jam
-    check-in. Menginap: check-out fixed jam 12:00 WIB, harga per malam (termasuk extra bed).
+    check-in. Menginap: check-out fixed jam 12:00 WITA, harga per malam (termasuk extra bed).
     Response tetap 1 dict datar (backward compatible) kalau cuma 1 kamar; jadi
     `{"group_id", "bookings": [...]}` kalau lebih dari 1.
     """
@@ -316,9 +321,10 @@ async def public_create_booking(body: PublicBookingCreate, properti: Optional[st
     email = (body.email or "").strip().lower()
     if not email or "@" not in email or "." not in email.split("@")[-1]:
         raise HTTPException(400, "Email wajib diisi dengan format yang valid (untuk menerima bukti pembayaran)")
-    # Parse tanggal + jam check-in (WIB +07:00)
+    # Parse tanggal + jam check-in (WITA +08:00 - Bedugul/Bali, lihat catatan perbaikan
+    # 2026-08-07 di reservation_service.py)
     try:
-        local_in = datetime.fromisoformat(f"{body.tanggal}T{body.jam_checkin}:00+07:00")
+        local_in = datetime.fromisoformat(f"{body.tanggal}T{body.jam_checkin}:00+08:00")
     except Exception:
         raise HTTPException(400, "Format tanggal/jam tidak valid")
     start = local_in.astimezone(timezone.utc)
@@ -329,7 +335,7 @@ async def public_create_booking(body: PublicBookingCreate, properti: Optional[st
         if not body.tanggal_checkout:
             raise HTTPException(400, "Booking menginap wajib mengisi tanggal check-out")
         try:
-            local_out = datetime.fromisoformat(f"{body.tanggal_checkout}T12:00:00+07:00")
+            local_out = datetime.fromisoformat(f"{body.tanggal_checkout}T12:00:00+08:00")
         except Exception:
             raise HTTPException(400, "Format tanggal check-out tidak valid")
         end = local_out.astimezone(timezone.utc)

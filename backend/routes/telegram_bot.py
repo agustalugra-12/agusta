@@ -64,7 +64,7 @@ sekali, balas {"items": []} — JANGAN mengarang angka."""
 # lewat @BotFather. Linking akun PMS <-> chat Telegram pakai kode sekali pakai (6 digit,
 # berlaku 10 menit) yang di-generate dari halaman Profil, dikirim user via /start <kode>.
 
-WIB = timezone(timedelta(hours=7))
+WITA = timezone(timedelta(hours=8))  # Bedugul/Bali = WITA (UTC+8) - lihat catatan perbaikan 2026-08-07 di reservation_service.py
 UPLOAD_DIR = ROOT_DIR / "uploads" / "pengeluaran"
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -284,7 +284,7 @@ async def _pendapatan_kamar_per_tipe_hari_ini(property_id: str) -> Dict[str, int
 
 
 async def _laporan_harian_text(property_id: str, property_nama: str = "", sertakan_ai_grow: bool = False) -> str:
-    """Laporan akhir hari (dikirim otomatis jam 23:00 WIB ke owner & staff yang terhubung) —
+    """Laporan akhir hari (dikirim otomatis jam 23:00 WITA ke owner & staff yang terhubung) —
     rinci: pemasukan dipecah menginap/day use (+ jumlah kamar) & metode bayar, pengeluaran
     dengan total DAN daftar detail per item.
 
@@ -297,7 +297,7 @@ async def _laporan_harian_text(property_id: str, property_nama: str = "", sertak
     today_iso = datetime.now(timezone.utc).date().isoformat()
     kas = await report_kas_metode_bayar(from_date=today_iso, to_date=today_iso, user=_DUMMY_USER, property_id=property_id)
     kamar = await _pendapatan_kamar_per_tipe_hari_ini(property_id)
-    tanggal = datetime.now(timezone.utc).astimezone(WIB).strftime("%d %B %Y")
+    tanggal = datetime.now(timezone.utc).astimezone(WITA).strftime("%d %B %Y")
     label = f" — {property_nama}" if property_nama else ""
 
     total_pemasukan = kamar["dayuse_total"] + kamar["menginap_total"] + s["pendapatan_kasir_hari_ini"] + s["pendapatan_service_hari_ini"]
@@ -599,8 +599,13 @@ async def kirim_alert_owner(pesan: str):
 
 async def background_telegram_daily_report_loop():
     """Kirim laporan akhir hari ke semua user (owner+staff) yang sudah terhubung Telegram,
-    sekali sehari jam 23:00 WIB (2026-08-04, dipindah dari 22:00 - permintaan Agus, data
-    hari itu biasanya sudah masuk semua di jam ini). Versi OWNER menyertakan rekomendasi
+    sekali sehari jam 23:00 WITA (2026-08-04, dipindah dari 22:00 - permintaan Agus, data
+    hari itu biasanya sudah masuk semua di jam ini). PERBAIKAN 2026-08-07: konstanta jam
+    sebelumnya salah pakai WIB (UTC+7), padahal Bedugul/Bali itu WITA (UTC+8) - lihat detail
+    lengkap di reservation_service.py. Akibatnya laporan ini SELAMA INI beneran terkirim jam
+    00:00 (tengah malam) waktu Bali asli, BUKAN 23:00 seperti yang Agus minta - telat 1 jam
+    dari maksud aslinya. Sekarang dgn WITA yang benar, laporan akan terkirim tepat jam 23:00
+    Bali asli mulai hari ini. Versi OWNER menyertakan rekomendasi
     final AI Grow (Business Health Score + narasi, di-generate & di-cache SEKALI di sini -
     lihat sertakan_ai_grow di _laporan_harian_text - slot ke-3 dari 3x/hari, 2 slot lain
     di ai_grow.background_ai_grow_cache_loop cuma refresh cache dashboard). Versi STAFF
@@ -616,9 +621,9 @@ async def background_telegram_daily_report_loop():
     pesan terkirim) supaya restart di TENGAH proses kirim juga tidak memicu kirim ulang."""
     while True:
         try:
-            now_wib = datetime.now(timezone.utc).astimezone(WIB)
-            if now_wib.hour == 23:
-                tanggal_ini = now_wib.date().isoformat()
+            now_wita = datetime.now(timezone.utc).astimezone(WITA)
+            if now_wita.hour == 23:
+                tanggal_ini = now_wita.date().isoformat()
                 state = await db.scheduler_state.find_one({"_id": "laporan_harian_telegram"})
                 if not state or state.get("last_sent_date") != tanggal_ini:
                     # Tulis guard SEBELUM kirim (bukan setelah) - restart di tengah proses

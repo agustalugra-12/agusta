@@ -78,8 +78,8 @@ def _fmt_rp(n) -> str:
 
 def _fmt_tanggal(iso: str) -> str:
     try:
-        d = parse_iso(iso, "waktu").astimezone(timezone(timedelta(hours=7)))
-        return d.strftime("%d %b %Y, %H:%M") + " WIB"
+        d = parse_iso(iso, "waktu").astimezone(timezone(timedelta(hours=8)))
+        return d.strftime("%d %b %Y, %H:%M") + " WITA"
     except Exception:
         return iso
 

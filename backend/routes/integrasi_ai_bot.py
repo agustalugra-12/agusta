@@ -122,7 +122,11 @@ async def ai_bot_ketersediaan(
     WIB) - diteruskan ke public_availability, yang utk Day Use (bukan multi-malam menginap)
     akan menyaring ulang pakai overlap presisi jam, bukan cuma tanggal (lihat docstring
     public_availability utk detail). Tidak diisi = perilaku lama (cuma cek tanggal)."""
-    tanggal = tanggal or datetime.now().strftime("%Y-%m-%d")
+    # datetime.now() TANPA anchor UTC eksplisit (2026-08-07, bug nyata ditemukan) bergantung
+    # ke timezone SISTEM server (Asia/Jakarta/WIB), padahal properti fisiknya WITA (Bedugul/
+    # Bali) - "hari ini" default WAJIB dari WITA asli. Endpoint ini dipanggil TIAP KALI AI
+    # WhatsApp cek ketersediaan, jadi dampaknya langsung ke tamu asli tiap hari.
+    tanggal = tanggal or (datetime.now(timezone.utc) + timedelta(hours=8)).strftime("%Y-%m-%d")
     hasil = await public_availability(tanggal=tanggal, tipe=tipe, property_id_override=property_id, jam_checkin=jam_checkin)
 
     q: Dict[str, Any] = {"tipe": tipe} if tipe else {}
@@ -146,7 +150,7 @@ async def ai_bot_ketersediaan(
         if r["tipe"] in per_tipe:
             per_tipe[r["tipe"]]["kamar_tersedia"] += 1
 
-    is_today = tanggal == datetime.now().strftime("%Y-%m-%d")
+    is_today = tanggal == (datetime.now(timezone.utc) + timedelta(hours=8)).strftime("%Y-%m-%d")
     # Bug nyata ditemukan 2026-08-01 (keluhan Agus - test chat tamu minta 3 kamar tapi cuma
     # 1 yang kosong): SEBELUMNYA estimasi_kosong_lagi cuma dihitung kalau kamar_tersedia
     # PERSIS 0 - kalau tamu minta LEBIH dari yang tersedia (mis. minta 3, ada 1), AI tidak

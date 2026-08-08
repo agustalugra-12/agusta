@@ -65,7 +65,7 @@ async def rekomendasi_checkin(
     batas_awal = _jam_checkin_paling_awal(tanggal)
     rooms = await db.rooms.find(scoped({"tipe": tipe_kamar}, property_id), {"_id": 0}).to_list(200)
 
-    d_start = datetime.fromisoformat(f"{tanggal}T00:00:00+07:00")
+    d_start = datetime.fromisoformat(f"{tanggal}T00:00:00+08:00")  # WITA - Bedugul/Bali
     d_end = d_start + timedelta(days=1)
 
     opsi = []
@@ -77,7 +77,7 @@ async def rekomendasi_checkin(
             "jam_selesai": {"$gte": d_start.isoformat(), "$lt": d_end.isoformat()},
         }, property_id))
         if menginap:
-            checkout_local = parse_iso(menginap["jam_selesai"], "jam_selesai").astimezone(timezone(timedelta(hours=7)))
+            checkout_local = parse_iso(menginap["jam_selesai"], "jam_selesai").astimezone(timezone(timedelta(hours=8)))
             siap_jam = _jam_tambah(checkout_local.strftime("%H:%M"), CLEANING_BUFFER_JAM)
             ada_riwayat = True
         else:
@@ -86,7 +86,7 @@ async def rekomendasi_checkin(
         rekomendasi = max(siap_jam, batas_awal)
 
         try:
-            mulai = datetime.fromisoformat(f"{tanggal}T{rekomendasi}:00+07:00")
+            mulai = datetime.fromisoformat(f"{tanggal}T{rekomendasi}:00+08:00")
             selesai = mulai + timedelta(hours=6)
             await check_room_available(r["id"], mulai, selesai, property_id)
         except HTTPException:

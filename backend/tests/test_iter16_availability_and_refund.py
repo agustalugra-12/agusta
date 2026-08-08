@@ -55,8 +55,8 @@ class TestAvailabilityFuture:
         assert rb.status_code == 200
         bookings = rb.json()
         tomorrow = _tomorrow_str()
-        # tomorrow window in WIB
-        d_start = datetime.fromisoformat(f"{tomorrow}T00:00:00+07:00").astimezone(timezone.utc)
+        # tomorrow window in WITA (Bedugul/Bali)
+        d_start = datetime.fromisoformat(f"{tomorrow}T00:00:00+08:00").astimezone(timezone.utc)
         d_end = d_start + timedelta(days=1)
         overlap_ids = set()
         for b in bookings:

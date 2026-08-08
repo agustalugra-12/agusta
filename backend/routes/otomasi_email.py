@@ -15,7 +15,7 @@ from reservation_service import check_room_available, create_reservation, room_l
 
 _openai_client = OpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
 
-WIB = timezone(timedelta(hours=7))
+WITA = timezone(timedelta(hours=8))  # Bedugul/Bali = WITA (UTC+8) - lihat catatan perbaikan 2026-08-07 di reservation_service.py
 
 
 def _parse_ota_datetime(s: str, field: str) -> datetime:
@@ -24,26 +24,33 @@ def _parse_ota_datetime(s: str, field: str) -> datetime:
     SELALU tanpa info zona waktu eksplisit (dikonfirmasi lewat data nyata 2026-08-02: puluhan
     email RedDoorz semuanya "2026-08-01T14:00:00" polos, tidak pernah ada offset), sementara
     prompt AI Email Parser sendiri instruksikan "asumsikan jam 14:00/12:00" - jam check-in/
-    checkout STANDAR PROPERTI, yang jelas WIB lokal (checkin_time/checkout_time di Settings
-    juga WIB), bukan UTC.
+    checkout STANDAR PROPERTI, yang jelas WITA lokal (checkin_time/checkout_time di Settings
+    juga WITA), bukan UTC.
 
     Bug nyata ditemukan 2026-08-02 (laporan Agus soal tamu Jakaria "aneh muncul di tanggal 2"
     - ternyata bukan bug itu, tapi investigasi menemukan bug LAIN yang nyata): parse_iso()
     generik mengasumsikan UTC untuk string tanpa offset (`d.replace(tzinfo=timezone.utc)`) -
     akibatnya SEMUA booking OTA RedDoorz (mayoritas tamu di sistem) tersimpan jam_mulai/
-    jam_selesai 7 JAM LEBIH LAMBAT dari waktu asli (14:00 WIB tersimpan seolah 14:00 UTC =
-    21:00 WIB). Tidak menggeser TANGGAL kalender untuk kasus checkin/checkout standar (14:00/
+    jam_selesai 7 JAM LEBIH LAMBAT dari waktu asli (14:00 WITA tersimpan seolah 14:00 UTC =
+    22:00 WITA). Tidak menggeser TANGGAL kalender untuk kasus checkin/checkout standar (14:00/
     12:00 masih jauh dari batas tengah malam), tapi JAM yang tersimpan salah total, dan bisa
     menggeser tanggal utk kasus jam checkin dekat tengah malam.
 
+    PERBAIKAN 2026-08-07 (bug LAIN, ditemukan sisir mendalam soal tamu Riyan Sumardika):
+    fix 2026-08-02 di atas SALAH memilih WIB (UTC+7) sebagai zona "lokal" - Bedugul/Bali itu
+    WITA (UTC+8), beda 1 jam. Efeknya 147/148 booking yang pernah dibuat (OTA + AI WhatsApp,
+    lihat migrasi data terpisah) tersimpan jam_mulai/jam_selesai 1 jam lebih LAMBAT dari
+    waktu Bali asli (mis. "14:00" yg dimaksud staf tersimpan jadi setara 15:00 WITA asli).
+    Diperbaiki ke WITA yang benar di sini.
+
     Kalau string ternyata SUDAH punya offset eksplisit (belum pernah terjadi di data nyata,
-    tapi jaga-jaga), dihormati apa adanya - TIDAK dipaksa WIB."""
+    tapi jaga-jaga), dihormati apa adanya - TIDAK dipaksa WITA."""
     try:
         d = datetime.fromisoformat(s.replace("Z", "+00:00"))
     except Exception:
         raise HTTPException(400, f"Format {field} tidak valid (harus ISO 8601)")
     if d.tzinfo is None:
-        d = d.replace(tzinfo=WIB)
+        d = d.replace(tzinfo=WITA)
     return d.astimezone(timezone.utc)
 
 GOOGLE_AUTH_ENDPOINT = "https://accounts.google.com/o/oauth2/v2/auth"
