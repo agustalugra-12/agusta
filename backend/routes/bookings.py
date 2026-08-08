@@ -451,6 +451,13 @@ async def mark_paid_manual(bid: str, body: ManualMarkPaidBody, user: dict = Depe
         raise HTTPException(404, "Booking tidak ditemukan")
     if b.get("status") != "booking_pending":
         raise HTTPException(400, f"Hanya booking_pending yang dapat dikonfirmasi manual (status: {b.get('status')})")
+    # `alasan` WAJIB diisi (2026-08-08, insiden nyata Hendra Pratama - staf sempat
+    # menandai booking LUNAS manual padahal pembayaran belum benar-benar diterima, field
+    # ini sebelumnya optional/kosong jadi tidak ada jejak KENAPA staf menandai lunas -
+    # dipaksa non-kosong di sini supaya ada alasan tercatat tiap kali dipakai, bukan cuma
+    # klik cepat tanpa jejak).
+    if not (body.alasan or "").strip():
+        raise HTTPException(400, "Alasan konfirmasi pembayaran manual wajib diisi")
     nominal = body.nominal if body.nominal else int(b.get("total", 0))
     now = now_iso()
     await db.bookings.update_one({"id": bid}, {"$set": {

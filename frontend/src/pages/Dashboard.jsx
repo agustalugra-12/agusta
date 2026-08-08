@@ -724,14 +724,26 @@ export default function Dashboard() {
   };
 
   // Konfirmasi pembayaran manual (transfer rekening) — staff verify booking_pending → booking_paid
+  // Alasan WAJIB diisi (2026-08-08, insiden nyata Hendra Pratama - staf sempat menandai
+  // booking LUNAS manual padahal pembayaran belum benar-benar diterima, sebelumnya tidak
+  // ada jejak kenapa/siapa alasannya sama sekali - prompt alasan + peringatan eksplisit
+  // ditambah di sini, backend juga menolak kalau alasan kosong (bukan cuma UI).
   const markPaidManual = async () => {
     if (!bookingDetail) return;
+    if (!window.confirm(`Konfirmasi pembayaran manual untuk ${bookingDetail.kode}?\n\nPASTIKAN pembayaran BENAR-BENAR sudah diterima (cek mutasi rekening/bukti transfer) sebelum lanjut - aksi ini menandai booking LUNAS.`)) return;
     const total = Number(bookingDetail.total || 0);
-    const nominalStr = window.prompt(`Konfirmasi pembayaran manual untuk ${bookingDetail.kode}.\nNominal yang diterima (default: ${fmtRp(total)}):`, total);
+    const nominalStr = window.prompt(`Nominal yang diterima (default: ${fmtRp(total)}):`, total);
     if (nominalStr === null) return;
     const nominal = Number(nominalStr) || total;
+    let alasan = "";
+    while (!alasan.trim()) {
+      const input = window.prompt("Alasan/sumber verifikasi pembayaran ini (wajib diisi, mis. \"cek mutasi BCA tgl 8 Agustus\"):", "");
+      if (input === null) return; // staf batal
+      alasan = input;
+      if (!alasan.trim()) toast.error("Alasan wajib diisi, tidak boleh kosong");
+    }
     try {
-      const { data } = await api.post(`/bookings/${bookingDetail.id}/mark-paid-manual`, { nominal, metode: "transfer_manual" });
+      const { data } = await api.post(`/bookings/${bookingDetail.id}/mark-paid-manual`, { nominal, metode: "transfer_manual", alasan: alasan.trim() });
       toast.success(`Booking ${data.booking_kode} dikonfirmasi PAID (${fmtRp(data.amount)})`);
       setBookingDetail(null); load();
     } catch (e) { toast.error(e?.response?.data?.detail || "Gagal"); }

@@ -515,11 +515,44 @@ async def buat_reservasi_otomatis(log_id: str, data: dict, sumber: str, subjek: 
     for r in kandidat:
         if len(reservation_ids) >= jumlah_kamar:
             break
+        jam_mulai_efektif = check_in
         try:
             await check_room_available(r["id"], check_in, check_out, property_id)
         except HTTPException as e:
-            gagal_detail.append(f'kamar {r["nomor"]}: {e.detail}')
-            continue
+            # Handover Day Use -> Menginap SAMA HARI (2026-08-08, kasus nyata MAIA MARTINS -
+            # kamar Cottage kelihatan "penuh" krn ada tamu walk-in Day Use yang MASIH aktif,
+            # padahal tamu Day Use itu diperkirakan selesai jauh sebelum tanggal checkout
+            # reservasi baru ini (bisa 1-3+ malam) - Agus: "harusnya room day use bisa di isi
+            # menginap". check_room_available menolak krn dicek pakai jam checkin STANDAR OTA
+            # (14:00 WITA), padahal reservasi Menginap multi-malam tidak butuh kamarnya PERSIS
+            # jam 14:00 - cukup kapan saja hari itu sebelum tamu benar2 datang. Kalau alasan
+            # tolaknya SPESIFIK "walk-in" (bukan sekadar kamar sudah dibooking penuh oleh
+            # reservasi lain), coba SEKALI LAGI pakai jam mulai yang digeser ke perkiraan
+            # selesai walk-in + buffer 30 menit (waktu bersih-bersih) - kalau kamar itu
+            # TERNYATA kosong di jendela yang digeser itu, pakai jam mulai yang digeser utk
+            # booking ini (dicatat jelas di catatan, checkout TIDAK berubah).
+            if "walk-in" in e.detail.lower():
+                checkin_aktif = await db.checkins.find_one(scoped({
+                    "room_id": r["id"], "status": "aktif",
+                }, property_id))
+                if checkin_aktif and checkin_aktif.get("jam_checkin"):
+                    estimasi_selesai = datetime.fromisoformat(checkin_aktif["jam_checkin"]) + timedelta(hours=6, minutes=30)
+                    if estimasi_selesai < check_out:
+                        try:
+                            await check_room_available(r["id"], estimasi_selesai, check_out, property_id)
+                            jam_mulai_efektif = estimasi_selesai
+                        except HTTPException as e2:
+                            gagal_detail.append(f'kamar {r["nomor"]}: {e2.detail}')
+                            continue
+                    else:
+                        gagal_detail.append(f'kamar {r["nomor"]}: {e.detail}')
+                        continue
+                else:
+                    gagal_detail.append(f'kamar {r["nomor"]}: {e.detail}')
+                    continue
+            else:
+                gagal_detail.append(f'kamar {r["nomor"]}: {e.detail}')
+                continue
 
         # (2026-08-02, bug KRITIS nyata ditemukan Agus - kasus TASYA TASYA 2 kamar,
         # laporan keuangan kelebihan catat) - `harga` dari email OTA (RedDoorz) SUDAH
@@ -546,9 +579,13 @@ async def buat_reservasi_otomatis(log_id: str, data: dict, sumber: str, subjek: 
                     "nama_tamu": data.get("nama_tamu", ""), "no_hp": "", "email": "",
                     "no_identitas": "", "kendaraan": "",
                     "jumlah_tamu": data.get("jumlah_tamu") or 1,
-                    "jam_mulai": check_in, "jam_selesai": check_out,
+                    "jam_mulai": jam_mulai_efektif, "jam_selesai": check_out,
                     "catatan": f'Reservasi OTA otomatis dari email "{subjek}" ({sumber}, no. {data.get("no_reservasi", "-")})'
-                    + (f" — {jumlah_kamar} kamar dipesan bersamaan" if jumlah_kamar > 1 else ""),
+                    + (f" — {jumlah_kamar} kamar dipesan bersamaan" if jumlah_kamar > 1 else "")
+                    + (f" — jam mulai digeser ke {jam_mulai_efektif.astimezone(WITA).strftime('%H:%M')} WITA "
+                       f"({jam_mulai_efektif.astimezone(WITA).strftime('%d %b')}) krn kamar masih dipakai tamu "
+                       f"Day Use walk-in saat checkin standar, checkout TIDAK berubah"
+                       if jam_mulai_efektif != check_in else ""),
                     "created_by": "ai_email_parser",
                     "tipe": "menginap",
                 },
