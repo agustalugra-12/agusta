@@ -638,6 +638,33 @@ async def buat_booking_request(data: Dict[str, Any], property_id: Optional[str] 
             "datang (format HH:MM, contoh 10:00) sebelum lanjut booking.",
         )
 
+    # Guard jam minimum Day Use = 11:00 WITA (2026-08-08, keputusan bisnis Agus - insiden
+    # nyata: booking Day Use tamu JUMARTO ke kamar 14 tercatat jam 10:00 WITA, harusnya
+    # ditolak/dikoreksi ke 11:00). SENGAJA membalik rule 2026-08-01 (lihat komentar
+    # ai_service.py "Day Use TIDAK punya jam mulai tetap" - waktu itu Day Use SENGAJA
+    # dibuat TANPA jam minimum krn AI pernah salah menolak tamu jam 10/11 dgn alasan
+    # ngarang "mulai jam 14:00", tamu batal booking) - Agus KONFIRMASI EKSPLISIT 2026-08-08
+    # ingin ini jadi aturan TETAP sekarang (bukan cuma kasus Jumarto), jam minimum
+    # sungguhan 11:00 (BUKAN ngarang seperti insiden lama, ini benar2 kebijakan baru yg
+    # diminta pemilik). Divalidasi di SINI (satu-satunya titik masuk booking_request AI,
+    # sama seperti guard jam_checkin wajib di atas) - BUKAN di create_reservation/
+    # check_room_available (itu tetap generic utk semua sumber tipe day_use termasuk
+    # walk-in staf Quick Book, yang SENGAJA tidak disentuh guard ini - tamu yang FISIK
+    # sudah datang ke lokasi beda konteks dari booking AI jarak jauh).
+    if data.get("tipe") == "day_use":
+        jam_checkin_raw = (data.get("jam_checkin") or "").strip()
+        try:
+            jam_h, jam_m = (int(x) for x in jam_checkin_raw.split(":")[:2])
+            if (jam_h, jam_m) < (11, 0):
+                raise HTTPException(
+                    400,
+                    f"Day Use tidak bisa check-in jam {jam_checkin_raw} - kebijakan sekarang "
+                    "Day Use baru bisa mulai dari jam 11:00 WITA. Sampaikan ke tamu Day Use "
+                    "baru bisa mulai jam 11:00, tanya apakah mau di jam itu atau lebih siang.",
+                )
+        except (ValueError, IndexError):
+            pass  # format jam sudah divalidasi di tempat lain - di sini cukup dilewati kalau tidak bisa diparse
+
     # Guard tanggal_checkout wajib untuk Menginap (2026-08-07, bug nyata - tamu Lugra
     # Agusta bilang "menginap 1 malam" tanpa sebut tanggal checkout eksplisit, AI tidak
     # pernah menghitung/mengisi tanggal_checkout sendiri, booking_request tersimpan dengan
