@@ -676,7 +676,7 @@ async def tugas_harian(user: dict = Depends(get_current_user), property_id: str 
         g.update(diskon_member_untuk_total_kunjungan(g.get("total_kunjungan", 0)))
         g["peluang_kembali"] = hitung_peluang_kembali(g.get("riwayat_kunjungan"))
 
-    ulang_tahun = [g for g in tamu_semua if is_ulang_tahun_hari_ini(g.get("tanggal_lahir"), hari_ini)]
+    ulang_tahun = [g for g in tamu_semua if is_ulang_tahun_hari_ini(g.get("tanggal_lahir"), today_wita)]
 
     return {
         "kedatangan_menginap_hari_ini": kedatangan_menginap,
