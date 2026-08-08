@@ -13,14 +13,18 @@ from core import *
 # menyertakan "checked_in" - list di sini yang ketinggalan, sekarang disamakan.
 ACTIVE_BOOKING_STATUSES = ["aktif", "booking_paid", "booking_pending", "checked_in"]
 
-# Tahap 2 Modul Reservasi (2026-07-17): booking Menginap dari Booking Request yang masih
-# menunggu input/sinkron manual ke PMS RedDoorz TETAP memblokir slotnya (check_room_available
-# tidak menyaring sync_status sama sekali — anti-overbooking tidak berubah), tapi TIDAK
-# ditampilkan sebagai tamu terkonfirmasi di Kalender Ketersediaan sampai email RedDoorz
-# cocok (lihat backend/routes/otomasi_email.py). Kamar jadi terlihat "tersedia" di kalender
-# padahal sudah terpakai — staf yang coba booking ulang tetap akan ditolak check_room_available,
-# jadi tidak berisiko double-booking, cuma tampilan sementara belum mencerminkan status penuh.
-SYNC_STATUS_BELUM_CONFIRMED = ["waiting_reddoorz_input", "waiting_reddoorz_sync"]
+# DIHAPUS 2026-08-07 (permintaan langsung Agus - kasus nyata tamu Riyan Sumardika, kamar 13
+# tanggal 8 Agustus terlihat "kosong/tersedia" di Kalender Ketersediaan padahal sudah lunas &
+# terkunci utk dia, staf bingung menyangka belum ada booking sama sekali). Sebelumnya (Tahap
+# 2 Modul Reservasi, 2026-07-17) ada filter `sync_status NOT IN [waiting_reddoorz_input,
+# waiting_reddoorz_sync]` di query okupansi bulanan & harian di bawah, supaya booking yang
+# masih menunggu sinkron manual RedDoorz TIDAK dianggap "Confirmed" di kalender walau tetap
+# memblokir slotnya di check_room_available (anti-overbooking TIDAK terpengaruh keputusan
+# ini, dulu maupun sekarang). Ternyata di praktik efeknya JUSTRU MEMBINGUNGKAN (kamar
+# kelihatan kosong padahal sebenarnya sudah tidak bisa dibooking siapa pun) - Agus lebih
+# pilih kalender selalu cerminkan kenyataan sistem (terisi = terisi, apa pun sync_status-nya).
+# Filter dihapus dari kedua query di bawah, bukan cuma dikosongkan - constant ini sudah
+# tidak dipakai di tempat lain sama sekali (dicek eksplisit sebelum dihapus).
 
 # Ambang batas stok menipis: tipe kamar dianggap menipis jika sisa tersedia <= 20% dari total.
 LOW_STOCK_THRESHOLD_PCT = 20
@@ -112,7 +116,6 @@ async def kalender_bulanan(
 
     bookings = await db.bookings.find(scoped({
         "status": {"$in": ACTIVE_BOOKING_STATUSES},
-        "sync_status": {"$nin": SYNC_STATUS_BELUM_CONFIRMED},
         "jam_mulai": {"$lt": month_end.isoformat()},
         "jam_selesai": {"$gte": month_start.isoformat()},
     }, property_id), {"_id": 0, "room_id": 1, "jam_mulai": 1, "jam_selesai": 1}).to_list(2000)
@@ -156,7 +159,6 @@ async def ketersediaan_hari(
     rooms = await db.rooms.find(scoped({}, property_id), {"_id": 0, "id": 1, "tipe": 1}).to_list(500)
     bookings = await db.bookings.find(scoped({
         "status": {"$in": ACTIVE_BOOKING_STATUSES},
-        "sync_status": {"$nin": SYNC_STATUS_BELUM_CONFIRMED},
         "jam_mulai": {"$lt": day_end.isoformat()},
         "jam_selesai": {"$gte": day_start.isoformat()},
     }, property_id), {"_id": 0, "room_id": 1, "jam_mulai": 1, "jam_selesai": 1}).to_list(2000)
