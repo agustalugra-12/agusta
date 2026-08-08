@@ -145,7 +145,7 @@ async def _ringkasan_owner_fallback_text(property_id: str) -> str:
     """Fallback template kalau OPENAI_API_KEY belum/tidak dikonfigurasi — dipakai juga
     sebagai bagian dari konteks yang disuplai ke AI (_kumpulkan_konteks_bisnis)."""
     s = await report_summary(user=_DUMMY_USER, property_id=property_id)
-    today = datetime.now(timezone.utc).date().isoformat()
+    today = (datetime.now(timezone.utc) + timedelta(hours=8)).date().isoformat()  # WITA, bukan UTC mentah - konsisten dgn wita_date_range_to_utc yg dipakai report_kas_metode_bayar di bawah
     kas = await report_kas_metode_bayar(from_date=today, to_date=today, user=_DUMMY_USER, property_id=property_id)
     r = s["rooms"]
     terisi = r.get("day_use", 0) + r.get("menginap", 0)
@@ -166,7 +166,7 @@ async def _kumpulkan_konteks_bisnis(property_id: str) -> str:
     AI supaya owner bisa tanya apa saja (komplain, stok, housekeeping, dst) bukan cuma
     laporan keuangan, dan jawabannya tetap akurat (bukan karangan AI)."""
     s = await report_summary(user=_DUMMY_USER, property_id=property_id)
-    today = datetime.now(timezone.utc).date().isoformat()
+    today = (datetime.now(timezone.utc) + timedelta(hours=8)).date().isoformat()  # WITA, bukan UTC mentah - konsisten dgn wita_date_range_to_utc yg dipakai report_kas_metode_bayar di bawah
     kas = await report_kas_metode_bayar(from_date=today, to_date=today, user=_DUMMY_USER, property_id=property_id)
     r = s["rooms"]
 
@@ -256,7 +256,11 @@ async def _pendapatan_kamar_per_tipe_hari_ini(property_id: str) -> Dict[str, int
     day_use yang lunas tapi BELUM check-in ditambah terpisah dari `bookings` (checkin_id belum
     ada) supaya tidak dobel dengan yang sudah masuk checkins. Menginap SELALU lewat `bookings`
     (checkins tidak pernah representasikan menginap sama sekali) — tidak ada risiko dobel hitung."""
-    today_iso = datetime.now(timezone.utc).date().isoformat()
+    # WITA, bukan UTC mentah (2026-08-07, bug nyata) - lihat catatan lengkap di reservation_service.py
+    today_iso, _ = wita_date_range_to_utc(
+        (datetime.now(timezone.utc) + timedelta(hours=8)).date().isoformat(),
+        (datetime.now(timezone.utc) + timedelta(hours=8)).date().isoformat(),
+    )
 
     co_today = await db.checkins.find(
         scoped({"jam_checkout": {"$gte": today_iso}, "status": "selesai"}, property_id), {"_id": 0, "total": 1}
@@ -294,7 +298,7 @@ async def _laporan_harian_text(property_id: str, property_nama: str = "", sertak
     (bukan generate baru terpisah - lihat ai_grow._generate_dan_cache_brief) supaya narasi
     yang tampil di sini PERSIS yang barusan di-generate slot 23:00, 1 sumber kebenaran."""
     s = await report_summary(user=_DUMMY_USER, property_id=property_id)
-    today_iso = datetime.now(timezone.utc).date().isoformat()
+    today_iso = (datetime.now(timezone.utc) + timedelta(hours=8)).date().isoformat()  # WITA, bukan UTC mentah
     kas = await report_kas_metode_bayar(from_date=today_iso, to_date=today_iso, user=_DUMMY_USER, property_id=property_id)
     kamar = await _pendapatan_kamar_per_tipe_hari_ini(property_id)
     tanggal = datetime.now(timezone.utc).astimezone(WITA).strftime("%d %B %Y")

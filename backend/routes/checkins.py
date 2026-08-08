@@ -620,17 +620,29 @@ async def tugas_harian(user: dict = Depends(get_current_user), property_id: str 
     di-generate GPT - lebih murah, tidak ada risiko halusinasi, dan datanya sendiri
     sudah cukup jelas tanpa perlu dibungkus prosa AI. "AI" di sini maksudnya asisten
     otomatis yang menyiapkan daftar, bukan pemanggilan model bahasa."""
-    hari_ini = now_iso()[:10]
+    # WITA date-range (2026-08-08, bug nyata ditemukan - Agus lapor "Ryan belum muncul sama
+    # sekali" di daftar Kedatangan Menginap Hari Ini): SEBELUMNYA `hari_ini = now_iso()[:10]`
+    # (tanggal UTC mentah) dicocokkan via regex prefix `^{hari_ini}` ke jam_mulai/jam_selesai/
+    # checked_out_at/jam_checkout - kebetulan cocok kalau tanggal UTC & WITA lagi sama (siang
+    # hari), TAPI dini hari WITA (00:00-07:59 WITA = masih tanggal KEMARIN di UTC) tamu yang
+    # datang/checkout hari itu bisa hilang dari daftar tugas harian - sama pola dgn bug WITA
+    # yang sudah diperbaiki di reports.py/booking_requests.py/dll (lihat reservation_service.py
+    # utk kronologi lengkap). Diganti ke range UTC yang benar mencakup satu hari WITA penuh,
+    # dibandingkan dgn $gte/$lt (bukan regex string prefix) - lebih benar & lebih cepat (bisa
+    # pakai index) drpd regex.
+    today_wita = (datetime.now(timezone.utc) + timedelta(hours=8)).date().isoformat()
+    hari_ini_start, hari_ini_end_inclusive = wita_date_range_to_utc(today_wita, today_wita)
+    hari_ini_end = (datetime.fromisoformat(hari_ini_end_inclusive) + timedelta(seconds=1)).isoformat()
     batas_90_hari = (datetime.now(timezone.utc) - timedelta(days=90)).date().isoformat()
 
     kedatangan_menginap = await db.bookings.find(scoped({
         "tipe": "menginap", "status": {"$in": ["aktif", "booking_paid"]},
-        "jam_mulai": {"$regex": f"^{hari_ini}"},
+        "jam_mulai": {"$gte": hari_ini_start, "$lt": hari_ini_end},
     }, property_id), {"_id": 0}).to_list(200)
 
     keberangkatan_menginap = await db.bookings.find(scoped({
         "tipe": "menginap", "status": "checked_in",
-        "jam_selesai": {"$regex": f"^{hari_ini}"},
+        "jam_selesai": {"$gte": hari_ini_start, "$lt": hari_ini_end},
     }, property_id), {"_id": 0}).to_list(200)
 
     day_use_berlangsung = await db.checkins.find(scoped({"status": "aktif"}, property_id), {"_id": 0}).to_list(200)
@@ -646,12 +658,12 @@ async def tugas_harian(user: dict = Depends(get_current_user), property_id: str 
     # dua transaksi checkout yang berbeda.
     keberangkatan_menginap_selesai = await db.bookings.find(scoped({
         "tipe": "menginap", "status": "checked_out",
-        "checked_out_at": {"$regex": f"^{hari_ini}"},
+        "checked_out_at": {"$gte": hari_ini_start, "$lt": hari_ini_end},
     }, property_id), {"_id": 0}).sort("checked_out_at", -1).to_list(200)
 
     day_use_selesai = await db.checkins.find(scoped({
         "status": "selesai",
-        "jam_checkout": {"$regex": f"^{hari_ini}"},
+        "jam_checkout": {"$gte": hari_ini_start, "$lt": hari_ini_end},
     }, property_id), {"_id": 0}).sort("jam_checkout", -1).to_list(200)
 
     tamu_semua = await db.guests.find(scoped({}, property_id), {"_id": 0}).to_list(5000)
