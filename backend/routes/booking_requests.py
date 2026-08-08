@@ -371,7 +371,7 @@ async def _coba_auto_approve_menginap(doc: Dict[str, Any]) -> None:
                 return
 
             if doc["tanggal_checkin"] == today_local:
-                from scheduling_engine import estimasi_kamar_siap, WIB
+                from scheduling_engine import estimasi_kamar_siap, WITA
                 q_tipe = {"tipe": doc["room_tipe"]} if doc.get("room_tipe") else {}
                 rooms_tipe_sama = await db.rooms.find(scoped(q_tipe, doc["property_id"]), {"_id": 0}).to_list(200)
                 estimasi_list = []
@@ -387,11 +387,11 @@ async def _coba_auto_approve_menginap(doc: Dict[str, Any]) -> None:
                     sudah_dikabari = bool(doc.get("auto_retry_dayuse"))
                     if not sudah_dikabari:
                         siap_paling_cepat = min(estimasi_list)
-                        jam_str = siap_paling_cepat.astimezone(WIB).strftime("%H:%M")
+                        jam_str = siap_paling_cepat.astimezone(WITA).strftime("%H:%M")
                         pesan = (
                             f"Halo {doc['nama_tamu']}, untuk saat ini kamar {doc.get('room_tipe') or ''} "
                             f"sedang penuh karena masih dipakai tamu Day Use. Perkiraan kamar siap "
-                            f"sekitar pukul {jam_str} WIB (setelah tamu checkout & dibersihkan) — "
+                            f"sekitar pukul {jam_str} WITA (setelah tamu checkout & dibersihkan) — "
                             f"begitu siap, booking Menginap Anda akan *otomatis diproses* dan link "
                             f"pembayaran dikirim ke nomor ini. Tidak perlu booking ulang."
                         )

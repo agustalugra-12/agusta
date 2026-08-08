@@ -166,8 +166,8 @@ async def create_reservation(data: Dict[str, Any], property_id: str, source: str
     # BENAR-BENAR sekarang/sudah lewat (mulai <= now, dibandingkan di WIB) - booking utk jam
     # mendatang (nanti hari ini ATAU tanggal lain) sepenuhnya diserahkan ke check_room_available
     # (validasi jam presisi, tahu persis kapan tamu SEKARANG ini akan checkout).
-    now_wib = datetime.now(timezone.utc).astimezone(WIB)
-    if mulai.astimezone(WIB) <= now_wib and r["status"] != "kosong":
+    now_wita = datetime.now(timezone.utc).astimezone(WITA)
+    if mulai.astimezone(WITA) <= now_wita and r["status"] != "kosong":
         raise HTTPException(400, "Kamar tidak tersedia")
 
     extra_bed_qty = max(0, min(EXTRA_BED_MAX, int(data.get("extra_bed_qty") or 0)))
