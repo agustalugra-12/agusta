@@ -17,7 +17,7 @@ import {
   CalendarRange, Users as UsersIcon, Sparkles, Wrench, Calendar, MessageCircle, X, Inbox, Check, Percent,
   Gift, ListChecks, LogIn, LogOut, PhoneCall, CheckCircle2, Copy,
 } from "lucide-react";
-import { SetujuiDialog, TolakDialog, ActionRequiredRedDoorz } from "@/pages/BookingRequests";
+import { SetujuiDialog, TolakDialog, ActionRequiredRedDoorz, SYNC_STATUS_LABEL, SYNC_STATUS_CLS } from "@/pages/BookingRequests";
 import { PembatalanAlert } from "@/pages/Pembatalan";
 
 const STAT_CARDS = [
@@ -962,7 +962,14 @@ export default function Dashboard() {
                 <div className="border border-slate-200 rounded-lg p-3">
                   <div className="flex items-center gap-1.5 font-semibold text-slate-700 mb-1.5"><LogIn className="w-3.5 h-3.5" /> Kedatangan Menginap ({tugasHarian.kedatangan_menginap_hari_ini.length})</div>
                   {tugasHarian.kedatangan_menginap_hari_ini.map((b) => (
-                    <div key={b.id} className="text-xs text-slate-500 py-0.5">{b.nama_tamu} - kamar {b.room_nomor}</div>
+                    <div key={b.id} className="text-xs text-slate-500 py-0.5 flex items-center gap-1.5 flex-wrap">
+                      <span>{b.nama_tamu} - kamar {b.room_nomor}</span>
+                      {SYNC_STATUS_LABEL[b.sync_status] && (
+                        <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${SYNC_STATUS_CLS[b.sync_status]}`}>
+                          {SYNC_STATUS_LABEL[b.sync_status]}
+                        </span>
+                      )}
+                    </div>
                   ))}
                 </div>
               )}
@@ -970,7 +977,14 @@ export default function Dashboard() {
                 <div className="border border-slate-200 rounded-lg p-3">
                   <div className="flex items-center gap-1.5 font-semibold text-slate-700 mb-1.5"><LogOut className="w-3.5 h-3.5" /> Keberangkatan Menginap ({tugasHarian.keberangkatan_menginap_hari_ini.length})</div>
                   {tugasHarian.keberangkatan_menginap_hari_ini.map((b) => (
-                    <div key={b.id} className="text-xs text-slate-500 py-0.5">{b.nama_tamu} - kamar {b.room_nomor}</div>
+                    <div key={b.id} className="text-xs text-slate-500 py-0.5 flex items-center gap-1.5 flex-wrap">
+                      <span>{b.nama_tamu} - kamar {b.room_nomor}</span>
+                      {SYNC_STATUS_LABEL[b.sync_status] && (
+                        <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${SYNC_STATUS_CLS[b.sync_status]}`}>
+                          {SYNC_STATUS_LABEL[b.sync_status]}
+                        </span>
+                      )}
+                    </div>
                   ))}
                 </div>
               )}

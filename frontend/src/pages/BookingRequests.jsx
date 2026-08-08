@@ -30,11 +30,11 @@ const BOOKING_STATUS_LABEL = {
   booking_pending: "Menunggu Bayar", booking_paid: "Lunas", checked_in: "Sudah Check-in",
   cancelled: "Dibatalkan", no_show: "No-Show",
 };
-const SYNC_STATUS_LABEL = {
+export const SYNC_STATUS_LABEL = {
   waiting_reddoorz_input: "Menunggu Input RedDoorz", waiting_reddoorz_sync: "Menunggu Sinkron RedDoorz",
   synced: "Confirmed (RedDoorz)", not_required: null,
 };
-const SYNC_STATUS_CLS = {
+export const SYNC_STATUS_CLS = {
   waiting_reddoorz_input: "bg-amber-100 text-amber-800",
   waiting_reddoorz_sync: "bg-blue-100 text-blue-800",
   synced: "bg-emerald-100 text-emerald-700",
