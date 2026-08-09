@@ -1,5 +1,6 @@
 from core import *
 from routes.push import send_push
+from reservation_service import check_room_available
 
 @api.post("/checkins")
 async def create_checkin(body: CheckinCreate, user: dict = Depends(get_current_user),
@@ -46,11 +47,38 @@ async def create_checkin(body: CheckinCreate, user: dict = Depends(get_current_u
         for claimed_rid in claimed_room_ids:
             await db.rooms.update_one(scoped({"id": claimed_rid}, property_id), {"$set": {"status": "kosong"}})
 
+    # parse jam_checkin DULUAN (dipindah ke atas loop klaim kamar, 2026-08-09 - lihat
+    # check_room_available di bawah, butuh jam ini SEBELUM klaim, bukan sesudah)
+    jam_ci_iso = now_iso()
+    if body.jam_checkin:
+        try:
+            d = datetime.fromisoformat(body.jam_checkin.replace("Z", "+00:00"))
+            if d.tzinfo is None:
+                d = d.replace(tzinfo=timezone.utc)
+            jam_ci_iso = d.astimezone(timezone.utc).isoformat()
+        except Exception:
+            raise HTTPException(400, "Format jam check-in tidak valid")
+    jam_ci_dt = datetime.fromisoformat(jam_ci_iso)
+
     try:
         for rid in room_ids:
             r_check = await db.rooms.find_one(scoped({"id": rid}, property_id))
             if not r_check:
                 raise HTTPException(404, f"Kamar tidak ditemukan (id {rid})")
+            # Cek bentrok dgn booking Menginap yang BELUM di-check-in (2026-08-09, bug nyata
+            # ditemukan Agus - 4 kamar sekaligus: tamu Menginap sudah datang & pergi fisik,
+            # tapi staf lupa klik "Check-in" di sistem, jadi room.status masih "kosong" biar
+            # pun kamarnya fisiknya terisi. Tamu Day Use walk-in baru lolos check-in ke kamar
+            # itu [cek di bawah cuma lihat room.status=="kosong", TIDAK PERNAH konsultasi
+            # db.bookings sama sekali] - booking Menginap lamanya jadi macet permanen di
+            # status "aktif"/"booking_paid" [tidak bisa di-check-in lagi krn kamar sudah
+            # "dipakai" tamu day use baru, tidak bisa di-checkout krn belum pernah checked_in
+            # sama sekali], harus dibetulkan manual). Reuse check_room_available yang sama
+            # dipakai Quick Book/AI booking (SUDAH benar cek db.bookings mengcover Menginap)
+            # - estimasi durasi Day Use standar 6 jam (sama konvensi dgn checkin_aktif di
+            # check_room_available sendiri) supaya konsisten walau checkout sungguhan belum
+            # pasti jamnya.
+            await check_room_available(rid, jam_ci_dt, jam_ci_dt + timedelta(hours=6), property_id)
             r = await db.rooms.find_one_and_update(
                 scoped({"id": rid, "status": "kosong"}, property_id),
                 {"$set": {"status": "_checkin_pending"}},
@@ -81,16 +109,6 @@ async def create_checkin(body: CheckinCreate, user: dict = Depends(get_current_u
         # Save / upsert guest — 1 data tamu dipakai bersama untuk semua kamar dalam grup ini.
         room_nomor_gabung = ", ".join(r["nomor"] for r in rooms)
         guest_id = await upsert_guest(body.nama_tamu, body.no_hp, body.no_identitas, body.kendaraan, property_id, room_nomor=room_nomor_gabung)
-        # parse jam_checkin
-        jam_ci_iso = now_iso()
-        if body.jam_checkin:
-            try:
-                d = datetime.fromisoformat(body.jam_checkin.replace("Z", "+00:00"))
-                if d.tzinfo is None:
-                    d = d.replace(tzinfo=timezone.utc)
-                jam_ci_iso = d.astimezone(timezone.utc).isoformat()
-            except Exception:
-                raise HTTPException(400, "Format jam check-in tidak valid")
 
         group_id = str(uuid.uuid4()) if len(rooms) > 1 else None
         created = []
