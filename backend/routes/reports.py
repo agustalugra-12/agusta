@@ -6,20 +6,25 @@ import logging
 @api.get("/reports/booking-widgets")
 async def booking_widgets(user: dict = Depends(get_current_user), property_id: str = Depends(get_active_property)):
     """Widget statistik booking untuk Dashboard."""
-    today_start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
-    today_end = today_start + timedelta(days=1)
+    # (2026-08-09) today_start/month_start WAJIB dari WITA, bukan UTC mentah - sama fix
+    # dgn report_summary (2026-08-07) - dini hari WITA (00:00-07:59) msh tanggal UTC
+    # KEMARIN. Filter "source": "online" jg diganti ONLINE_BOOKING_SOURCES (sama fix dgn
+    # report_summary/report_daily/report_rooms/report_service_revenue - literal "online"
+    # sebelumnya tidak mencakup "ota"/"whatsapp"/"whatsapp_auto").
+    today_wita = datetime.now(timezone.utc).astimezone(timezone(timedelta(hours=8))).date()
+    today_start_iso, today_end_iso = wita_date_range_to_utc(today_wita.isoformat(), today_wita.isoformat())
+    month_start_iso, _ = wita_date_range_to_utc(today_wita.replace(day=1).isoformat(), today_wita.replace(day=1).isoformat())
     # Booking hari ini = jam_mulai dalam rentang hari ini
     today_bk = await db.bookings.count_documents(scoped({
-        "jam_mulai": {"$gte": today_start.isoformat(), "$lt": today_end.isoformat()},
+        "jam_mulai": {"$gte": today_start_iso, "$lte": today_end_iso},
         "status": {"$in": ["aktif", "booking_pending", "booking_paid", "checked_in"]},
     }, property_id))
     pending_count = await db.bookings.count_documents(scoped({"status": "booking_pending"}, property_id))
     paid_count = await db.bookings.count_documents(scoped({"status": "booking_paid"}, property_id))
     # Pendapatan online = sum total dari booking_paid bulan ini
-    month_start = datetime.now(timezone.utc).replace(day=1, hour=0, minute=0, second=0, microsecond=0)
     online_paid = await db.bookings.find(scoped({
-        "source": "online", "payment_status": "paid",
-        "paid_at": {"$gte": month_start.isoformat()},
+        "source": {"$in": ONLINE_BOOKING_SOURCES}, "payment_status": "paid",
+        "paid_at": {"$gte": month_start_iso},
     }, property_id), {"_id": 0, "total": 1, "amount_due": 1}).to_list(1000)
     pendapatan_online = sum(int(b.get("amount_due") or b.get("total", 0)) for b in online_paid)
     # Total semua transaksi payment gateway settlement (lifetime, gabungan riwayat Tripay +
@@ -34,11 +39,11 @@ async def booking_widgets(user: dict = Depends(get_current_user), property_id: s
     payment_count = payment_total[0]["count"] if payment_total else 0
     # Walk-in vs Online (bulan ini)
     online_bulan = await db.bookings.count_documents(scoped({
-        "source": "online", "created_at": {"$gte": month_start.isoformat()},
+        "source": {"$in": ONLINE_BOOKING_SOURCES}, "created_at": {"$gte": month_start_iso},
     }, property_id))
     # Walk-in = check-ins langsung dari dashboard (tanpa booking online) bulan ini
     walk_bulan = await db.checkins.count_documents(scoped({
-        "jam_checkin": {"$gte": month_start.isoformat()},
+        "jam_checkin": {"$gte": month_start_iso},
     }, property_id))
     return {
         "booking_hari_ini": today_bk,
@@ -60,28 +65,29 @@ async def cancellation_revenue(from_date: str, to_date: str, user: dict = Depend
     Returns: { cancel_fees_total, no_show_total, grand_total, by_day:[...], items:[...] }
     """
     try:
-        d_from = datetime.fromisoformat(from_date).replace(hour=0, minute=0, second=0, microsecond=0)
-        d_to = datetime.fromisoformat(to_date).replace(hour=23, minute=59, second=59, microsecond=999999)
+        start, end = wita_date_range_to_utc(from_date, to_date)
     except Exception:
         raise HTTPException(400, "Format tanggal harus YYYY-MM-DD")
     cancels = await db.bookings.find(scoped({
         "status": "cancelled", "cancel_fee": {"$gt": 0},
-        "cancelled_at": {"$gte": d_from.isoformat(), "$lte": d_to.isoformat()},
+        "cancelled_at": {"$gte": start, "$lte": end},
     }, property_id), {"_id": 0}).to_list(2000)
     no_shows = await db.bookings.find(scoped({
         "status": "no_show",
-        "no_show_at": {"$gte": d_from.isoformat(), "$lte": d_to.isoformat()},
+        "no_show_at": {"$gte": start, "$lte": end},
     }, property_id), {"_id": 0}).to_list(2000)
     cancel_total = sum(int(b.get("cancel_fee") or 0) for b in cancels)
     noshow_total = sum(int(b.get("amount_due") or 0) for b in no_shows)
-    # group per hari
+    # group per hari (2026-08-09, tanggal WITA - bukan slice UTC mentah, lihat tanggal_wita())
     by_day: Dict[str, Dict[str, int]] = {}
     for b in cancels:
-        day = (b.get("cancelled_at") or "")[:10]
+        if not b.get("cancelled_at"): continue
+        day = tanggal_wita(b["cancelled_at"])
         by_day.setdefault(day, {"cancel_fee": 0, "no_show": 0})
         by_day[day]["cancel_fee"] += int(b.get("cancel_fee") or 0)
     for b in no_shows:
-        day = (b.get("no_show_at") or "")[:10]
+        if not b.get("no_show_at"): continue
+        day = tanggal_wita(b["no_show_at"])
         by_day.setdefault(day, {"cancel_fee": 0, "no_show": 0})
         by_day[day]["no_show"] += int(b.get("amount_due") or 0)
     chart = sorted([{"tanggal": k, **v, "total": v["cancel_fee"] + v["no_show"]} for k, v in by_day.items()], key=lambda x: x["tanggal"])
@@ -148,12 +154,18 @@ async def report_service_revenue(from_date: str = Query(...), to_date: str = Que
             "petugas": c.get("petugas_checkout") or c.get("petugas_checkin"),
         })
 
-    # 2) service_fee 3% dari bookings publik yang sudah dibayar
+    # 2) service_fee 3% dari bookings online/OTA/WhatsApp yang sudah lunas (2026-08-09,
+    # sama fix dgn report_summary/report_daily/report_rooms - filter sebelumnya literal
+    # "online" saja, tidak mencakup "ota"/"whatsapp"/"whatsapp_auto" [source booking
+    # auto-approve AI], jadi service fee dari booking2 itu hilang dari laporan ini.
+    # checkin_id exists=False jg disertakan - booking day_use yang sudah check-in
+    # service fee-nya SUDAH terhitung via checkin_items di atas, jangan dobel di sini.
     bk = await db.bookings.find(
         scoped({
             "jam_mulai": {"$gte": start, "$lte": end},
-            "source": "online",
+            "source": {"$in": ONLINE_BOOKING_SOURCES},
             "payment_status": "paid",
+            "checkin_id": {"$exists": False},
         }, property_id),
         {"_id": 0}
     ).to_list(5000)
@@ -172,7 +184,7 @@ async def report_service_revenue(from_date: str = Query(...), to_date: str = Que
             "subtotal": b.get("subtotal", 0),
             "service_fee": fee,
             "total": b.get("total", 0),
-            "source": "online",
+            "source": b.get("source") or "online",
             "petugas": b.get("created_by") or "public",
         })
 
@@ -183,8 +195,8 @@ async def report_service_revenue(from_date: str = Query(...), to_date: str = Que
     ).sort("tanggal", -1).to_list(5000)
     manual_total = sum(int(s.get("nominal") or 0) for s in svc)
 
-    # by_day breakdown
-    def bucket(iso): return (iso or "")[:10]
+    # by_day breakdown (2026-08-09) - tanggal WITA, bukan slice UTC mentah, lihat tanggal_wita()
+    def bucket(iso): return tanggal_wita(iso) if iso else ""
     by_day: Dict[str, Dict[str, int]] = {}
     for it in checkin_items:
         d = bucket(it["tanggal"])
@@ -351,16 +363,19 @@ async def report_kedatangan_harian(user: dict = Depends(get_current_user), prope
     `db.bookings` sama sekali, cuma di `db.checkins`. Checkins YANG PUNYA `from_booking_id`
     (asal dari booking WA AI/online yang staf check-in-kan) SENGAJA DILEWATI di sini -
     tamu itu sudah terhitung dari sisi `db.bookings`-nya, ikut dihitung lagi jadi dobel."""
-    end_date = datetime.now(timezone.utc).date()
+    # (2026-08-09) "hari ini" WAJIB dari WITA, bukan UTC mentah - sama fix dgn
+    # report_summary (2026-08-07) - dini hari WITA (00:00-07:59) masih tanggal UTC
+    # KEMARIN, geser jendela 30 hari ini off-by-one kalau dibiarkan.
+    end_date = datetime.now(timezone.utc).astimezone(timezone(timedelta(hours=8))).date()
     start_date = end_date - timedelta(days=29)
-    start_dt = datetime.combine(start_date, datetime.min.time()).replace(tzinfo=timezone.utc)
+    start_dt_iso, _ = wita_date_range_to_utc(start_date.isoformat(), start_date.isoformat())
     bookings = await db.bookings.find(scoped({
         "status": {"$ne": "cancelled"},
-        "jam_mulai": {"$gte": start_dt.isoformat()},
+        "jam_mulai": {"$gte": start_dt_iso},
     }, property_id), {"_id": 0, "jam_mulai": 1, "tipe": 1}).to_list(5000)
     walkin_checkins = await db.checkins.find(scoped({
         "from_booking_id": None,
-        "jam_checkin": {"$gte": start_dt.isoformat()},
+        "jam_checkin": {"$gte": start_dt_iso},
     }, property_id), {"_id": 0, "jam_checkin": 1, "tipe": 1}).to_list(5000)
     # Pisah Day Use vs Menginap (2026-08-03, permintaan Agus - grafik ini sebelumnya cuma
     # 1 angka gabungan per tanggal, staf tidak bisa lihat komposisi tipe kedatangan).
@@ -373,13 +388,13 @@ async def report_kedatangan_harian(user: dict = Depends(get_current_user), prope
             row["day_use"] += 1  # checkins walk-in TIDAK selalu punya field tipe eksplisit, default Day Use (mayoritas kasus nyata)
     for b in bookings:
         try:
-            tgl = parse_iso(b["jam_mulai"], "jam_mulai").date().isoformat()
+            tgl = tanggal_wita(b["jam_mulai"])  # (2026-08-09) tanggal WITA, bukan .date() UTC mentah
         except Exception:
             continue
         _tambah(tgl, b.get("tipe"))
     for c in walkin_checkins:
         try:
-            tgl = parse_iso(c["jam_checkin"], "jam_checkin").date().isoformat()
+            tgl = tanggal_wita(c["jam_checkin"])
         except Exception:
             continue
         _tambah(tgl, c.get("tipe"))
@@ -762,13 +777,16 @@ async def report_top_products(period: str = Query("month"), limit: int = Query(1
                               user: dict = Depends(get_current_user),
                               property_id: str = Depends(get_active_property)):
     """period: today | month | year"""
-    now = datetime.now(timezone.utc)
+    # (2026-08-09) "today"/"month"/"year" WAJIB dari tanggal WITA, bukan UTC mentah -
+    # sama fix dgn report_summary (2026-08-07) - dini hari WITA (00:00-07:59) masih
+    # tanggal UTC KEMARIN, geser batas periode ini off-by-one kalau dibiarkan.
+    today_wita = datetime.now(timezone.utc).astimezone(timezone(timedelta(hours=8))).date()
     if period == "today":
-        start = now.date().isoformat()
+        start, _ = wita_date_range_to_utc(today_wita.isoformat(), today_wita.isoformat())
     elif period == "year":
-        start = now.replace(month=1, day=1, hour=0, minute=0, second=0, microsecond=0).isoformat()
+        start, _ = wita_date_range_to_utc(today_wita.replace(month=1, day=1).isoformat(), today_wita.replace(month=1, day=1).isoformat())
     else:
-        start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0).isoformat()
+        start, _ = wita_date_range_to_utc(today_wita.replace(day=1).isoformat(), today_wita.replace(day=1).isoformat())
     trxs = await db.kasir.find(scoped({"timestamp": {"$gte": start}}, property_id), {"_id": 0}).to_list(10000)
     agg: Dict[str, Dict[str, Any]] = {}
     for t in trxs:
@@ -792,7 +810,8 @@ async def report_shift(from_date: str = Query(...), to_date: str = Query(...),
     start, end = wita_date_range_to_utc(from_date, to_date)
 
     def bucket(iso: str) -> str:
-        return (iso or "")[:10]
+        # (2026-08-09) tanggal WITA, bukan slice UTC mentah - lihat tanggal_wita() di core.py
+        return tanggal_wita(iso) if iso else ""
 
     def blank_row(tanggal: str, petugas: str) -> Dict[str, Any]:
         return {

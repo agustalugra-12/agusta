@@ -77,12 +77,22 @@ async def laporan_tren_okupansi(from_date: str = Query(...), to_date: str = Quer
                                  user: dict = Depends(get_current_user),
                                  property_id: str = Depends(get_active_property)):
     """Okupansi harian (%) = jumlah kamar unik terisi hari itu / total kamar.
-    Gabungan booking multi-saluran (bookings, status aktif/booking_paid) + walk-in (checkins)."""
+    Gabungan booking multi-saluran (bookings, status aktif/booking_paid) + walk-in (checkins).
+
+    (2026-08-09, bug nyata - "iso[:10] mentah" audit lanjutan permintaan Agus) - batas
+    query SEBELUMNYA dibandingkan LANGSUNG dari `from_date`/`to_date` yang diketik user
+    tanpa konversi WITA sama sekali (beda dari endpoint /reports/* lain yang sudah pakai
+    `wita_date_range_to_utc`) - dini hari WITA (00:00-07:59) bisa ke-exclude/ke-include
+    keliru. `mulai`/`selesai` yang dibandingkan ke `_occupies_date` juga dikonversi ke
+    WITA dulu sebelum `.date()` (di dalam _occupies_date sendiri) - drpd `.date()` pada
+    datetime UTC mentah yang bisa jatuh ke tanggal kalender yang salah."""
     total_rooms = await db.rooms.count_documents(scoped({}, property_id))
-    d_from = datetime.fromisoformat(from_date).replace(hour=0, minute=0, second=0, microsecond=0)
-    d_to = datetime.fromisoformat(to_date).replace(hour=0, minute=0, second=0, microsecond=0)
-    range_start = d_from.isoformat()
-    range_end = (d_to + timedelta(days=1)).isoformat()
+    d_from = datetime.fromisoformat(from_date)
+    d_to = datetime.fromisoformat(to_date)
+    next_day_after_to = (d_to.date() + timedelta(days=1)).isoformat()
+    range_start, _ = wita_date_range_to_utc(from_date, from_date)
+    range_end, _ = wita_date_range_to_utc(next_day_after_to, next_day_after_to)
+    WITA = timezone(timedelta(hours=8))
 
     bks = await db.bookings.find(scoped({
         # "booking_pending"/"checked_in" WAJIB disertakan (2026-08-02, bug nyata - sama pola
@@ -100,17 +110,20 @@ async def laporan_tren_okupansi(from_date: str = Query(...), to_date: str = Quer
     stays += [(c["room_nomor"], c["jam_checkin"], c.get("jam_checkout") or range_end) for c in cis]
 
     result = []
-    n_days = (d_to - d_from).days + 1
+    n_days = (d_to.date() - d_from.date()).days + 1
     for i in range(max(1, n_days)):
-        day = d_from + timedelta(days=i)
+        day = d_from.date() + timedelta(days=i)
         # Bug nyata ditemukan 2026-08-02 (sama pola dgn Kalender Ketersediaan/Daftar
         # Reservasi/saran tanggal alternatif - overlap TIMESTAMP mentah membuat hari CHECKOUT
         # ikut dihitung terisi, inflate okupansi). Pakai _occupies_date yang sama - juga benar
         # utk day-use (checkin/checkout hari yang sama tetap dihitung terisi hari itu).
+        # mulai/selesai dikonversi ke WITA DULU (2026-08-09) sebelum .date() di dalam
+        # _occupies_date - drpd .date() pada datetime UTC mentah yang jatuh ke tanggal
+        # kalender yang salah utk transaksi dini hari WITA (00:00-07:59).
         occupied = {
             room for room, mulai, selesai in stays
-            if _occupies_date(datetime.fromisoformat(mulai), datetime.fromisoformat(selesai), day.date())
+            if _occupies_date(datetime.fromisoformat(mulai).astimezone(WITA), datetime.fromisoformat(selesai).astimezone(WITA), day)
         }
         pct = round(len(occupied) / total_rooms * 100) if total_rooms else 0
-        result.append({"tanggal": day.date().isoformat(), "okupansi": min(100, pct)})
+        result.append({"tanggal": day.isoformat(), "okupansi": min(100, pct)})
     return result
