@@ -531,24 +531,40 @@ async def buat_reservasi_otomatis(log_id: str, data: dict, sumber: str, subjek: 
             # selesai walk-in + buffer 30 menit (waktu bersih-bersih) - kalau kamar itu
             # TERNYATA kosong di jendela yang digeser itu, pakai jam mulai yang digeser utk
             # booking ini (dicatat jelas di catatan, checkout TIDAK berubah).
-            if "walk-in" in e.detail.lower():
+            # Cari konflik Day Use dari KEDUA jalur yang mungkin (2026-08-09, bug nyata
+            # ditemukan Agus - kasus Made Suarniti/Kevin Gionino RedDoorz, kamar 14 dgn
+            # booking Day Use "Bayu" tidak pernah kedeteksi bisa digeser): versi lama HANYA
+            # cek string "walk-in" di pesan error, yang cuma muncul dari konflik db.checkins
+            # (walk-in mentah tanpa dokumen db.bookings). Day Use yang tercatat via
+            # db.bookings (jalur PALING UMUM - dari AI WhatsApp/Quick Book, BUKAN /checkins
+            # langsung) punya pesan error GENERIK "Kamar sudah dibooking..." TANPA kata
+            # "walk-in" sama sekali - logika geser jam ini tidak pernah kepicu utk kasus itu,
+            # kamar langsung dianggap gagal total & dilewati padahal seharusnya bisa digeser
+            # sama persis seperti walk-in (checkin Menginap tidak butuh kamarnya PERSIS jam
+            # standar OTA, cukup kapan saja hari itu sebelum tamu benar2 datang).
+            estimasi_selesai = None
+            bk_day_use = await db.bookings.find_one(scoped({
+                "room_id": r["id"], "tipe": "day_use",
+                "status": {"$in": ["aktif", "booking_pending", "booking_paid", "checked_in"]},
+                "jam_mulai": {"$lt": check_out.isoformat()},
+                "jam_selesai": {"$gt": check_in.isoformat()},
+            }, property_id))
+            if bk_day_use:
+                # Day Use dari db.bookings SUDAH tahu jam_selesai pasti (dijadwalkan) -
+                # lebih presisi drpd estimasi 6 jam yang dipakai jalur checkins di bawah.
+                estimasi_selesai = datetime.fromisoformat(bk_day_use["jam_selesai"]) + timedelta(minutes=30)
+            elif "walk-in" in e.detail.lower():
                 checkin_aktif = await db.checkins.find_one(scoped({
                     "room_id": r["id"], "status": "aktif",
                 }, property_id))
                 if checkin_aktif and checkin_aktif.get("jam_checkin"):
                     estimasi_selesai = datetime.fromisoformat(checkin_aktif["jam_checkin"]) + timedelta(hours=6, minutes=30)
-                    if estimasi_selesai < check_out:
-                        try:
-                            await check_room_available(r["id"], estimasi_selesai, check_out, property_id)
-                            jam_mulai_efektif = estimasi_selesai
-                        except HTTPException as e2:
-                            gagal_detail.append(f'kamar {r["nomor"]}: {e2.detail}')
-                            continue
-                    else:
-                        gagal_detail.append(f'kamar {r["nomor"]}: {e.detail}')
-                        continue
-                else:
-                    gagal_detail.append(f'kamar {r["nomor"]}: {e.detail}')
+            if estimasi_selesai and estimasi_selesai < check_out:
+                try:
+                    await check_room_available(r["id"], estimasi_selesai, check_out, property_id)
+                    jam_mulai_efektif = estimasi_selesai
+                except HTTPException as e2:
+                    gagal_detail.append(f'kamar {r["nomor"]}: {e2.detail}')
                     continue
             else:
                 gagal_detail.append(f'kamar {r["nomor"]}: {e.detail}')
