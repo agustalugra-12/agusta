@@ -816,9 +816,37 @@ async def proses_modifikasi_otomatis(log_id: str, data: dict, sumber: str, subje
     old_end = parse_iso(bookings[0]["jam_selesai"], "jam_selesai")
 
     if new_start.date() == old_start.date() and new_end.date() == old_end.date():
-        # Check-in & check-out baru sama persis dengan yang lama -> dianggap pembatalan
-        # terselubung (keputusan bisnis user), diproses sama seperti jenis="pembatalan"
-        # (batalkan_reservasi_otomatis sudah menangani seluruh grup kamar).
+        # Bug nyata ditemukan Agus 2026-08-09 (tamu "DarmaDarma Guest") - reservasi baru
+        # (nama tersamar "BMVisuals Guest") lalu 3 jam kemudian email MODIFIKASI datang
+        # dgn tanggal SAMA PERSIS tapi nama tersamar BEDA ("DarmaDarma Guest") - aturan lama
+        # di bawah ini otomatis membatalkannya sbg "pembatalan terselubung", padahal tamunya
+        # benar2 datang hari itu. RedDoorz memang biasa mengirim nama tersamar acak/berubah²
+        # per email SEBELUM tamu benar2 check-in (format khasnya "<kata> Guest") - nama
+        # BERUBAH itu justru bukti sesuatu SUNGGUHAN sedang di-update (kebalikan dari sinyal
+        # "tidak ada apa pun yang berubah" yang jadi dasar aturan pembatalan-terselubung ini).
+        # Fix: HANYA anggap pembatalan terselubung kalau nama tamu JUGA sama persis (benar2
+        # tidak ada apa pun yang berbeda, sinyal asli yang dimaksud aturan bisnis 2026-07-12)
+        # - kalau nama beda, ini modifikasi SUNGGUHAN (update nama), bukan pembatalan: simpan
+        # nama baru & catat sbg terproses, JANGAN batalkan.
+        nama_baru = (data.get("nama_tamu") or "").strip()
+        nama_lama = (bookings[0].get("nama_tamu") or "").strip()
+        if nama_baru and nama_baru.lower() != nama_lama.lower():
+            for b in bookings:
+                await db.bookings.update_one({"id": b["id"]}, {"$set": {"nama_tamu": nama_baru}})
+            kodes = ", ".join(b["kode"] for b in bookings)
+            await db.email_logs.update_one({"id": log_id}, {"$set": {
+                "status": "Parsed_Success",
+                "reservation_id": bookings[0]["id"], "reservation_ids": [b["id"] for b in bookings],
+                "aksi": "update_nama_tamu",
+                "alasan": f'Reservasi OTA {no_reservasi} ({kodes}) - tanggal tidak berubah tapi nama tamu berubah '
+                          f'("{nama_lama}" -> "{nama_baru}", umum terjadi RedDoorz sebelum check-in) - BUKAN '
+                          f'pembatalan, nama tamu diperbarui otomatis.',
+            }})
+            return
+        # Check-in & check-out baru sama persis DAN nama tamu juga sama persis dengan yang
+        # lama -> dianggap pembatalan terselubung (keputusan bisnis user), diproses sama
+        # seperti jenis="pembatalan" (batalkan_reservasi_otomatis sudah menangani seluruh
+        # grup kamar).
         await batalkan_reservasi_otomatis(log_id, {**data, "jenis": "modifikasi (tanggal tidak berubah)"}, sumber, subjek)
         return
 
