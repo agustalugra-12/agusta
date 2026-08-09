@@ -242,13 +242,16 @@ async def report_summary(user: dict = Depends(get_current_user), property_id: st
     today_start_dt = datetime.fromisoformat(today_start_iso)
     today_end_dt = today_start_dt + timedelta(days=1)
 
-    # 13 query di bawah SEMUANYA independen satu sama lain (tidak ada yang butuh hasil query
-    # lain) - dijalankan paralel lewat asyncio.gather (2026-07-28, audit performa) alih-alih
-    # berurutan seperti sebelumnya. Endpoint ini dipanggil tiap Dashboard dibuka/refresh -
-    # 13 round-trip DB berurutan jadi 1 round-trip paralel, latensi total turun signifikan.
+    # (2026-08-09, refactor - permintaan Agus "contek sistem penghitungan POS profesional
+    # spt Majoo, data akurat") - pendapatan/pengeluaran SEKARANG dari SATU pemanggilan
+    # _hitung_pendapatan_harian (mesin yang SAMA PERSIS dipakai /reports/daily) utk
+    # rentang bulan-berjalan, bukan gather 9 query terpisah dgn formula sendiri lagi -
+    # angka "hari ini" tinggal diambil sbg 1 baris dari situ, "bulan ini" dijumlah dari
+    # semua baris - dijamin selalu identik dgn Ringkasan utk rentang tanggal yang sama.
+    # 5 query di bawah tetap independen & paralel (asyncio.gather) - rooms/okupansi/
+    # jumlah kedatangan TIDAK terkait pendapatan sama sekali, tetap query langsung.
     (
-        rooms, today_bookings, ci_today, co_today, bk_today, kasir_today,
-        ci_month, kasir_month, bk_month, svc_today, svc_month, exp_today, exp_month,
+        rooms, today_bookings, ci_today, co_today, by_day_month,
     ) = await asyncio.gather(
         db.rooms.find(scoped({}, property_id), {"_id": 0}).to_list(500),
         db.bookings.find(scoped({
@@ -258,23 +261,7 @@ async def report_summary(user: dict = Depends(get_current_user), property_id: st
         }, property_id), {"_id": 0, "room_id": 1, "jam_mulai": 1, "jam_selesai": 1}).to_list(500),
         db.checkins.find(scoped({"jam_checkin": {"$gte": today_iso}}, property_id), {"_id": 0}).to_list(500),
         db.checkins.find(scoped({"jam_checkout": {"$gte": today_iso}, "status": "selesai"}, property_id), {"_id": 0}).to_list(500),
-        db.bookings.find(scoped({
-            "source": {"$in": ONLINE_BOOKING_SOURCES}, "payment_status": "paid",
-            "paid_at": {"$gte": today_iso}, "ota_harga_dikonfirmasi": {"$ne": False},
-            "checkin_id": {"$exists": False},
-        }, property_id), {"_id": 0, "total": 1}).to_list(1000),
-        db.kasir.find(scoped({"timestamp": {"$gte": today_iso}}, property_id), {"_id": 0}).to_list(1000),
-        db.checkins.find(scoped({"jam_checkout": {"$gte": month_start}, "status": "selesai"}, property_id), {"_id": 0}).to_list(2000),
-        db.kasir.find(scoped({"timestamp": {"$gte": month_start}}, property_id), {"_id": 0}).to_list(2000),
-        db.bookings.find(scoped({
-            "source": {"$in": ONLINE_BOOKING_SOURCES}, "payment_status": "paid",
-            "paid_at": {"$gte": month_start}, "ota_harga_dikonfirmasi": {"$ne": False},
-            "checkin_id": {"$exists": False},
-        }, property_id), {"_id": 0, "total": 1}).to_list(5000),
-        db.services.find(scoped({"tanggal": {"$gte": today_iso}}, property_id), {"_id": 0}).to_list(500),
-        db.services.find(scoped({"tanggal": {"$gte": month_start}}, property_id), {"_id": 0}).to_list(2000),
-        db.expenses.find(scoped({"tanggal": {"$gte": today_iso}}, property_id), {"_id": 0}).to_list(500),
-        db.expenses.find(scoped({"tanggal": {"$gte": month_start}}, property_id), {"_id": 0}).to_list(2000),
+        _hitung_pendapatan_harian(month_start_wita.isoformat(), today_wita.isoformat(), property_id),
     )
 
     counts = {"kosong": 0, "day_use": 0, "menginap": 0, "perlu_dibersihkan": 0, "maintenance": 0, "dipesan_hari_ini": 0}
@@ -301,49 +288,21 @@ async def report_summary(user: dict = Depends(get_current_user), property_id: st
             counts["dipesan_hari_ini"] += 1
         else:
             counts[status] = counts.get(status, 0) + 1
-    # checkins today
-    rev_room_today = sum(c.get("total", 0) for c in co_today)
-    # booking online/OTA/WhatsApp yang sudah lunas (dibucket per paid_at — tanggal uang benar-benar
-    # masuk, sama seperti /reports/daily & /reports/rooms yang sudah lebih dulu diperbaiki 2026-07-13;
-    # endpoint ini (dipakai Dashboard utama) sebelumnya kelewat, bikin "Pendapatan"/"Laba Bersih" di
-    # Dashboard tidak sinkron dengan jumlah booking (yang sudah mencakup semua sumber sejak awal).
-    # ota_harga_dikonfirmasi=False dikecualikan (2026-07-19) - booking OTA "Prepaid" yang
-    # emailnya tidak mencantumkan nominal, sempat memakai ESTIMASI tarif publik PMS sebagai
-    # placeholder (lihat buat_reservasi_otomatis, routes/otomasi_email.py) - jangan dihitung
-    # sebagai pendapatan asli sampai staf konfirmasi nominal settlement sungguhan.
-    #
-    # "checkin_id": {"$exists": False} (2026-08-09, bug nyata ditemukan Agus - Dashboard/
-    # Ringkasan/Laporan Kamar beda-beda angkanya) - DUA hal ditemukan sekaligus di sini:
-    # (1) ONLINE_BOOKING_SOURCES sebelumnya TIDAK mencakup "whatsapp_auto" (booking
-    # auto-approve AI, day_use MAUPUN menginap - beda string dari "whatsapp" polos jalur
-    # approval manual), jadi Rp350.200 booking asli bulan ini hilang dari SEMUA laporan
-    # pendapatan tanpa disadari. (2) Docstring lama endpoint ini & report_daily/
-    # report_rooms mengklaim "booking online tidak pernah menghasilkan dokumen checkins
-    # terpisah, jadi tidak ada duplikasi" - klaim itu SALAH utk Day Use: checkin_from_
-    # booking (routes/bookings.py) MEMANG membuat dokumen checkins utk tipe day_use (cuma
-    # menginap yang tidak), dan booking asalnya diberi `checkin_id`. Kalau cuma nambah
-    # "whatsapp_auto" ke daftar source TANPA exclude ini, 27 booking day_use yang sudah
-    # checked-in akan KE-DOUBLE-HITUNG (sekali dari checkins, sekali dari bookings ini).
-    # Filter checkin_id exists=False memastikan booking yang REVENUE-nya sudah tercakup
-    # via checkins (co_today/ci_month di atas) tidak ikut dihitung lagi di sini - yang
-    # tersisa di query ini murni booking yang BELUM/TIDAK PERNAH check-in fisik (Menginap
-    # selalu begini, Day Use yang belum tiba juga begini sementara).
-    rev_booking_today = sum(int(b.get("total") or 0) for b in bk_today)
-    # kasir today / month
-    rev_kasir_today = sum(k.get("total", 0) for k in kasir_today)
-    rev_per_kat = {"makanan": 0, "minuman": 0, "laundry": 0}
-    for k in kasir_today:
-        for it in k.get("items", []):
-            rev_per_kat[it["kategori"]] = rev_per_kat.get(it["kategori"], 0) + it["subtotal"]
-    # month
-    rev_booking_month = sum(int(b.get("total") or 0) for b in bk_month)
-    # services (manual)
-    rev_svc_today = sum(s.get("nominal", 0) for s in svc_today)
-    rev_svc_month = sum(s.get("nominal", 0) for s in svc_month)
-    rev_month = sum(c.get("total", 0) for c in ci_month) + sum(k.get("total", 0) for k in kasir_month) + rev_svc_month + rev_booking_month
-    # expenses
-    total_exp_today = sum(e.get("nominal", 0) for e in exp_today)
-    total_exp_month = sum(e.get("nominal", 0) for e in exp_month)
+    # Pendapatan & pengeluaran (2026-08-09, lihat komentar di gather di atas) - "hari
+    # ini" tinggal 1 baris dari by_day_month (default nol kalau belum ada transaksi sama
+    # sekali hari ini), "bulan ini" dijumlah dari semua baris - SATU sumber angka yang
+    # sama persis dgn /reports/daily (Ringkasan) & /reports/rooms utk rentang yang sama,
+    # bukan dihitung ulang pakai formula sendiri (paid_at/jam_checkout) lagi seperti
+    # sebelumnya - itulah akar masalah "Dashboard tidak sinkron dengan Ringkasan".
+    _init_kosong = {"kamar": 0, "makanan": 0, "minuman": 0, "laundry": 0, "service": 0, "pengeluaran": 0}
+    today_row = by_day_month.get(today_wita.isoformat(), _init_kosong)
+    rev_kasir_today = today_row["makanan"] + today_row["minuman"] + today_row["laundry"]
+    rev_per_kat = {"makanan": today_row["makanan"], "minuman": today_row["minuman"], "laundry": today_row["laundry"]}
+    rev_svc_today = today_row["service"]
+    total_exp_today = today_row["pengeluaran"]
+    rev_month = sum(r["kamar"] + r["makanan"] + r["minuman"] + r["laundry"] + r["service"] for r in by_day_month.values())
+    rev_svc_month = sum(r["service"] for r in by_day_month.values())
+    total_exp_month = sum(r["pengeluaran"] for r in by_day_month.values())
     # Okupansi harian (2026-07-21, permintaan user) - kamar yang TIDAK "kosong" (day_use,
     # menginap, dipesan_hari_ini, perlu_dibersihkan, maintenance) dianggap terisi/tidak
     # tersedia utk tamu walk-in hari ini - definisi operasional, bukan cuma "ada tamu
@@ -355,8 +314,8 @@ async def report_summary(user: dict = Depends(get_current_user), property_id: st
         "okupansi_persen": okupansi_persen,
         "tamu_hari_ini": len(ci_today),
         "checkout_hari_ini": len(co_today),
-        "pendapatan_hari_ini": rev_room_today + rev_booking_today + rev_kasir_today + rev_svc_today,
-        "pendapatan_kamar_hari_ini": rev_room_today + rev_booking_today,
+        "pendapatan_hari_ini": today_row["kamar"] + rev_kasir_today + rev_svc_today,
+        "pendapatan_kamar_hari_ini": today_row["kamar"],
         "pendapatan_kasir_hari_ini": rev_kasir_today,
         "pendapatan_service_hari_ini": rev_svc_today,
         "pendapatan_service_bulan_ini": rev_svc_month,
@@ -435,30 +394,41 @@ async def report_kedatangan_harian(user: dict = Depends(get_current_user), prope
     return out
 
 
-@api.get("/reports/daily")
-async def report_daily(from_date: str = Query(...), to_date: str = Query(...),
-                       user: dict = Depends(get_current_user),
-                       property_id: str = Depends(get_active_property)):
-    """Return per-day revenue between dates (inclusive). Dates: YYYY-MM-DD.
-    "kamar" mencakup walk-in (checkins, dibucket per jam_checkout) DAN booking
-    online/OTA/WhatsApp yang sudah lunas (bookings) — pendapatan booking menginap
-    diakui per MALAM inap (accrual/matching principle), bukan numpuk semua di tanggal
-    paid_at, supaya booking yang nginap lintas bulan (mis. check-in akhir Juli, checkout
-    pertengahan Agustus) kebagi proporsional ke tiap bulan sesuai malam yang benar-benar
-    terpakai di bulan itu — konsisten dengan /laporan-analitik/pendapatan.
+async def _hitung_pendapatan_harian(from_date: str, to_date: str, property_id: str) -> Dict[str, Dict[str, int]]:
+    """Mesin pendapatan harian TUNGGAL (2026-08-09, permintaan Agus - "contek sistem
+    penghitungan POS lain seperti Majoo... agar terlihat profesional dan data akurat").
 
-    (2026-08-09, KOREKSI - klaim "tidak ada duplikasi dengan checkins karena booking
-    online tidak pernah menghasilkan dokumen checkins terpisah" di sini SEBELUMNYA SALAH:
-    checkin_from_booking (routes/bookings.py) MEMANG membuat dokumen checkins utk booking
-    tipe day_use [cuma menginap yang tidak] & menandai booking asalnya dgn `checkin_id`.
-    Query `bk` di bawah SEKARANG exclude `checkin_id` yang sudah terisi - sama fix dgn
-    report_summary/report_rooms, lihat komentar lengkap di report_summary."""
+    Sebelum ini, /reports/summary (Dashboard) menghitung pendapatan "hari ini"/"bulan
+    ini" pakai formula SENDIRI (booking dibucket per `paid_at` - tanggal uang MASUK, dan
+    walk-in dibucket per `jam_checkout` - tanggal PULANG), sementara /reports/daily
+    (Ringkasan) & /reports/rooms sudah lebih dulu pakai formula berbeda (booking Menginap
+    diakui per MALAM INAP/accrual dari tanggal KEDATANGAN, walk-in dibucket per
+    `jam_checkin`) - DUA formula independen utk pertanyaan yang seharusnya sama ("berapa
+    pendapatan periode ini"), makanya Dashboard & Ringkasan tidak pernah sinkron.
+
+    Standar akuntansi hospitality yang benar (dipakai PMS profesional spt Cloudbeds/
+    Mews/Majoo) - REVENUE RECOGNITION by SERVICE DATE (matching principle: pendapatan
+    diakui saat jasanya benar-benar dikonsumsi/malam kamar terpakai), BUKAN tanggal uang
+    diterima (`paid_at` - itu laporan ARUS KAS, konsep akuntansi berbeda, sengaja TIDAK
+    dipakai di sini). Formula /reports/daily yang lebih dulu benar itulah yang jadi mesin
+    tunggal ini - report_daily & report_summary SEKARANG memanggil fungsi yang SAMA
+    PERSIS, bukan menghitung ulang sendiri-sendiri, supaya Dashboard & Ringkasan selalu
+    menunjukkan angka yang identik untuk rentang tanggal yang sama (satu sumber
+    kebenaran, prinsip #1 sistem pelaporan profesional).
+
+    Kasir (POS) SENGAJA tetap dibucket per `timestamp` transaksi apa adanya (bukan
+    accrual) - itu memang standar POS: barang/jasa kasir (makanan/minuman/laundry)
+    dikonsumsi SAAT itu juga, tidak ada konsep "malam terpakai" spt kamar.
+
+    checkin_id exists=False di query booking (2026-08-09) - booking yang SUDAH punya
+    dokumen checkins sendiri (Day Use yang sudah check-in) TIDAK ikut dihitung di sini
+    lagi, supaya tidak double-count dengan `ci` di bawah - lihat detail insiden nyata di
+    commit yang menambahkan filter ini."""
     start, end = wita_date_range_to_utc(from_date, to_date)
-    # Walk-in (checkins) dibucket per jam_checkin, BUKAN jam_checkout (2026-08-07, sama
-    # keputusan dgn report_rooms - konsisten "tanggal 7" berarti tamu yg DATANG tanggal
-    # 7). Booking Menginap TETAP pakai accrual malam-inap di bawah (tidak diubah - itu
-    # soal spread lintas BANYAK malam, beda persoalan dari Day Use walk-in yg cuma
-    # kadang lewat tengah malam sekali).
+    # Walk-in (checkins) dibucket per jam_checkin (tanggal KEDATANGAN), bukan
+    # jam_checkout (2026-08-07, keputusan Agus - konsisten "tanggal 7" berarti tamu yg
+    # DATANG tanggal 7, bukan yg pulang tanggal 7 - insiden nyata tamu Day Use lewat
+    # tengah malam ikut ke laporan tanggal yang salah).
     ci = await db.checkins.find(scoped({"jam_checkin": {"$gte": start, "$lte": end}, "status": "selesai"}, property_id), {"_id": 0}).to_list(5000)
     bk = await db.bookings.find(scoped({
         "source": {"$in": ONLINE_BOOKING_SOURCES},
@@ -508,6 +478,18 @@ async def report_daily(from_date: str = Query(...), to_date: str = Query(...),
         d = bucket(e["tanggal"])
         by_day.setdefault(d, _init())
         by_day[d]["pengeluaran"] += e.get("nominal", 0)
+    return by_day
+
+
+@api.get("/reports/daily")
+async def report_daily(from_date: str = Query(...), to_date: str = Query(...),
+                       user: dict = Depends(get_current_user),
+                       property_id: str = Depends(get_active_property)):
+    """Return per-day revenue between dates (inclusive). Dates: YYYY-MM-DD. Formula
+    lengkap (accrual malam-inap, dibucket per tanggal kedatangan) ada di
+    _hitung_pendapatan_harian - SATU sumber kebenaran, dipakai juga oleh
+    /reports/summary (Dashboard) supaya kedua laporan selalu sinkron."""
+    by_day = await _hitung_pendapatan_harian(from_date, to_date, property_id)
     result = []
     for d in sorted(by_day.keys()):
         row = by_day[d]
