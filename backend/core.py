@@ -157,6 +157,28 @@ def wita_date_range_to_utc(from_date: str, to_date: str) -> tuple[str, str]:
     end_wita = datetime.fromisoformat(f"{to_date}T23:59:59+08:00")
     return start_wita.astimezone(timezone.utc).isoformat(), end_wita.astimezone(timezone.utc).isoformat()
 
+def tanggal_wita(iso: str) -> str:
+    """Konversi timestamp UTC tersimpan (mis. "2026-08-01T19:00:00+00:00") ke tanggal
+    WITA-nya ("YYYY-MM-DD") - dipakai utk MENGELOMPOKKAN record per hari di laporan
+    (2026-08-09, bug nyata ditemukan Agus - baris tanggal 31 Juli muncul tidak diminta
+    di Laporan Arus Kas baru). `wita_date_range_to_utc` di atas SUDAH benar mengonversi
+    batas AWAL/AKHIR query ($gte/$lte) - itu memastikan record yang TEPAT masuk hasil
+    query. TAPI begitu record itu didapat, pengelompokan per-hari di banyak endpoint
+    laporan (report_daily dkk) sebelumnya masih pakai `iso[:10]` mentah - slice tanggal
+    KALENDER UTC, bukan WITA. Transaksi jam 00:00-07:59 WITA tersimpan sbg UTC hari
+    SEBELUMNYA (WITA = UTC+8), jadi ikut ke baris tanggal yang salah di laporan
+    per-hari. Dipakai di _hitung_pendapatan_harian & report_arus_kas (2026-08-09) -
+    endpoint report/laporan lain yang masih pakai `iso[:10]` mentah belum ikut
+    diaudit/diperbaiki, flagged terpisah utk Agus."""
+    dt = datetime.fromisoformat(iso)
+    if dt.tzinfo is None:
+        # Beberapa field lama (mis. expenses/services yang diisi manual tanpa jam)
+        # kadang tersimpan sbg date-only/naive, tanpa offset - anggap SUDAH WITA lokal
+        # (bukan UTC), jangan digeser lagi, drpd astimezone() Python diam2 mengasumsikan
+        # timezone SISTEM (bisa salah kalau server pindah region suatu saat).
+        dt = dt.replace(tzinfo=timezone(timedelta(hours=8)))
+    return dt.astimezone(timezone(timedelta(hours=8))).date().isoformat()
+
 def hash_password(p: str) -> str:
     return bcrypt.hashpw(p.encode(), bcrypt.gensalt()).decode()
 

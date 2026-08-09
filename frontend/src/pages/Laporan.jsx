@@ -80,6 +80,7 @@ export default function Laporan() {
       <Tabs value={tab} onValueChange={setTab}>
         <TabsList className="flex flex-wrap h-auto">
           <TabsTrigger value="ringkasan" data-testid="tab-ringkasan">Ringkasan</TabsTrigger>
+          <TabsTrigger value="arus-kas" data-testid="tab-arus-kas">Arus Kas</TabsTrigger>
           <TabsTrigger value="kamar" data-testid="tab-kamar">Laporan Kamar</TabsTrigger>
           <TabsTrigger value="kasir" data-testid="tab-kasir">Laporan Kasir</TabsTrigger>
           <TabsTrigger value="items" data-testid="tab-items">Item Terjual</TabsTrigger>
@@ -96,6 +97,7 @@ export default function Laporan() {
           {tab !== "top" && tab !== "saluran" && tab !== "ota-prepaid" && <DateRange from={from} setFrom={setFrom} to={to} setTo={setTo} />}
 
           <TabsContent value="ringkasan"><Ringkasan from={from} to={to} /></TabsContent>
+          <TabsContent value="arus-kas"><LaporanArusKas from={from} to={to} /></TabsContent>
           <TabsContent value="kamar"><LaporanKamar from={from} to={to} /></TabsContent>
           <TabsContent value="kasir"><LaporanKasir from={from} to={to} /></TabsContent>
           <TabsContent value="items"><LaporanItems from={from} to={to} /></TabsContent>
@@ -181,6 +183,80 @@ function Ringkasan({ from, to }) {
         </ResponsiveContainer></div>
       </CardContent></Card>
       <Button onClick={exp} variant="outline" data-testid="export-ringkasan">Export CSV / Excel</Button>
+    </div>
+  );
+}
+
+// Arus Kas / Payment Report (2026-08-09, permintaan Agus - "contek sistem POS
+// profesional spt Majoo, buat versi terbaik") - SENGAJA laporan TERPISAH dari
+// Ringkasan, bukan gantinya. Ringkasan = pendapatan diakui per malam TERPAKAI
+// (akrual/matching principle, "berapa yang kami hasilkan"). Arus Kas = uang yang
+// BENAR-BENAR diterima per tanggal transaksi bayar terjadi (cash basis, "berapa uang
+// yang masuk") - DP booking bulan lalu utk tamu yang menginap bulan ini muncul di sini
+// bulan LALU, kebalikan dari Ringkasan. Dua angka boleh beda, itu memang jawab
+// pertanyaan berbeda - persis pola "Revenue Report" vs "Payment Report" di PMS
+// profesional (Cloudbeds/Mews/Opera).
+function LaporanArusKas({ from, to }) {
+  const [rows, setRows] = useState([]);
+  useEffect(() => { api.get("/reports/arus-kas", { params: { from_date: from, to_date: to } }).then(r => setRows(r.data)); }, [from, to]);
+  const t = useMemo(() => {
+    const t = { online: 0, kamar_tunai_langsung: 0, kasir: 0, total_uang_masuk: 0 };
+    rows.forEach(r => { for (const k of Object.keys(t)) t[k] += r[k] || 0; });
+    return t;
+  }, [rows]);
+  const exp = () => downloadCsv(`Laporan_Arus_Kas_${from}_${to}.csv`,
+    ["Tanggal", "Online (Tripay)", "Kamar Tunai/QR Langsung", "Kasir", "Total Uang Masuk"],
+    rows.map(r => [r.tanggal, r.online, r.kamar_tunai_langsung, r.kasir, r.total_uang_masuk]));
+  return (
+    <div className="space-y-4">
+      <Card className="border-amber-200 bg-amber-50/50">
+        <CardContent className="p-4 text-xs text-amber-800">
+          Laporan ini beda dari <b>Ringkasan</b>: di sini uang dihitung pada tanggal <b>benar-benar diterima</b> (DP/pelunasan online,
+          cash di lokasi, kasir) - bukan tanggal tamu menginap. Wajar kalau totalnya beda dari tab Ringkasan; keduanya sama-sama benar,
+          cuma menjawab pertanyaan berbeda ("uang masuk kapan" vs "pendapatan periode ini").
+        </CardContent>
+      </Card>
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+        <Stat label="Online (Tripay)" value={fmtRp(t.online)} color="#3B82F6" />
+        <Stat label="Kamar Tunai/QR Langsung" value={fmtRp(t.kamar_tunai_langsung)} color="#F97316" />
+        <Stat label="Kasir" value={fmtRp(t.kasir)} color="#A855F7" />
+        <Stat label="Total Uang Masuk" value={fmtRp(t.total_uang_masuk)} color="#10B981" />
+      </div>
+      <Card className="border-slate-200"><CardContent className="p-5">
+        <h3 className="font-bold mb-3">Grafik Uang Masuk per Hari</h3>
+        <div className="h-72 w-full"><ResponsiveContainer>
+          <BarChart data={rows}>
+            <CartesianGrid strokeDasharray="3 3" stroke="#E2E8F0" />
+            <XAxis dataKey="tanggal" tick={{ fontSize: 11 }} />
+            <YAxis tick={{ fontSize: 11 }} tickFormatter={(v) => (v / 1000).toFixed(0) + "k"} />
+            <Tooltip formatter={(v) => fmtRp(v)} />
+            <Legend />
+            <Bar dataKey="online" stackId="a" fill="#3B82F6" name="Online (Tripay)" />
+            <Bar dataKey="kamar_tunai_langsung" stackId="a" fill="#F97316" name="Kamar Tunai/QR Langsung" />
+            <Bar dataKey="kasir" stackId="a" fill="#A855F7" name="Kasir" />
+          </BarChart>
+        </ResponsiveContainer></div>
+      </CardContent></Card>
+      <Card className="border-slate-200"><CardContent className="p-0 overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead className="bg-slate-50 text-slate-600 text-xs uppercase"><tr>
+            {["Tanggal", "Online (Tripay)", "Kamar Tunai/QR Langsung", "Kasir", "Total"].map(h => <th key={h} className="text-left p-3">{h}</th>)}
+          </tr></thead>
+          <tbody>
+            {rows.map(r => (
+              <tr key={r.tanggal} className="border-t border-slate-100">
+                <td className="p-3 text-xs">{r.tanggal}</td>
+                <td className="p-3">{fmtRp(r.online)}</td>
+                <td className="p-3">{fmtRp(r.kamar_tunai_langsung)}</td>
+                <td className="p-3">{fmtRp(r.kasir)}</td>
+                <td className="p-3 font-bold text-emerald-700">{fmtRp(r.total_uang_masuk)}</td>
+              </tr>
+            ))}
+            {rows.length === 0 && <tr><td colSpan={5} className="p-6 text-center text-slate-500">Tidak ada transaksi</td></tr>}
+          </tbody>
+        </table>
+      </CardContent></Card>
+      <Button onClick={exp} variant="outline" data-testid="export-arus-kas">Export CSV / Excel</Button>
     </div>
   );
 }

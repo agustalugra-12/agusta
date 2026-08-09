@@ -442,8 +442,7 @@ async def _hitung_pendapatan_harian(from_date: str, to_date: str, property_id: s
     ex = await db.expenses.find(scoped({"tanggal": {"$gte": start, "$lte": end}}, property_id), {"_id": 0}).to_list(5000)
     sv = await db.services.find(scoped({"tanggal": {"$gte": start, "$lte": end}}, property_id), {"_id": 0}).to_list(5000)
     by_day: Dict[str, Dict[str, int]] = {}
-    def bucket(iso):
-        return iso[:10]
+    bucket = tanggal_wita  # (2026-08-09) konversi ke tanggal KALENDER WITA, bukan slice UTC mentah - lihat docstring tanggal_wita() di core.py
     def _init(): return {"kamar": 0, "makanan": 0, "minuman": 0, "laundry": 0, "service": 0, "pengeluaran": 0}
     for c in ci:
         d = bucket(c["jam_checkin"])
@@ -454,8 +453,8 @@ async def _hitung_pendapatan_harian(from_date: str, to_date: str, property_id: s
         jm, js = b.get("jam_mulai"), b.get("jam_selesai")
         if not jm or not js:
             continue
-        d0 = datetime.fromisoformat(jm).date()
-        d1 = datetime.fromisoformat(js).date()
+        d0 = datetime.fromisoformat(tanggal_wita(jm)).date()
+        d1 = datetime.fromisoformat(tanggal_wita(js)).date()
         nights = max(1, (d1 - d0).days)
         per_night = total / nights
         for i in range(nights):
@@ -470,12 +469,15 @@ async def _hitung_pendapatan_harian(from_date: str, to_date: str, property_id: s
         for it in k.get("items", []):
             by_day[d][it["kategori"]] += it["subtotal"]
     for s in sv:
-        d = bucket(s.get("tanggal", ""))
-        if not d: continue
+        tgl_raw = s.get("tanggal")
+        if not tgl_raw: continue
+        d = bucket(tgl_raw)
         by_day.setdefault(d, _init())
         by_day[d]["service"] += int(s.get("nominal") or 0)
     for e in ex:
-        d = bucket(e["tanggal"])
+        tgl_raw = e.get("tanggal")
+        if not tgl_raw: continue
+        d = bucket(tgl_raw)
         by_day.setdefault(d, _init())
         by_day[d]["pengeluaran"] += e.get("nominal", 0)
     return by_day
@@ -523,6 +525,79 @@ async def report_kas_metode_bayar(from_date: str = Query(...), to_date: str = Qu
             if m in totals:
                 totals[m] += int(p.get("jumlah") or 0)
     return {**totals, "total": sum(totals.values())}
+
+
+@api.get("/reports/arus-kas")
+async def report_arus_kas(from_date: str = Query(...), to_date: str = Query(...),
+                          user: dict = Depends(get_current_user),
+                          property_id: str = Depends(get_active_property)):
+    """Laporan Arus Kas / Payment Report (2026-08-09, permintaan Agus - "contek sistem
+    POS profesional spt Majoo, buat versi terbaik" setelah /reports/daily & /reports/
+    summary disatukan ke akrual per tanggal KEDATANGAN/malam-inap).
+
+    Sengaja TERPISAH dari /reports/daily - PMS profesional (Cloudbeds/Mews/Opera) selalu
+    punya DUA laporan berbeda yang boleh menunjukkan angka BEDA tanpa itu jadi bug:
+    - "Revenue Report" (di sini: /reports/daily) = pendapatan diakui per malam TERPAKAI
+      (akrual, matching principle) - "berapa yang KAMI HASILKAN periode ini".
+    - "Payment/Cash Flow Report" (endpoint INI) = uang yang BENAR-BENAR DITERIMA per
+      tanggal transaksi bayar terjadi (cash basis) - "berapa UANG YANG MASUK periode
+      ini". DP yang diterima bulan lalu utk booking yang menginap bulan ini MUNCUL DI
+      SINI bulan lalu, bukan bulan ini - kebalikan dari /reports/daily.
+
+    3 sumber uang masuk, masing2 dibucket per tanggal SUNGGUHAN transaksi bayar terjadi:
+    1. `online` - pembayaran gateway (Tripay QRIS/VA, DP maupun pelunasan/collect-balance
+       maupun verifikasi manual staf) dari `payment_log`, HANYA status settlement/capture
+       (bukan pending/expired) - dibucket per `updated_at` (saat callback/staf BENAR-BENAR
+       mengonfirmasi settlement), BUKAN `created_at` (itu cuma saat link/invoice dibuat -
+       tamu bisa bayar berjam-jam/berhari-hari kemudian, beda tanggal kalau pakai created_at).
+    2. `kamar_tunai_langsung` - bagian FISIK (cash/QR di lokasi, BUKAN online) dari
+       `checkins.pembayaran`, dibucket per `jam_checkout` (saat transaksi kamar itu
+       benar2 tutup/lunas). Utk checkin yang berasal dari booking (`from_booking_id`
+       terisi), porsi `booking_paid` (DP online yang sudah lebih dulu dihitung di
+       `online` di atas) DIKURANGI dari total pembayaran checkin ini - supaya TIDAK
+       double-count DP yang sama muncul di 2 bucket. Sisanya (kalau ada) murni uang
+       fisik BARU yang dikumpulkan staf saat check-in/checkout (tarif dasar walk-in,
+       atau sisa/overtime yang dibayar cash).
+    3. `kasir` - transaksi POS (makanan/minuman/laundry), dibucket per `timestamp`
+       transaksi - tidak ada ambiguitas, konsumsi & bayar terjadi bersamaan.
+
+    Booking Menginap yang BELUM check-in/checkout (msh `booking_paid`) - DP-nya TETAP
+    muncul di sini (via payment_log) begitu settlement, walau kamarnya belum terpakai
+    sama sekali - itu memang inti bedanya dari /reports/daily (akrual nunggu jasa
+    terpakai, cash flow tidak nunggu apa-apa selain uang beneran diterima)."""
+    start, end = wita_date_range_to_utc(from_date, to_date)
+    logs, ci, ks = await asyncio.gather(
+        db.payment_log.find(scoped({
+            "transaction_status": {"$in": ["settlement", "capture"]},
+            "updated_at": {"$gte": start, "$lte": end},
+        }, property_id), {"_id": 0, "gross_amount": 1, "updated_at": 1}).to_list(5000),
+        db.checkins.find(scoped({
+            "jam_checkout": {"$gte": start, "$lte": end}, "status": "selesai",
+        }, property_id), {"_id": 0, "jam_checkout": 1, "pembayaran": 1, "from_booking_id": 1, "booking_paid": 1}).to_list(5000),
+        db.kasir.find(scoped({"timestamp": {"$gte": start, "$lte": end}}, property_id), {"_id": 0, "timestamp": 1, "total": 1}).to_list(5000),
+    )
+    by_day: Dict[str, Dict[str, int]] = {}
+    bucket = tanggal_wita  # (2026-08-09) tanggal KALENDER WITA, bukan slice UTC mentah - lihat core.py
+    def _init(): return {"online": 0, "kamar_tunai_langsung": 0, "kasir": 0}
+    for log in logs:
+        d = bucket(log["updated_at"])
+        by_day.setdefault(d, _init())
+        by_day[d]["online"] += int(float(log.get("gross_amount") or 0))
+    for c in ci:
+        d = bucket(c["jam_checkout"])
+        by_day.setdefault(d, _init())
+        total_bayar = sum(int(p.get("jumlah", 0)) for p in c.get("pembayaran") or [])
+        online_portion = int(c.get("booking_paid") or 0) if c.get("from_booking_id") else 0
+        by_day[d]["kamar_tunai_langsung"] += max(0, total_bayar - online_portion)
+    for k in ks:
+        d = bucket(k["timestamp"])
+        by_day.setdefault(d, _init())
+        by_day[d]["kasir"] += k.get("total", 0)
+    result = []
+    for d in sorted(by_day.keys()):
+        row = by_day[d]
+        result.append({"tanggal": d, **row, "total_uang_masuk": row["online"] + row["kamar_tunai_langsung"] + row["kasir"]})
+    return result
 
 _PAYMENT_OPTION_JENIS = {"dp50": "DP", "full": "Lunas", "collect_balance": "Pelunasan", "manual": "Lunas (Manual)"}
 
