@@ -144,6 +144,35 @@ actions with care", bukan diabaikan): operasi destruktif (`rm -rf`, `git push --
   klasifikasi AI pesan WhatsApp tamu (`backend/routes/issues.py`, fungsi `buat_issue`
   reusable dari endpoint manual maupun otomatis).
 
+## Gerbang Regresi — Wajib untuk Perubahan Laporan/Pendapatan/Checkin-Checkout
+
+**Sebelum push** perubahan yang menyentuh `routes/reports.py`, `routes/laporan_analitik.py`,
+alur checkin/checkout (`routes/checkins.py`, `routes/bookings.py` checkin_from_booking), atau
+helper tanggal WITA di `core.py` (`tanggal_wita`, `wita_date_range_to_utc`) — **WAJIB**
+jalankan dulu:
+
+```bash
+cd backend && venv/bin/python -m scripts.test_regresi
+```
+
+Kalau ada `FAIL` (exit code 1) — **JANGAN push**, perbaiki dulu. Dibuat 2026-08-10 setelah
+audit pendapatan menemukan & memperbaiki beberapa bug nyata (Dashboard vs Ringkasan angkanya
+tidak pernah sinkron, booking `source="whatsapp_auto"` hilang dari laporan, double-count
+checkins vs bookings, salah bucket tanggal UTC vs WITA) **tanpa ada tes otomatis yang
+menjaganya** — sama pola dengan Modul 19 "AI Self-Healing" yang sudah lebih dulu ada di
+`ai-chat-bot` (repo terpisah, lihat CLAUDE.md-nya).
+
+Beda dari `tests/` (pytest, butuh server test terpisah + DB terpisah, lihat docstring
+`tests/conftest.py` — infra itu tidak pernah benar-benar disiapkan di server produksi ini,
+jangan diandalkan) — `scripts/test_regresi.py` jalan LANGSUNG in-process terhadap DB produksi
+yang sama, tapi aman: semua data tes dibuat di bawah `property_id` palsu (unik per skenario,
+tidak pernah muncul di property switcher UI manapun) dan dibersihkan total di akhir run.
+
+**Kalau menemukan bug pendapatan/laporan/checkin-checkout nyata baru**: tambahkan skenario
+regresi baru ke `test_regresi.py` yang merepro bug itu (data test yang MENCERMINKAN kejadian
+nyata, bukan asumsi) sebelum memperbaikinya — supaya begitu fix selesai, langsung ada bukti
+otomatis bug itu tidak akan lolos lagi diam-diam di masa depan.
+
 ## Deployment
 
 VPS ini (`pms.pelangi.com`, hostname sama) adalah tempat kode ini jalan langsung —
