@@ -285,8 +285,22 @@ async def checkout(checkin_id: str, body: CheckoutIn, user: dict = Depends(get_c
     # Day Use dia sudah punya sumber independen dari db.checkins (jam_checkin/jam_checkout
     # asli), jadi tetap akurat lepas dari status booking ini.
     if c.get("from_booking_id"):
+        # (2026-08-09, bug nyata ditemukan Agus - tamu Harmoni "I Kadek Adi": DP 50%
+        # Rp61.800 dibayar online via booking, SISANYA Rp61.800 dikumpulkan cash fisik
+        # di checkout ini [tercermin benar di `pembayaran_final` checkin & sudah
+        # ke-posting benar ke rekening kas via auto_posting di bawah] - TAPI
+        # `bookings.amount_due` booking asalnya TIDAK PERNAH ikut di-update di sini,
+        # cuma status/checked_out_at/by yang disentuh. Akibatnya booking itu SELAMANYA
+        # terlihat "baru bayar DP 61.800/123.600" di Reservasi/Dashboard/laporan manapun
+        # yang baca `bookings.amount_due` (mis. status_bayar_booking di core.py,
+        # collect-balance), padahal uangnya sudah benar-benar lunas diterima. Sync
+        # amount_due ke JUMLAH SEBENARNYA yang sudah terkumpul (pembayaran_final,
+        # sumber kebenaran yang sama dipakai checkin ini sendiri) - dibatasi max total
+        # spy tidak pernah lebih besar dari tagihan asli walau ada overtime yang
+        # dibayar terpisah dari DP awal.
         await db.bookings.update_one({"id": c["from_booking_id"]}, {"$set": {
             "status": "checked_out", "checked_out_at": now.isoformat(), "checked_out_by": user["nama"],
+            "amount_due": min(sum(int(p.get("jumlah", 0)) for p in pembayaran_final), calc["total"]),
         }})
     # housekeeping log
     await db.housekeeping_log.insert_one({
