@@ -240,6 +240,22 @@ async def tripay_callback(request: Request):
             elif status == "refund":
                 new_payment = "refunded"
 
+            # Aksi yang berlaku SEKALI SAJA per grup (bukan per kamar) dikumpulkan dulu di
+            # loop ini, dieksekusi SETELAH loop selesai - 2 bug nyata ditemukan Agus
+            # 2026-08-09 (kasus Jadid abda sabillah, 4 kamar):
+            # (1) auto_posting dipanggil di DALAM loop pakai `total_amount` (nominal
+            #     transaksi Tripay UTUH utk SELURUH grup, bukan per kamar) - utk grup 4
+            #     kamar, pemasukan yang SAMA tercatat 4 KALI ke rekening (himpunan Rp
+            #     416.250 x4 = Rp1.665.000 tercatat utk transaksi yang aslinya cuma
+            #     sekali) - dikonfirmasi langsung dari data ledger nyata. Sekarang cuma
+            #     posting SEKALI per grup, nominal tetap `total_amount` apa adanya (SUDAH
+            #     benar nominal transaksi utuh, cuma frekuensi pemanggilannya yang salah).
+            # (2) Voucher (PDF+email+WA) terkirim TERPISAH per kamar - tamu yang booking N
+            #     kamar dalam 1 transaksi dapat N pesan voucher dgn N kode BKO berbeda,
+            #     terasa seperti N booking terpisah padahal 1 transaksi (laporan Agus:
+            #     "kodenya jadi 4, konfirmasinya bingung"). Sekarang SATU voucher gabungan
+            #     (semua nomor kamar dlm 1 baris, total dijumlahkan) dikirim sekali per grup.
+            newly_paid = []
             for gb in group_bookings:
                 was_paid = gb.get("payment_status") == "paid"
                 # Bug KRITIS ditemukan & diperbaiki 2026-08-02 (kejadian nyata: tamu Kadek
@@ -273,37 +289,51 @@ async def tripay_callback(request: Request):
                     "entity": gb.get("room_nomor", ""), "timestamp": now,
                 })
                 if new_payment == "paid" and not was_paid:
-                    try:
-                        gb_paid = {**gb, "status": new_status, "payment_status": new_payment}
-                        # to_thread (2026-07-28, audit performa) - webhook Tripay ini paling
-                        # kritis krn dipanggil eksternal & harus cepat balas 200, generate_voucher_pdf
-                        # (ReportLab, sync) tidak boleh blokir event loop tunggal.
-                        branding = await get_property_branding(gb_paid.get("property_id"))
-                        pdf_bytes = await asyncio.to_thread(generate_voucher_pdf, gb_paid, branding)
-                        await send_voucher_email(gb_paid, pdf_bytes)
-                        # Kirim voucher via WA juga (2026-07-20, permintaan user) - tamu
-                        # tahu bookingnya sudah masuk saat itu juga, berlaku day_use & menginap.
-                        await kirim_voucher_wa(gb_paid, pdf_bytes)
-                    except Exception as e:
-                        logging.getLogger("tripay").warning(
-                            f"Gagal kirim voucher otomatis (Tripay) booking {gb['kode']}: {e}"
-                        )
-                    # Cash & Account Intelligence V1.5 (2026-07-22) - posting otomatis ke
-                    # rekening operasional default, best-effort (lihat docstring auto_posting).
-                    from routes.rekening import auto_posting
-                    await auto_posting("pemasukan", int(total_amount or 0), "Booking Tamu (Tripay)",
-                                        f"Booking {gb['kode']} - {gb.get('nama_tamu', '-')}",
-                                        gb.get("property_id") or await get_default_property_id())
-                    await send_push(
-                        "Pembayaran Diterima",
-                        f"Booking {gb['kode']} - {gb.get('nama_tamu', '-')} - Kamar {gb.get('room_nomor', '-')} sudah dibayar",
-                        url="/bookings",
+                    newly_paid.append({**gb, "status": new_status, "payment_status": new_payment})
+
+            if newly_paid:
+                # Booking representatif utk voucher/notifikasi gabungan - field yang SAMA
+                # utk semua kamar (nama_tamu/tanggal/tipe) dipakai apa adanya dari kamar
+                # pertama, field finansial DIJUMLAHKAN, nomor kamar digabung 1 baris.
+                rep = dict(newly_paid[0])
+                if len(newly_paid) > 1:
+                    rep["room_nomor"] = ", ".join(gb["room_nomor"] for gb in newly_paid)
+                    rep["subtotal"] = sum(int(gb.get("subtotal") or 0) for gb in newly_paid)
+                    rep["service_fee"] = sum(int(gb.get("service_fee") or 0) for gb in newly_paid)
+                    rep["total"] = sum(int(gb.get("total") or 0) for gb in newly_paid)
+                    rep["amount_due"] = sum(int(gb.get("amount_due") or 0) for gb in newly_paid)
+                try:
+                    # to_thread (2026-07-28, audit performa) - webhook Tripay ini paling
+                    # kritis krn dipanggil eksternal & harus cepat balas 200, generate_voucher_pdf
+                    # (ReportLab, sync) tidak boleh blokir event loop tunggal.
+                    branding = await get_property_branding(rep.get("property_id"))
+                    pdf_bytes = await asyncio.to_thread(generate_voucher_pdf, rep, branding)
+                    await send_voucher_email(rep, pdf_bytes)
+                    # Kirim voucher via WA juga (2026-07-20, permintaan user) - tamu
+                    # tahu bookingnya sudah masuk saat itu juga, berlaku day_use & menginap.
+                    await kirim_voucher_wa(rep, pdf_bytes)
+                except Exception as e:
+                    logging.getLogger("tripay").warning(
+                        f"Gagal kirim voucher otomatis (Tripay) booking {rep['kode']}: {e}"
                     )
-                    await kirim_alert_owner(
-                        f"💰 Pembayaran Diterima\n\n"
-                        f"Booking {gb['kode']}\n"
-                        f"Tamu: {gb.get('nama_tamu', '-')}\n"
-                        f"Kamar: {gb.get('room_nomor', '-')}\n"
-                        f"Nominal: Rp {int(total_amount or 0):,}".replace(",", ".")
-                    )
+                # Cash & Account Intelligence V1.5 (2026-07-22) - posting otomatis ke
+                # rekening operasional default, best-effort (lihat docstring auto_posting).
+                # SEKALI per grup (lihat catatan bug di atas) - total_amount SUDAH nominal
+                # transaksi utuh, bukan per kamar.
+                from routes.rekening import auto_posting
+                await auto_posting("pemasukan", int(total_amount or 0), "Booking Tamu (Tripay)",
+                                    f"Booking {rep['kode']} - {rep.get('nama_tamu', '-')}",
+                                    rep.get("property_id") or await get_default_property_id())
+                await send_push(
+                    "Pembayaran Diterima",
+                    f"Booking {rep['kode']} - {rep.get('nama_tamu', '-')} - Kamar {rep.get('room_nomor', '-')} sudah dibayar",
+                    url="/bookings",
+                )
+                await kirim_alert_owner(
+                    f"💰 Pembayaran Diterima\n\n"
+                    f"Booking {rep['kode']}\n"
+                    f"Tamu: {rep.get('nama_tamu', '-')}\n"
+                    f"Kamar: {rep.get('room_nomor', '-')}\n"
+                    f"Nominal: Rp {int(total_amount or 0):,}".replace(",", ".")
+                )
     return {"success": True}
