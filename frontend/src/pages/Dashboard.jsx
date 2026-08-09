@@ -832,6 +832,17 @@ export default function Dashboard() {
   };
 
   const changeStatus = async (newStatus) => {
+    // Konfirmasi WAJIB kalau ini diam-diam akan checkout tamu Menginap (2026-08-09, bug
+    // nyata ditemukan Agus - tamu Maia Martins ke-checkout tanpa sengaja 13 detik setelah
+    // check-in krn staf salah pencet di dialog Action Room ini; backend (PUT /rooms/{id}/
+    // status) langsung menganggap perpindahan status dari "menginap" = tamu sudah pergi,
+    // TANPA peringatan apa pun - beda dari checkoutMenginapFromDetail yang SUDAH benar
+    // pakai window.confirm, tapi dialog quick-access di sini lupa disamakan). Sama pola
+    // pesannya dgn checkoutMenginapFromDetail supaya staf sadar konsekuensinya sebelum klik.
+    if (actionRoom?.status === "menginap" && newStatus !== "menginap") {
+      const namaTamu = actionRoom?.info?.nama_tamu || "tamu ini";
+      if (!window.confirm(`Ini akan menandai ${namaTamu} CHECKOUT dari Kamar ${actionRoom.nomor}. Yakin tamu sudah benar-benar pergi?`)) return;
+    }
     try {
       await api.put(`/rooms/${actionRoom.id}/status`, {
         status: newStatus,
