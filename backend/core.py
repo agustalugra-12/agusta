@@ -89,6 +89,20 @@ BREAKFAST_PRICE = 25000  # per malam, opsional, hanya berlaku untuk tipe mengina
 # +BREAKFAST_PRICE kalau dengan_sarapan (jadi 175rb/225rb). Dua tarif dasar terpisah sejak 2026-07-12
 # (sebelumnya sempat memakai satu field `tarif` untuk keduanya — salah, dikoreksi atas instruksi user).
 
+# `bookings.source` yang dianggap "booking online" (non walk-in/manual) untuk laporan
+# pendapatan (2026-08-09, bug nyata ditemukan Agus - "Dashboard/Ringkasan/Laporan Kamar
+# beda-beda angkanya"). Root cause: tiap endpoint /reports/* & /laporan-analitik/* yang
+# butuh filter ini SEBELUMNYA menulis ULANG literal list `["ota", "online", "whatsapp"]`
+# sendiri-sendiri (4 titik terpisah di reports.py + mapping terpisah lagi di
+# laporan_analitik.py) - begitu auto-approve AI WhatsApp (booking_requests.py, day_use
+# MAUPUN menginap) mulai memakai source="whatsapp_auto" (beda string dari "whatsapp"
+# polos yang dipakai jalur approval manual staf), SEMUA titik itu diam-diam
+# mengecualikan booking whatsapp_auto dari pendapatan - Rp350.200 booking asli bulan ini
+# (paid, belum/sudah check-in) hilang dari 3 laporan berbeda tanpa ada yang sadar.
+# SATU sumber kebenaran di sini - titik BARU manapun yang butuh filter serupa WAJIB
+# pakai konstanta ini, jangan menulis literal list baru lagi.
+ONLINE_BOOKING_SOURCES = ["ota", "online", "whatsapp", "whatsapp_auto"]
+
 # ---- Rate limiting (2026-07-21, audit keamanan — login staf/owner & endpoint publik
 # booking sebelumnya tidak ada penghalang percobaan berulang sama sekali) ----
 # In-memory sliding window per-proses - cukup untuk skala 1 homestay (1 proses backend,

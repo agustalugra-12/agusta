@@ -7,7 +7,13 @@ from routes.ketersediaan import _occupies_date
 # collection `bookings`, plus tren okupansi gabungan (bookings + checkins walk-in).
 
 SALURAN_KEYS = ["ota", "website", "whatsapp"]
-SOURCE_TO_SALURAN = {"online": "website", "ota": "ota", "whatsapp": "whatsapp"}
+# whatsapp_auto (booking auto-approve AI, day_use & menginap - lihat
+# ONLINE_BOOKING_SOURCES di core.py) dipetakan ke saluran "whatsapp" yang sama dgn
+# approval manual staf - sama-sama datang dari kanal WhatsApp, cuma beda siapa yang
+# klik approve terakhir, bukan saluran akuisisi yang beda (2026-08-09, root cause sama
+# dgn bug "Dashboard/Ringkasan/Laporan Kamar beda-beda" - booking whatsapp_auto
+# sebelumnya tidak match key apa pun di sini, hilang total dari Analitik Saluran).
+SOURCE_TO_SALURAN = {"online": "website", "ota": "ota", "whatsapp": "whatsapp", "whatsapp_auto": "whatsapp"}
 
 
 @api.get("/laporan-analitik/pendapatan")

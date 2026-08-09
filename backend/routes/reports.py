@@ -259,15 +259,17 @@ async def report_summary(user: dict = Depends(get_current_user), property_id: st
         db.checkins.find(scoped({"jam_checkin": {"$gte": today_iso}}, property_id), {"_id": 0}).to_list(500),
         db.checkins.find(scoped({"jam_checkout": {"$gte": today_iso}, "status": "selesai"}, property_id), {"_id": 0}).to_list(500),
         db.bookings.find(scoped({
-            "source": {"$in": ["ota", "online", "whatsapp"]}, "payment_status": "paid",
+            "source": {"$in": ONLINE_BOOKING_SOURCES}, "payment_status": "paid",
             "paid_at": {"$gte": today_iso}, "ota_harga_dikonfirmasi": {"$ne": False},
+            "checkin_id": {"$exists": False},
         }, property_id), {"_id": 0, "total": 1}).to_list(1000),
         db.kasir.find(scoped({"timestamp": {"$gte": today_iso}}, property_id), {"_id": 0}).to_list(1000),
         db.checkins.find(scoped({"jam_checkout": {"$gte": month_start}, "status": "selesai"}, property_id), {"_id": 0}).to_list(2000),
         db.kasir.find(scoped({"timestamp": {"$gte": month_start}}, property_id), {"_id": 0}).to_list(2000),
         db.bookings.find(scoped({
-            "source": {"$in": ["ota", "online", "whatsapp"]}, "payment_status": "paid",
+            "source": {"$in": ONLINE_BOOKING_SOURCES}, "payment_status": "paid",
             "paid_at": {"$gte": month_start}, "ota_harga_dikonfirmasi": {"$ne": False},
+            "checkin_id": {"$exists": False},
         }, property_id), {"_id": 0, "total": 1}).to_list(5000),
         db.services.find(scoped({"tanggal": {"$gte": today_iso}}, property_id), {"_id": 0}).to_list(500),
         db.services.find(scoped({"tanggal": {"$gte": month_start}}, property_id), {"_id": 0}).to_list(2000),
@@ -309,6 +311,23 @@ async def report_summary(user: dict = Depends(get_current_user), property_id: st
     # emailnya tidak mencantumkan nominal, sempat memakai ESTIMASI tarif publik PMS sebagai
     # placeholder (lihat buat_reservasi_otomatis, routes/otomasi_email.py) - jangan dihitung
     # sebagai pendapatan asli sampai staf konfirmasi nominal settlement sungguhan.
+    #
+    # "checkin_id": {"$exists": False} (2026-08-09, bug nyata ditemukan Agus - Dashboard/
+    # Ringkasan/Laporan Kamar beda-beda angkanya) - DUA hal ditemukan sekaligus di sini:
+    # (1) ONLINE_BOOKING_SOURCES sebelumnya TIDAK mencakup "whatsapp_auto" (booking
+    # auto-approve AI, day_use MAUPUN menginap - beda string dari "whatsapp" polos jalur
+    # approval manual), jadi Rp350.200 booking asli bulan ini hilang dari SEMUA laporan
+    # pendapatan tanpa disadari. (2) Docstring lama endpoint ini & report_daily/
+    # report_rooms mengklaim "booking online tidak pernah menghasilkan dokumen checkins
+    # terpisah, jadi tidak ada duplikasi" - klaim itu SALAH utk Day Use: checkin_from_
+    # booking (routes/bookings.py) MEMANG membuat dokumen checkins utk tipe day_use (cuma
+    # menginap yang tidak), dan booking asalnya diberi `checkin_id`. Kalau cuma nambah
+    # "whatsapp_auto" ke daftar source TANPA exclude ini, 27 booking day_use yang sudah
+    # checked-in akan KE-DOUBLE-HITUNG (sekali dari checkins, sekali dari bookings ini).
+    # Filter checkin_id exists=False memastikan booking yang REVENUE-nya sudah tercakup
+    # via checkins (co_today/ci_month di atas) tidak ikut dihitung lagi di sini - yang
+    # tersisa di query ini murni booking yang BELUM/TIDAK PERNAH check-in fisik (Menginap
+    # selalu begini, Day Use yang belum tiba juga begini sementara).
     rev_booking_today = sum(int(b.get("total") or 0) for b in bk_today)
     # kasir today / month
     rev_kasir_today = sum(k.get("total", 0) for k in kasir_today)
@@ -426,9 +445,14 @@ async def report_daily(from_date: str = Query(...), to_date: str = Query(...),
     diakui per MALAM inap (accrual/matching principle), bukan numpuk semua di tanggal
     paid_at, supaya booking yang nginap lintas bulan (mis. check-in akhir Juli, checkout
     pertengahan Agustus) kebagi proporsional ke tiap bulan sesuai malam yang benar-benar
-    terpakai di bulan itu — konsisten dengan /laporan-analitik/pendapatan. Tidak ada
-    duplikasi dengan checkins karena booking online/OTA/WA tidak pernah menghasilkan
-    dokumen checkins terpisah di sistem ini (dua alur guest-arrival yang independen)."""
+    terpakai di bulan itu — konsisten dengan /laporan-analitik/pendapatan.
+
+    (2026-08-09, KOREKSI - klaim "tidak ada duplikasi dengan checkins karena booking
+    online tidak pernah menghasilkan dokumen checkins terpisah" di sini SEBELUMNYA SALAH:
+    checkin_from_booking (routes/bookings.py) MEMANG membuat dokumen checkins utk booking
+    tipe day_use [cuma menginap yang tidak] & menandai booking asalnya dgn `checkin_id`.
+    Query `bk` di bawah SEKARANG exclude `checkin_id` yang sudah terisi - sama fix dgn
+    report_summary/report_rooms, lihat komentar lengkap di report_summary."""
     start, end = wita_date_range_to_utc(from_date, to_date)
     # Walk-in (checkins) dibucket per jam_checkin, BUKAN jam_checkout (2026-08-07, sama
     # keputusan dgn report_rooms - konsisten "tanggal 7" berarti tamu yg DATANG tanggal
@@ -437,11 +461,12 @@ async def report_daily(from_date: str = Query(...), to_date: str = Query(...),
     # kadang lewat tengah malam sekali).
     ci = await db.checkins.find(scoped({"jam_checkin": {"$gte": start, "$lte": end}, "status": "selesai"}, property_id), {"_id": 0}).to_list(5000)
     bk = await db.bookings.find(scoped({
-        "source": {"$in": ["ota", "online", "whatsapp"]},
+        "source": {"$in": ONLINE_BOOKING_SOURCES},
         "payment_status": "paid",
         "jam_mulai": {"$lte": end},
         "jam_selesai": {"$gte": start},
         "ota_harga_dikonfirmasi": {"$ne": False},
+        "checkin_id": {"$exists": False},
     }, property_id), {"_id": 0, "total": 1, "jam_mulai": 1, "jam_selesai": 1}).to_list(5000)
     ks = await db.kasir.find(scoped({"timestamp": {"$gte": start, "$lte": end}}, property_id), {"_id": 0}).to_list(5000)
     ex = await db.expenses.find(scoped({"tanggal": {"$gte": start, "$lte": end}}, property_id), {"_id": 0}).to_list(5000)
@@ -565,8 +590,12 @@ async def report_rooms(from_date: str = Query(...), to_date: str = Query(...),
                        property_id: str = Depends(get_active_property)):
     """Transaksi kamar walk-in (checkins) DIGABUNG booking online/OTA/WhatsApp yang sudah
     lunas (bookings, dibucket per paid_at) — sebelumnya cuma checkins, bikin RedDoorz/booking
-    online tidak pernah terhitung di "Total Transaksi" & pendapatan kamar. Tidak ada duplikasi
-    dengan checkins (dua alur guest-arrival independen, lihat report_daily).
+    online tidak pernah terhitung di "Total Transaksi" & pendapatan kamar.
+
+    (2026-08-09, KOREKSI - lihat komentar lengkap di report_summary) klaim lama "tidak ada
+    duplikasi... dua alur guest-arrival independen" SALAH utk day_use: query `bk` di bawah
+    exclude `checkin_id` yang sudah terisi supaya booking yang sudah check-in (revenue-nya
+    sudah tercakup via `items`/checkins di atas) tidak ikut dihitung dobel di sini.
 
     `detail_pembayaran` per item (2026-08-02, permintaan Agus) - rincian DP/pelunasan
     & metode-nya (cash/Tripay/QR/dll), lihat _ambil_detail_pembayaran_booking &
@@ -585,10 +614,11 @@ async def report_rooms(from_date: str = Query(...), to_date: str = Query(...),
         {"_id": 0}
     ).to_list(5000)
     bk = await db.bookings.find(scoped({
-        "source": {"$in": ["ota", "online", "whatsapp"]},
+        "source": {"$in": ONLINE_BOOKING_SOURCES},
         "payment_status": "paid",
         "jam_mulai": {"$gte": start, "$lte": end},
         "ota_harga_dikonfirmasi": {"$ne": False},
+        "checkin_id": {"$exists": False},
     }, property_id), {"_id": 0}).to_list(5000)
     # Booking asal utk checkins yang berasal dari booking (perlu payment_option-nya
     # utk tahu entri pertama pembayaran itu DP atau Lunas) + payment_log utk semua

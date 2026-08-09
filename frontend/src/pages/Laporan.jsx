@@ -264,11 +264,12 @@ function LaporanKasir({ from, to }) {
   };
   return (
     <div className="space-y-4">
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+      <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
         <Stat label="Total Transaksi" value={s.total_transaksi || 0} />
-        <Stat label="Makanan" value={fmtRp(s.total_makanan || 0)} color="#10B981" />
+        <Stat label="Makanan" value={fmtRp(s.total_makanan || 0)} color="#F97316" />
         <Stat label="Minuman" value={fmtRp(s.total_minuman || 0)} color="#3B82F6" />
-        <Stat label="Laundry" value={fmtRp(s.total_laundry || 0)} color="#F97316" />
+        <Stat label="Laundry" value={fmtRp(s.total_laundry || 0)} color="#A855F7" />
+        <Stat label="Total Pendapatan" value={fmtRp(s.total_pendapatan || 0)} color="#10B981" />
       </div>
       <div className="flex justify-end"><Button variant="outline" onClick={exp} data-testid="export-kasir">Export CSV</Button></div>
       <Card className="border-slate-200"><CardContent className="p-0 overflow-x-auto">
