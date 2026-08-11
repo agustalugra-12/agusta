@@ -323,6 +323,18 @@ export default function DaftarReservasi() {
             {selected && !editMode && CANCELLABLE.includes(selected.status) && (
               <>
                 <Button data-testid="reservasi-batalkan" variant="outline" onClick={cancelReservation} className="gap-1.5 text-red-600 border-red-300 hover:bg-red-50"><Ban className="w-3.5 h-3.5" /> Batalkan</Button>
+                {/* (2026-08-11, permintaan Agus - "tombol pindahkan kamar sebelum cekin
+                    tidak ada harusnya fitur ini ada") - fiturnya SUDAH ADA sejak 2026-08-03
+                    (form "Ubah Jadwal" di bawah sudah punya field Kamar, backend sudah benar
+                    tidak mensyaratkan kamar tujuan kosong/dibersihkan utk tamu belum check-in
+                    - beda dari Pindah Kamar di Dashboard yang WAJIB kamar lama jadi
+                    "perlu_dibersihkan" krn tamu sudah fisik check-in) - masalahnya cuma
+                    ketidaktahuan/tidak ketemu, tombolnya cuma berlabel "Ubah Jadwal" jadi
+                    tidak kelihatan sbg fitur pindah kamar. Tombol KEDUA ini SENGAJA buka
+                    form yang SAMA (reuse penuh, bukan form/endpoint baru) - cuma beda label
+                    supaya jelas kelihatan sbg aksi "Pindah Kamar" jg, sama pola penamaan dgn
+                    tombol Pindah Kamar di Dashboard (kartu kamar) utk tamu yang sudah check-in. */}
+                <Button data-testid="reservasi-pindah-kamar" variant="outline" onClick={openEdit} className="gap-1.5">Pindah Kamar</Button>
                 <Button data-testid="reservasi-ubah" variant="outline" onClick={openEdit} className="gap-1.5">Ubah Jadwal</Button>
               </>
             )}
