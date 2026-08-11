@@ -463,6 +463,59 @@ async def ai_bot_buat_booking_request(body: AiBotBookingRequestIn, property_id: 
     return {"ok": True, "booking_request": hasil}
 
 
+class AiBotGantiMetodeIn(BaseModel):
+    no_hp: str
+    metode_pembayaran: str  # QRIS2 | PERMATAVA | BNIVA | BRIVA | MANDIRIVA
+
+
+@api.post("/integrasi-ai-bot/ganti-metode-pembayaran")
+async def ai_bot_ganti_metode_pembayaran(body: AiBotGantiMetodeIn, property_id: str = Depends(verifikasi_ai_bot_key)):
+    """Ganti metode bayar (mis. VA -> QRIS) untuk booking Day Use tamu yang MASIH menunggu
+    pembayaran (2026-08-11, akar masalah nyata ditemukan: tamu Nyoman Satria Wiguna minta
+    ganti VA BRI ke QRIS, tapi `_tool_create_booking` [ai-chat-bot] punya idempotency guard
+    yang cuma cocokkan tipe/room_tipe/tanggal_checkin - begitu tamu minta ganti metode utk
+    booking yg SAMA, guard itu mengira ini booking DOBEL dari afirmasi susulan & diam-diam
+    mengembalikan hasil booking LAMA [checkout_url metode LAMA] tanpa pernah memanggil PMS
+    lagi - AI percaya sukses & bilang ke tamu link QRIS sudah dikirim, padahal masih VA lama.
+    Endpoint ini kasih AI kemampuan SUNGGUHAN utk menyelesaikan sendiri, bukan cuma dicegah
+    bikin dobel.
+
+    SENGAJA dibatasi ke Day Use SAJA (bukan Menginap) - Day Use sudah punya preseden trust
+    boundary yang sama persis (`_coba_auto_approve_day_use` sudah otomatis membuat transaksi
+    Tripay nyata tanpa staf approve dulu, sejak 2026-07-19) - ini TIDAK menambah wewenang baru,
+    cuma memperbaiki channel yang sudah dipercaya sebelumnya. Menginap TETAP wajib lewat staf
+    (batasan keras integrasi ini, lihat komentar atas file) - AI diarahkan handover kalau
+    booking terkait tipe menginap atau tidak ditemukan."""
+    from routes.booking_requests import _hitung_status_efektif, TRIPAY_METODE_VALID
+    from routes.payments import _lakukan_ganti_metode_pembayaran
+    if body.metode_pembayaran not in TRIPAY_METODE_VALID:
+        return {"ok": False, "error": f"Metode tidak dikenal - harus salah satu dari: {', '.join(sorted(TRIPAY_METODE_VALID))}"}
+    digits = re.sub(r"\D", "", body.no_hp or "")
+    if not digits:
+        return {"ok": False, "error": "no_hp tidak valid"}
+    variasi = {digits}
+    if digits.startswith("62"):
+        variasi.add("0" + digits[2:])
+    elif digits.startswith("0"):
+        variasi.add("62" + digits[1:])
+
+    req = await db.booking_requests.find_one(
+        scoped({"no_hp": {"$in": list(variasi)}, "tipe": "day_use"}, property_id),
+        sort=[("created_at", -1)],
+    )
+    if not req:
+        return {"ok": False, "error": "Tidak ditemukan booking Day Use untuk nomor ini - kalau ini booking Menginap, teruskan ke staf."}
+    bks = await db.bookings.find(scoped({"id": {"$in": req.get("booking_ids") or []}}, property_id), {"_id": 0}).to_list(20)
+    status_efektif = _hitung_status_efektif(req["status"], bks)
+    if status_efektif != "waiting_payment" or not req.get("booking_ids"):
+        return {"ok": False, "error": f"Booking tidak dalam status menunggu pembayaran (status: {status_efektif}) - tidak bisa ganti metode, teruskan ke staf."}
+    hasil = await _lakukan_ganti_metode_pembayaran(
+        req["booking_ids"][0], body.metode_pembayaran, req.get("payment_option_diminta") or "dp50",
+        "AI WhatsApp (otomatis)", property_id,
+    )
+    return {"ok": True, **hasil}
+
+
 class AiBotCancelRequestIn(BaseModel):
     kode: Optional[str] = None  # kode booking (BKO-...), BUKAN kode booking_request (REQ-...). Opsional - kosong = cari otomatis dari no_hp (lihat ajukan_pembatalan_ai)
     no_hp: str

@@ -97,25 +97,37 @@ async def list_payment_log(search: Optional[str] = None, status: Optional[str] =
                  or q in (i.get("order_id") or "").lower()]
     return items
 
-@api.post("/bookings/{booking_id}/ganti-metode-pembayaran")
-async def ganti_metode_pembayaran(booking_id: str, body: GantiMetodeBayarBody, user: dict = Depends(get_current_user),
-                                   property_id: str = Depends(get_active_property)):
-    """Ganti metode bayar (mis. VA BRI -> QRIS, atau VA bank A -> VA bank B) untuk booking
-    yang LINK-nya masih aktif/belum kadaluarsa (2026-08-11, permintaan Agus - kejadian nyata
-    tamu Nyoman Satria Wiguna: sudah dibuatkan link VA BRIVA, ternyata rekeningnya BCA jadi
-    tidak bisa transfer ke VA itu, minta ganti QRIS. Sebelumnya harus ditangani manual lewat
-    dialog "Buat Tagihan Baru" tanpa kirim link otomatis ke tamu - staf harus copy-paste
-    sendiri ke WA). Beda dari resend-link (routes/booking_requests.py, KHUSUS link yang
-    sudah kadaluarsa & booking lama otomatis cancelled) - ini untuk booking yang MASIH aktif,
-    jadi booking & kamar TIDAK disentuh sama sekali, cuma dibuatkan transaksi Tripay BARU
-    untuk booking yang SAMA (reuse tripay_create_transaction, endpoint yang sama dipakai
-    dialog "Buat Tagihan Baru" & staf 'ganti DP jadi lunas' - webhook Tripay callback sudah
-    ada guard supaya transaksi lama yang ditinggalkan expired belakangan TIDAK menimpa balik
-    booking yang sudah lunas dibayar via transaksi baru, lihat tripay.py tripay_callback())."""
+async def _lakukan_ganti_metode_pembayaran(booking_id: str, method: str, payment_option: str,
+                                            actor_nama: str, property_id: str) -> dict:
+    """Inti ganti metode bayar (mis. VA BRI -> QRIS, atau VA bank A -> VA bank B) untuk
+    booking yang LINK-nya masih aktif/belum kadaluarsa (2026-08-11, permintaan Agus -
+    kejadian nyata tamu Nyoman Satria Wiguna: sudah dibuatkan link VA BRIVA, ternyata
+    rekeningnya BCA jadi tidak bisa transfer ke VA itu, minta ganti QRIS). Diekstrak dari
+    endpoint staf `ganti_metode_pembayaran` di bawah (2026-08-11, audit lanjutan - akar
+    masalah kenapa chat AI Nyoman "nyangkut" ditemukan: idempotency guard `create_booking`
+    di ai-chat-bot [`_tool_create_booking`, cocokkan tipe/room_tipe/tanggal_checkin] cuma
+    dibuat utk cegah booking DOBEL dari afirmasi susulan tamu, TIDAK PERNAH mempertimbangkan
+    kasus tamu minta GANTI METODE BAYAR - begitu tamu bilang "ganti QRIS" dgn tipe/kamar/
+    tanggal yang PERSIS sama dgn booking yang sudah ada, guard itu diam-diam mengembalikan
+    hasil booking LAMA [checkout_url metode lama] tanpa pernah memanggil PMS lagi, AI
+    percaya itu berhasil & bilang ke tamu "link QRIS sudah dikirim" padahal linknya masih
+    yang lama - staf yang handle manual pun ikut ke-mispersepsi & resend link lama yang
+    sama. AI butuh kemampuan SUNGGUHAN utk ganti metode, bukan cuma dicegah bikin dobel -
+    endpoint AI-facing baru `POST /integrasi-ai-bot/ganti-metode-pembayaran`
+    (routes/integrasi_ai_bot.py) reuse fungsi ini juga, supaya AI sendiri bisa selesaikan
+    kasus ini tanpa perlu handover ke staf tiap kali terjadi lagi.
+
+    Beda dari resend-link (routes/booking_requests.py, KHUSUS link yang sudah kadaluarsa &
+    booking lama otomatis cancelled) - ini untuk booking yang MASIH aktif, jadi booking &
+    kamar TIDAK disentuh sama sekali, cuma dibuatkan transaksi Tripay BARU untuk booking
+    yang SAMA (reuse tripay_create_transaction, endpoint yang sama dipakai dialog "Buat
+    Tagihan Baru" & staf 'ganti DP jadi lunas' - webhook Tripay callback sudah ada guard
+    supaya transaksi lama yang ditinggalkan expired belakangan TIDAK menimpa balik booking
+    yang sudah lunas dibayar via transaksi baru, lihat tripay.py tripay_callback())."""
     from routes.booking_requests import TRIPAY_METODE_VALID
-    if body.method not in TRIPAY_METODE_VALID:
+    if method not in TRIPAY_METODE_VALID:
         raise HTTPException(400, f"Metode harus salah satu dari: {', '.join(sorted(TRIPAY_METODE_VALID))}")
-    if body.payment_option not in ("dp50", "full"):
+    if payment_option not in ("dp50", "full"):
         raise HTTPException(400, "payment_option harus 'dp50' atau 'full'")
     b = await db.bookings.find_one(scoped({"id": booking_id}, property_id))
     if not b:
@@ -123,7 +135,7 @@ async def ganti_metode_pembayaran(booking_id: str, body: GantiMetodeBayarBody, u
 
     from routes.tripay import tripay_create_transaction
     trx = await tripay_create_transaction(TripayCreateTransactionBody(
-        booking_id=booking_id, payment_option=body.payment_option, method=body.method,
+        booking_id=booking_id, payment_option=payment_option, method=method,
     ))
 
     # Sinkron ke booking_request terkait kalau ada (Booking Request dari AI WhatsApp) supaya
@@ -133,12 +145,12 @@ async def ganti_metode_pembayaran(booking_id: str, body: GantiMetodeBayarBody, u
     req = await db.booking_requests.find_one(scoped({"booking_ids": booking_id}, property_id))
     if req:
         update_ops: Dict[str, Any] = {"$set": {
-            "checkout_url": trx.get("checkout_url"), "metode_pembayaran_diminta": body.method, "updated_at": now,
+            "checkout_url": trx.get("checkout_url"), "metode_pembayaran_diminta": method, "updated_at": now,
         }}
         if req.get("checkout_url"):
             update_ops["$push"] = {"riwayat_link": {
                 "booking_ids": req.get("booking_ids") or [], "checkout_url": req.get("checkout_url"),
-                "total": req.get("total"), "diganti_at": now, "diganti_oleh": user["nama"],
+                "total": req.get("total"), "diganti_at": now, "diganti_oleh": actor_nama,
             }}
         await db.booking_requests.update_one({"id": req["id"]}, update_ops)
 
@@ -151,9 +163,15 @@ async def ganti_metode_pembayaran(booking_id: str, body: GantiMetodeBayarBody, u
         b.get("no_hp", ""), pesan, konteks=f"ganti_metode_pembayaran {booking_id}", property_id=property_id,
     )
 
-    await log_activity(user, "ganti_metode_pembayaran",
-                       f"Ganti metode bayar booking {b['kode']} ({b.get('nama_tamu','')}) -> {body.method}")
-    return {**trx, "wa_terkirim": wa_terkirim}
+    await log_activity({"nama": actor_nama, "username": actor_nama}, "ganti_metode_pembayaran",
+                       f"Ganti metode bayar booking {b['kode']} ({b.get('nama_tamu','')}) -> {method}")
+    return {**trx, "wa_terkirim": wa_terkirim, "booking_kode": b["kode"]}
+
+
+@api.post("/bookings/{booking_id}/ganti-metode-pembayaran")
+async def ganti_metode_pembayaran(booking_id: str, body: GantiMetodeBayarBody, user: dict = Depends(get_current_user),
+                                   property_id: str = Depends(get_active_property)):
+    return await _lakukan_ganti_metode_pembayaran(booking_id, body.method, body.payment_option, user["nama"], property_id)
 
 @api.get("/payments/log/by-booking/{booking_kode}")
 async def get_payment_log_by_booking(booking_kode: str, user: dict = Depends(get_current_user),
