@@ -677,6 +677,28 @@ async def tugas_harian(user: dict = Depends(get_current_user), property_id: str 
         "jam_selesai": {"$gte": hari_ini_start, "$lt": hari_ini_end},
     }, property_id), {"_id": 0}).to_list(200)
 
+    # Checkout Terlewat (2026-08-11, permintaan Agus - kasus nyata: tamu jadwal checkout
+    # tanggal 1 tidak sempat di-checkout staf, baru ketahuan tanggal 3 - selama ini booking
+    # begitu HILANG dari radar begitu tanggal checkout-nya lewat dari hari ini, karena
+    # keberangkatan_menginap di atas & badge "Belum Di-checkout" di grid Dashboard (frontend)
+    # SAMA-SAMA cuma mengecek jendela HARI INI saja/kolom tanggal yang sedang dilihat staf -
+    # begitu 1+ hari berlalu tanpa staf memprosesnya, booking itu tidak muncul di mana pun
+    # lagi walau statusnya masih nyangkut "checked_in" selamanya (kamar juga ikut nyangkut
+    # "menginap" - tidak bisa dipakai tamu lain). Beda dari keberangkatan_menginap (jendela
+    # PERSIS hari ini), ini nyari SEMUA booking yg jam_selesai SUDAH LEWAT dari hari ini
+    # (kemarin, atau berapa pun hari ke belakang), tidak terbatas jendela tanggal apa pun.
+    checkout_terlewat_raw = await db.bookings.find(scoped({
+        "tipe": "menginap", "status": "checked_in",
+        "jam_selesai": {"$lt": hari_ini_start},
+    }, property_id), {"_id": 0}).sort("jam_selesai", 1).to_list(200)
+    checkout_terlewat = []
+    for b in checkout_terlewat_raw:
+        try:
+            hari_terlambat = (datetime.now(timezone.utc) - datetime.fromisoformat(b["jam_selesai"])).days
+        except (KeyError, ValueError, TypeError):
+            hari_terlambat = None
+        checkout_terlewat.append({**b, "hari_terlambat": hari_terlambat})
+
     day_use_berlangsung = await db.checkins.find(scoped({"status": "aktif"}, property_id), {"_id": 0}).to_list(200)
 
     # Riwayat checkout SUDAH selesai hari ini (2026-08-04, permintaan Agus - kasus kamar
@@ -713,6 +735,7 @@ async def tugas_harian(user: dict = Depends(get_current_user), property_id: str 
     return {
         "kedatangan_menginap_hari_ini": kedatangan_menginap,
         "keberangkatan_menginap_hari_ini": keberangkatan_menginap,
+        "checkout_terlewat": checkout_terlewat,
         "day_use_sedang_berlangsung": day_use_berlangsung,
         "keberangkatan_menginap_selesai_hari_ini": keberangkatan_menginap_selesai,
         "day_use_selesai_hari_ini": day_use_selesai,

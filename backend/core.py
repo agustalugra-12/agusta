@@ -1071,6 +1071,10 @@ class TripayCreateTransactionBody(BaseModel):
     payment_option: str  # "dp50" atau "full"
     method: str  # kode channel Tripay, mis. QRIS/BRIVA/ALFAMART — dari GET /payments/tripay/channels
 
+class GantiMetodeBayarBody(BaseModel):
+    method: str  # kode channel Tripay baru, mis. QRIS2/BRIVA/MANDIRIVA — dari GET /payments/tripay/channels
+    payment_option: str  # "dp50" atau "full" — dipertahankan dari transaksi sebelumnya
+
 class CancelWithFeeBody(BaseModel):
     alasan: Optional[str] = ""
     no_hp_konfirmasi: str = ""

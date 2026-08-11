@@ -6,7 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
-import { Search, X, CreditCard, Plus, Copy, ExternalLink } from "lucide-react";
+import { Search, X, CreditCard, Plus, Copy, ExternalLink, RefreshCw } from "lucide-react";
 import api, { fmtDateTime, fmtRp } from "@/lib/apiClient";
 import { useAuth } from "@/context/AuthContext";
 
@@ -197,6 +197,50 @@ export default function Pembayaran() {
   const [riwayat, setRiwayat] = useState([]);
   const [riwayatLoading, setRiwayatLoading] = useState(false);
 
+  // Ganti Metode Pembayaran (2026-08-11, permintaan Agus - kasus nyata tamu Nyoman Satria
+  // Wiguna: sudah dibuatkan link VA BRI, ternyata rekeningnya BCA tidak bisa transfer ke VA
+  // itu, minta ganti QRIS. Sebelumnya cuma bisa lewat "Buat Tagihan Baru" tanpa auto-kirim
+  // WA ke tamu (staf harus copy-paste manual) - section ini dipasang di dalam dialog Detail
+  // Transaksi supaya staf langsung lihat konteks transaksi lama sebelum ganti.
+  const [gantiOpen, setGantiOpen] = useState(false);
+  const [gantiChannels, setGantiChannels] = useState([]);
+  const [gantiMethod, setGantiMethod] = useState("");
+  const [gantiOpsi, setGantiOpsi] = useState("dp50");
+  const [gantiSubmitting, setGantiSubmitting] = useState(false);
+  const [gantiError, setGantiError] = useState("");
+  const [gantiHasil, setGantiHasil] = useState(null);
+
+  const bukaGantiMetode = () => {
+    setGantiOpen(true);
+    setGantiError("");
+    setGantiHasil(null);
+    setGantiOpsi(selected?.payment_option || "dp50");
+    if (gantiChannels.length === 0) {
+      api.get("/payments/tripay/channels")
+        .then(({ data }) => { setGantiChannels(data); setGantiMethod(data[0]?.code || ""); })
+        .catch(() => setGantiError("Gagal memuat daftar channel Tripay"));
+    }
+  };
+
+  const submitGantiMetode = async () => {
+    if (!selected?.booking_id || !gantiMethod) return;
+    setGantiSubmitting(true);
+    setGantiError("");
+    try {
+      const { data } = await api.post(`/bookings/${selected.booking_id}/ganti-metode-pembayaran`, {
+        method: gantiMethod, payment_option: gantiOpsi,
+      });
+      setGantiHasil(data);
+      muatTransaksi();
+      api.get(`/payments/log/by-booking/${selected.booking_kode}`).then(({ data: d }) => setRiwayat(d)).catch(() => {});
+      toast.success(data.wa_terkirim ? "Link baru dibuat & terkirim ke tamu via WA" : "Link baru dibuat, TAPI gagal terkirim otomatis - kirim manual");
+    } catch (e) {
+      setGantiError(e?.response?.data?.detail || "Gagal ganti metode pembayaran");
+    } finally {
+      setGantiSubmitting(false);
+    }
+  };
+
   const muatTransaksi = () => {
     setLoading(true);
     api.get("/payments/log")
@@ -317,7 +361,7 @@ export default function Pembayaran() {
                   <tr
                     key={t.id}
                     data-testid={`pembayaran-row-${t.id}`}
-                    onClick={() => { setSelected(t); setUbahStatus(t.transaction_status); }}
+                    onClick={() => { setSelected(t); setUbahStatus(t.transaction_status); setGantiOpen(false); setGantiHasil(null); setGantiError(""); }}
                     className="border-t border-slate-100 cursor-pointer hover:bg-slate-50"
                   >
                     <td className="p-3 font-mono text-xs">{t.order_id}</td>
@@ -414,6 +458,59 @@ export default function Pembayaran() {
                   </ul>
                 )}
               </div>
+
+              {(selected.transaction_status === "pending" || selected.transaction_status === "initiated") && (
+                <div className="border-t border-slate-100 pt-3">
+                  {!gantiOpen ? (
+                    <Button data-testid="ganti-metode-buka" variant="outline" size="sm" onClick={bukaGantiMetode} className="gap-1.5 w-full">
+                      <RefreshCw className="w-3.5 h-3.5" /> Ganti Metode Pembayaran
+                    </Button>
+                  ) : !gantiHasil ? (
+                    <div className="space-y-2.5">
+                      <p className="text-xs font-semibold text-slate-600">Ganti Metode Pembayaran</p>
+                      <p className="text-[11px] text-slate-400">Membuat link baru untuk booking {selected.booking_kode} - link lama dibiarkan kedaluwarsa sendiri, tidak dibatalkan.</p>
+                      <div>
+                        <Label>Channel Baru</Label>
+                        <select
+                          data-testid="ganti-metode-channel"
+                          value={gantiMethod}
+                          onChange={(e) => setGantiMethod(e.target.value)}
+                          className="w-full h-9 rounded-md border border-slate-300 px-2.5 bg-white mt-1 text-sm"
+                        >
+                          {gantiChannels.length === 0 && <option value="">Memuat…</option>}
+                          {gantiChannels.map((c) => <option key={c.code} value={c.code}>{c.name}</option>)}
+                        </select>
+                      </div>
+                      <div className="grid grid-cols-2 gap-2">
+                        <button type="button" data-testid="ganti-metode-opsi-dp50" onClick={() => setGantiOpsi("dp50")}
+                          className={`p-2 rounded-lg border-2 text-left text-xs ${gantiOpsi === "dp50" ? "border-blue-600 bg-blue-50" : "border-slate-200"}`}>DP 50%</button>
+                        <button type="button" data-testid="ganti-metode-opsi-full" onClick={() => setGantiOpsi("full")}
+                          className={`p-2 rounded-lg border-2 text-left text-xs ${gantiOpsi === "full" ? "border-blue-600 bg-blue-50" : "border-slate-200"}`}>Lunas</button>
+                      </div>
+                      {gantiError && <p className="text-red-600 text-xs">{gantiError}</p>}
+                      <div className="flex gap-2">
+                        <Button data-testid="ganti-metode-batal" variant="ghost" size="sm" onClick={() => setGantiOpen(false)} className="flex-1">Batal</Button>
+                        <Button data-testid="ganti-metode-submit" size="sm" disabled={!gantiMethod || gantiSubmitting}
+                          onClick={submitGantiMetode} className="flex-1 bg-blue-700 hover:bg-blue-800">
+                          {gantiSubmitting ? "Membuat…" : "Buat Link Baru"}
+                        </Button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="space-y-2 text-sm" data-testid="ganti-metode-hasil">
+                      <p className={`rounded p-2 border ${gantiHasil.wa_terkirim ? "text-emerald-700 bg-emerald-50 border-emerald-200" : "text-amber-700 bg-amber-50 border-amber-200"}`}>
+                        {gantiHasil.wa_terkirim ? "Link baru sudah otomatis terkirim ke tamu via WA." : "Link baru dibuat, TAPI gagal terkirim otomatis - kirim manual ke tamu."}
+                      </p>
+                      <div className="flex items-center gap-2">
+                        <Input readOnly value={gantiHasil.checkout_url} className="font-mono text-xs" data-testid="ganti-metode-link" />
+                        <Button variant="outline" size="icon" onClick={() => { navigator.clipboard?.writeText(gantiHasil.checkout_url); toast.success("Link disalin"); }}><Copy className="w-3.5 h-3.5" /></Button>
+                        <Button variant="outline" size="icon" asChild><a href={gantiHasil.checkout_url} target="_blank" rel="noreferrer"><ExternalLink className="w-3.5 h-3.5" /></a></Button>
+                      </div>
+                      <Button data-testid="ganti-metode-selesai" size="sm" onClick={() => setGantiOpen(false)} className="w-full bg-blue-700 hover:bg-blue-800">Selesai</Button>
+                    </div>
+                  )}
+                </div>
+              )}
 
             </div>
           )}

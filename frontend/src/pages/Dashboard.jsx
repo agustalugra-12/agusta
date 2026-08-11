@@ -773,6 +773,22 @@ export default function Dashboard() {
     } catch (e) { toast.error(e?.response?.data?.detail || "Gagal checkout"); }
   };
 
+  // Checkout langsung dari alert "Checkout Terlewat" (2026-08-11, permintaan Agus - kasus
+  // nyata tamu jadwal checkout tanggal 1 baru ketahuan belum di-checkout tanggal 3, karena
+  // badge "Belum Di-checkout" di grid kamar cuma kelihatan kalau staf sedang lihat kolom
+  // tanggal hari ini DAN kamar itu kebetulan masih kelihatan di layar - gampang kelewat
+  // berhari-hari). Aksi checkout-nya SAMA PERSIS dgn checkoutMenginapFromDetail (PUT
+  // /rooms/{id}/status), cuma dipanggil langsung dari daftar alert tanpa perlu buka dialog
+  // Booking Detail dulu.
+  const checkoutTerlewatLangsung = async (bk) => {
+    if (!window.confirm(`Checkout tamu ${bk.nama_tamu} dari Kamar ${bk.room_nomor}? Sudah terlambat ${bk.hari_terlambat ?? "beberapa"} hari dari jadwal checkout. Kamar akan masuk antrian Perlu Dibersihkan.`)) return;
+    try {
+      await api.put(`/rooms/${bk.room_id}/status`, { status: "perlu_dibersihkan" });
+      toast.success(`Kamar ${bk.room_nomor} berhasil di-checkout, masuk antrian Perlu Dibersihkan.`);
+      load();
+    } catch (e) { toast.error(e?.response?.data?.detail || "Gagal checkout"); }
+  };
+
   const markNoShow = async () => {
     if (!bookingDetail) return;
     const paid = Number(bookingDetail.amount_due || 0);
@@ -916,6 +932,39 @@ export default function Dashboard() {
             <div className="text-red-700">
               {overtime.map(c => `Kamar ${c.room_nomor} (${c.nama_tamu})`).join(", ")}
             </div>
+          </div>
+        </div>
+      )}
+      {/* Checkout Terlewat (2026-08-11, permintaan Agus) - beda dari overtime-alert di atas
+          (Day Use, hitungan jam) & badge "Belum Di-checkout" di grid kamar (cuma hari ini) -
+          ini SEMUA booking Menginap yang jadwal checkout-nya sudah lewat, berapa pun hari
+          lamanya, tidak pernah hilang dari radar walau staf ganti-ganti tanggal di date
+          picker. Diletakkan sebelum near-due (bukan sesudah) - ini prioritas tinggi (kamar
+          nyangkut, tidak bisa dipakai tamu lain) sama seriusnya dgn overtime. */}
+      {tugasHarian?.checkout_terlewat?.length > 0 && (
+        <div data-testid="checkout-terlewat-alert" className="rounded-xl bg-red-50 border border-red-200 p-4">
+          <div className="flex items-start gap-3 mb-3">
+            <AlertTriangle className="w-5 h-5 text-red-600 mt-0.5 shrink-0" />
+            <div className="text-sm">
+              <div className="font-semibold text-red-800">{tugasHarian.checkout_terlewat.length} tamu belum di-checkout, sudah lewat jadwal</div>
+              <div className="text-red-700">Kamar-kamar ini masih terkunci ("menginap") padahal jadwal checkout sudah lewat - tamu mungkin sudah pergi.</div>
+            </div>
+          </div>
+          <div className="space-y-2">
+            {tugasHarian.checkout_terlewat.map((bk) => (
+              <div key={bk.id} data-testid={`checkout-terlewat-${bk.id}`} className="flex items-center justify-between gap-3 bg-white border border-red-100 rounded-lg p-2.5 text-sm">
+                <div>
+                  <div className="font-semibold">{bk.nama_tamu} - Kamar {bk.room_nomor}</div>
+                  <div className="text-xs text-red-500">
+                    Jadwal checkout {new Date(bk.jam_selesai).toLocaleDateString("id-ID", { day: "2-digit", month: "short", year: "numeric" })}
+                    {" - "}terlambat {bk.hari_terlambat ?? "?"} hari
+                  </div>
+                </div>
+                <Button size="sm" className="bg-red-600 hover:bg-red-700 shrink-0" onClick={() => checkoutTerlewatLangsung(bk)} data-testid={`checkout-terlewat-btn-${bk.id}`}>
+                  <LogOut className="w-3.5 h-3.5 mr-1" /> Checkout
+                </Button>
+              </div>
+            ))}
           </div>
         </div>
       )}
