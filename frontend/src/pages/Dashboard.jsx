@@ -1655,18 +1655,26 @@ export default function Dashboard() {
             </div>
           )}
           <DialogFooter className="flex-wrap gap-2">
+            {/* Label "Reschedule" diganti "Ubah Jadwal / Pindah Kamar" (2026-08-11,
+                permintaan Agus - laporan "kenapa di dashboard utama ga bisa dan ga ada")
+                - fitur pindah kamar utk tamu belum check-in SUDAH ADA di sini sejak
+                2026-08-03 (form rescheduleMode di atas sudah punya field Kamar), tombolnya
+                cuma dulu berlabel "Reschedule" (Inggris, tidak menyebut kamar sama sekali)
+                jadi tidak kelihatan sbg fitur pindah kamar - sama akar masalah dgn tombol
+                "Ubah Jadwal" di halaman Reservasi (DaftarReservasi.jsx), diperbaiki cara
+                yang sama (relabel, BUKAN endpoint/form baru). */}
             {!rescheduleMode && bookingDetail?.status === "aktif" && (
               <>
                 <Button data-testid="bd-checkin-aktif" onClick={openCheckinDialog} className="bg-emerald-600 hover:bg-emerald-700 text-white">
                   Check-in Tamu
                 </Button>
-                <Button data-testid="bd-reschedule" variant="outline" onClick={() => setRescheduleMode(true)}>Reschedule</Button>
+                <Button data-testid="bd-reschedule" variant="outline" onClick={() => setRescheduleMode(true)}>Ubah Jadwal / Pindah Kamar</Button>
                 <Button data-testid="bd-cancel" variant="outline" onClick={cancelBookingDetail} className="text-red-600 border-red-300 hover:bg-red-50">Batalkan (Fee {calcCancelFeePolicy(bookingDetail.jam_mulai).biaya_persen}%)</Button>
               </>
             )}
             {!rescheduleMode && bookingDetail?.status === "booking_pending" && (
               <>
-                <Button data-testid="bd-reschedule" variant="outline" onClick={() => setRescheduleMode(true)}>Reschedule</Button>
+                <Button data-testid="bd-reschedule" variant="outline" onClick={() => setRescheduleMode(true)}>Ubah Jadwal / Pindah Kamar</Button>
                 <Button data-testid="bd-mark-paid-manual" variant="outline" onClick={markPaidManual} className="text-emerald-700 border-emerald-400 hover:bg-emerald-50">
                   Konfirmasi Pembayaran Manual
                 </Button>
@@ -1693,7 +1701,7 @@ export default function Dashboard() {
                     Collect Sisa Rp {(Number(bookingDetail.total || 0) - Number(bookingDetail.amount_due || 0)).toLocaleString("id-ID")}
                   </Button>
                 )}
-                <Button data-testid="bd-reschedule-paid" variant="outline" onClick={() => setRescheduleMode(true)}>Reschedule</Button>
+                <Button data-testid="bd-reschedule-paid" variant="outline" onClick={() => setRescheduleMode(true)}>Ubah Jadwal / Pindah Kamar</Button>
                 <Button data-testid="bd-cancel-refund" variant="outline" onClick={cancelBookingDetail} className="text-red-600 border-red-300 hover:bg-red-50">
                   Batalkan + Refund (Fee {calcCancelFeePolicy(bookingDetail.jam_mulai).biaya_persen}%)
                 </Button>
