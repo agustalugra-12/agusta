@@ -241,6 +241,119 @@ async def _render_detail_payment(booking_id: str) -> tuple:
     return teks, [[{"text": "⬅️ Kembali", "callback_data": "pembayaran"}]]
 
 
+async def _cari_booking(query: str, limit: int = 10) -> list:
+    """Cari booking by kode ATAU nama tamu (2026-08-12, Booking Center - Fase 2 PRD).
+    re.escape() (sama pola audit keamanan 2026-07-27 di routes/bookings.py GET /bookings)
+    - query dari Telegram TETAP diperlakukan sbg teks harfiah, bukan pola regex, cegah
+    ReDoS dari input bebas."""
+    q_escaped = re.escape(query.strip())
+    if not q_escaped:
+        return []
+    return await db.bookings.find(
+        {"$or": [{"kode": {"$regex": q_escaped, "$options": "i"}},
+                 {"nama_tamu": {"$regex": q_escaped, "$options": "i"}}]},
+        {"_id": 0},
+    ).sort("jam_mulai", -1).to_list(limit)
+
+
+async def _render_hasil_cari_booking(query: str) -> tuple:
+    hasil = await _cari_booking(query)
+    if not hasil:
+        return f"🔍 Tidak ada booking cocok dgn \"{query}\".", []
+    tombol = []
+    for b in hasil:
+        label = await _label_properti(b.get("property_id"))
+        cek_in = "-"
+        try:
+            cek_in = datetime.fromisoformat(b["jam_mulai"]).strftime("%d/%m")
+        except Exception:
+            pass
+        teks_tombol = f"{label}{b.get('kode', b['id'])[:24]} · {b.get('nama_tamu') or '-'} · {cek_in}"
+        tombol.append([{"text": teks_tombol[:60], "callback_data": f"bookdetail:{b['id']}"}])
+    return f"🏨 {len(hasil)} booking cocok dgn \"{query}\":", tombol
+
+
+async def _render_detail_booking(booking_id: str) -> tuple:
+    """Booking 360 (2026-08-12) - detail lengkap 1 booking (bukan cuma sisi pembayaran
+    spt _render_detail_payment, walau ada overlap - dipisah krn callback "kembali"-nya
+    beda tujuan [balik ke hasil cari, bukan balik ke daftar Payment Center])."""
+    b = await db.bookings.find_one({"id": booking_id}, {"_id": 0})
+    if not b:
+        return "Booking tidak ditemukan.", []
+    sb = status_bayar_booking(b)
+    label = await _label_properti(b.get("property_id"))
+    ci = b.get("jam_mulai", "")[:16].replace("T", " ")
+    co = b.get("jam_selesai", "")[:16].replace("T", " ")
+    teks = (
+        f"🏨 {label}{b.get('kode')}\n\n"
+        f"Tamu: {b.get('nama_tamu') or '-'}\n"
+        f"WhatsApp: {b.get('no_hp') or '-'}\n"
+        f"Kamar: {b.get('room_nomor') or '-'} ({b.get('tipe')})\n"
+        f"Check-in: {ci or '-'}\n"
+        f"Check-out: {co or '-'}\n"
+        f"Status: {b.get('status')}\n"
+        f"Sumber: {b.get('source') or '-'}\n\n"
+        f"Total: {_rp(b.get('total'))}\n"
+        f"Sudah dibayar: {_rp(sb['jumlah_dibayar'])}\n"
+        f"Sisa: {_rp(sb['sisa_tagihan'])}"
+    )
+    return teks, []
+
+
+async def _cari_tamu(query: str, limit: int = 10) -> list:
+    """Cari tamu by nama ATAU no_hp (2026-08-12, Guest 360 - Fase 2 PRD)."""
+    q_escaped = re.escape(query.strip())
+    if not q_escaped:
+        return []
+    return await db.guests.find(
+        {"$or": [{"nama": {"$regex": q_escaped, "$options": "i"}},
+                 {"no_hp": {"$regex": q_escaped, "$options": "i"}}]},
+        {"_id": 0},
+    ).sort("last_visit", -1).to_list(limit)
+
+
+async def _render_hasil_cari_tamu(query: str) -> tuple:
+    hasil = await _cari_tamu(query)
+    if not hasil:
+        return f"🔍 Tidak ada tamu cocok dgn \"{query}\".", []
+    tombol = []
+    for g in hasil:
+        label = await _label_properti(g.get("property_id"))
+        teks_tombol = f"{label}{g.get('nama') or '-'} · {g.get('no_hp') or '-'}"
+        tombol.append([{"text": teks_tombol[:60], "callback_data": f"guestdetail:{g['id']}"}])
+    return f"👤 {len(hasil)} tamu cocok dgn \"{query}\":", tombol
+
+
+async def _render_detail_tamu(guest_id: str) -> tuple:
+    g = await db.guests.find_one({"id": guest_id}, {"_id": 0})
+    if not g:
+        return "Tamu tidak ditemukan.", []
+    label = await _label_properti(g.get("property_id"))
+    riwayat = g.get("riwayat_kunjungan") or []
+    riwayat_teks = "\n".join(
+        f"  · {r.get('tanggal', '')[:10]} - {r.get('room_nomor') or '-'} ({r.get('source') or '-'})"
+        for r in riwayat[-5:]
+    ) or "  (belum ada riwayat tercatat)"
+    teks = (
+        f"👤 {label}{g.get('nama') or '-'}\n\n"
+        f"WhatsApp: {g.get('no_hp') or '-'}\n"
+        f"Total kunjungan: {g.get('total_kunjungan') or 0}\n"
+        f"Total transaksi: {_rp(g.get('total_transaksi'))}\n"
+        f"Kunjungan terakhir: {(g.get('last_visit') or '-')[:10]}\n\n"
+        f"Riwayat terakhir:\n{riwayat_teks}"
+    )
+    # Booking aktif/terkait tamu ini (cross-reference by no_hp) - kalau ada, tampilkan
+    # sbg tombol drill-down ke Booking 360 yang sama dipakai /booking.
+    tombol = []
+    if g.get("no_hp"):
+        bookings_tamu = await db.bookings.find(
+            {"no_hp": g["no_hp"]}, {"_id": 0, "id": 1, "kode": 1, "status": 1},
+        ).sort("jam_mulai", -1).to_list(5)
+        for b in bookings_tamu:
+            tombol.append([{"text": f"🏨 {b.get('kode')} ({b.get('status')})", "callback_data": f"bookdetail:{b['id']}"}])
+    return teks, tombol
+
+
 async def _push_incident_urgent(incident: dict):
     """Push segera utk incident severity="urgent" (2026-08-12) - dipanggil dari
     routes/incidents.py create_incident() lewat import tertunda (hindari circular
@@ -698,6 +811,12 @@ async def _handle_telegram_update(kind: str, request: Request):
         elif data.startswith("paydetail:"):
             teks, tombol = await _render_detail_payment(data.split(":", 1)[1])
             await _edit_pesan(token, chat_id, message_id, teks, tombol)
+        elif data.startswith("bookdetail:"):
+            teks, tombol = await _render_detail_booking(data.split(":", 1)[1])
+            await _edit_pesan(token, chat_id, message_id, teks, tombol)
+        elif data.startswith("guestdetail:"):
+            teks, tombol = await _render_detail_tamu(data.split(":", 1)[1])
+            await _edit_pesan(token, chat_id, message_id, teks, tombol)
         await _answer_callback_query(token, cq["id"])
         return {"ok": True}
 
@@ -740,6 +859,36 @@ async def _handle_telegram_update(kind: str, request: Request):
     # dgn /aksi, command terpisah sendiri.
     if kind == "owner" and text.startswith("/pembayaran"):
         teks, tombol = await _render_daftar_payment()
+        if tombol:
+            await _kirim_pesan_dengan_tombol(token, chat_id, teks, tombol)
+        else:
+            await _kirim_pesan(token, chat_id, teks)
+        return {"ok": True}
+
+    # /booking <kode atau nama> (2026-08-12, Booking Center - Fase 2 PRD) - SENGAJA
+    # command+argumen langsung (bukan alur "kirim query, bot nunggu balasan berikutnya")
+    # - bot ini stateless per-pesan (tidak ada tracking "sedang menunggu input apa"),
+    # nambah itu berisiko bentrok dgn alur pengeluaran teks bebas yang sudah ada &
+    # teruji. Command+argumen 0 risiko ke situ, tetap 1 langkah drpd 2.
+    if kind == "owner" and text.startswith("/booking"):
+        query = text[len("/booking"):].strip()
+        if not query:
+            await _kirim_pesan(token, chat_id, "Format: /booking <kode atau nama tamu>, mis. /booking Dewi")
+            return {"ok": True}
+        teks, tombol = await _render_hasil_cari_booking(query)
+        if tombol:
+            await _kirim_pesan_dengan_tombol(token, chat_id, teks, tombol)
+        else:
+            await _kirim_pesan(token, chat_id, teks)
+        return {"ok": True}
+
+    # /tamu <nama atau nomor HP> (2026-08-12, Guest 360 - Fase 2 PRD) - sama pola /booking.
+    if kind == "owner" and text.startswith("/tamu"):
+        query = text[len("/tamu"):].strip()
+        if not query:
+            await _kirim_pesan(token, chat_id, "Format: /tamu <nama atau nomor HP>, mis. /tamu 0812")
+            return {"ok": True}
+        teks, tombol = await _render_hasil_cari_tamu(query)
         if tombol:
             await _kirim_pesan_dengan_tombol(token, chat_id, teks, tombol)
         else:
