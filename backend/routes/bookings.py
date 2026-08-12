@@ -296,6 +296,19 @@ async def collect_balance(bid: str, body: CollectBalanceBody, user: dict = Depen
     await log_activity(user, "collect_balance",
                        f"Collect sisa pelunasan booking {b['kode']}: Rp{body.nominal:,} via {body.metode} (total terbayar Rp{new_paid:,}/Rp{total:,})".replace(",", "."),
                        entity=b.get("room_nomor", ""))
+    # Owner Control Center (2026-08-12) - auto-resolve incident "Collection Required"
+    # SEGERA kalau lunas di sini, bukan nunggu siklus scan berikutnya (maks 15 menit,
+    # lihat background_collection_required_scan_loop) - staf collect bayaran & Action
+    # Center owner langsung sinkron real-time. Best-effort (try/except) - kegagalan
+    # resolve TIDAK BOLEH menggagalkan collect_balance yang sudah berhasil di atas.
+    if new_paid >= total:
+        try:
+            from routes.incidents import resolve_incident
+            existing = await db.incidents.find_one({"dedup_key": f"collection_required:{bid}", "status": "open"})
+            if existing:
+                await resolve_incident(existing["id"], resolved_by=f"system:collect_balance:{user['nama']}")
+        except Exception as e:
+            logging.getLogger("incidents").warning(f"Gagal auto-resolve incident collection_required utk booking {bid}: {e}")
     return {"ok": True, "amount_collected": body.nominal, "total_paid": new_paid, "remaining": max(0, total - new_paid), "booking_kode": b["kode"]}
 
 @api.post("/bookings/{bid}/checkin")
