@@ -204,6 +204,89 @@ async def skenario_checkout_sync_amount_due() -> tuple:
     return ("checkout_sync_amount_due", status)
 
 
+async def skenario_checkout_payment_protection() -> tuple:
+    """Fitur baru (2026-08-12, PRD "Owner Control Center" §16, permintaan Agus "blokir
+    keras + tombol override owner") - checkout booking yang MASIH ada sisa tagihan
+    (setelah dihitung pembayaran yang diinput saat checkout) HARUS ditolak (402) & bikin
+    incident "checkout_blocked", KECUALI owner sudah override.
+
+    subtotal SENGAJA dibuat jauh LEBIH KECIL dari total (selisihnya merepresentasikan
+    biaya tambahan yang di-set langsung ke booking.total, di luar tarif_dasar/service_fee
+    yang dipakai calc_tagihan checkin) - supaya cek checkin-level yang SUDAH ADA (baris
+    "Pembayaran extend/overtime kurang", pakai tarif_dasar checkin yang notabene JAUH
+    lebih kecil dari total booking sungguhan) langsung LOLOS dari DP saja, dan skenario
+    ini betul-betul menguji cek proteksi BARU (booking-level), bukan cuma re-test cek
+    lama yang sudah dites skenario checkout_sync_amount_due. Kalau subtotal~=total
+    seperti draft pertama fitur ini, cek lama SELALU nembak duluan & cek baru ini tidak
+    pernah benar-benar dieksekusi oleh test.
+
+    Regresi kalau (a) checkout yang JELAS belum menutup total booking tetap LOLOS tanpa
+    diblokir, ATAU (b) checkout yang SEBENARNYA melunasi total booking malah ke-blokir
+    terus-menerus (false positive/deadlock - ini PERSIS bug capping calc["total"] yang
+    ditemukan & diperbaiki saat menulis skenario ini sendiri, lihat komentar lengkap di
+    routes/checkins.py checkout())."""
+    from core import db, now_iso, CheckinFromBookingBody, CheckoutIn
+    from routes.bookings import checkin_from_booking
+    from routes.checkins import checkout as do_checkout
+
+    property_id = _property_id_test()
+    room_id = await _bikin_kamar_test(db, property_id, "T4")
+    owner = {"id": "test", "nama": "Test Regresi"}
+    today_iso = datetime.now(timezone.utc).isoformat()
+
+    booking_id = str(uuid.uuid4())
+    subtotal = 45000  # tarif_dasar checkin - SENGAJA jauh < total (lihat docstring)
+    total = 200000    # total booking sungguhan (subtotal + biaya tambahan di luar tarif)
+    dp = 50000        # DP > tarif checkin sendiri -> cek checkin-level LOLOS dari DP saja
+    await db.bookings.insert_one({
+        "id": booking_id, "kode": f"TEST-{uuid.uuid4().hex[:8].upper()}", "property_id": property_id,
+        "room_id": room_id, "room_nomor": "T4", "room_tipe": "Standard", "tipe": "day_use",
+        "nama_tamu": "Test Regresi Proteksi Checkout", "no_hp": _wa_unik(),
+        "jam_mulai": today_iso, "jam_selesai": today_iso, "status": "booking_paid",
+        "source": "whatsapp_auto", "payment_status": "paid", "subtotal": subtotal, "service_fee": 1350,
+        "total": total, "amount_due": dp, "payment_type": "QRIS", "paid_at": today_iso, "created_at": today_iso,
+    })
+    ci_result = await checkin_from_booking(booking_id, CheckinFromBookingBody(), user=owner, property_id=property_id)
+    checkin_id = ci_result["checkin_id"]
+
+    # (a) Checkout TANPA bayar tambahan sama sekali - cek checkin-level lama LOLOS
+    # (DP 50rb > tarif checkin ~46rb), tapi HARUS tetap DITOLAK 402 oleh cek proteksi
+    # booking-level yang baru + bikin incident checkout_blocked.
+    ditolak_402 = False
+    try:
+        await do_checkout(checkin_id, CheckoutIn(pembayaran=[]), user=owner, property_id=property_id)
+    except Exception as e:
+        ditolak_402 = getattr(e, "status_code", None) == 402
+    if not ditolak_402:
+        return ("checkout_payment_protection", "FAIL - checkout yg TIDAK menutup total booking LOLOS (harusnya ditolak 402 oleh cek booking-level baru)")
+    incident = await db.incidents.find_one({"dedup_key": f"checkout_blocked:{checkin_id}", "status": "open"})
+    if not incident:
+        return ("checkout_payment_protection", "FAIL - checkout ditolak tapi TIDAK ADA incident checkout_blocked dibuat")
+
+    # (b) Checkout dgn bayar CUKUP utk melunasi total booking sungguhnya (bukan cuma
+    # tarif checkin) - harus LOLOS, BUKAN macet permanen (ini persis bug capping
+    # calc["total"] yg ditemukan: sebelum fix, proyeksi amount_due tidak pernah bisa
+    # lebih dari ~46rb walau dibayar penuh, jadi checkout MUSTAHIL lolos). checkin_id
+    # yang SAMA dipakai ulang (checkout (a) gagal -> checkin TETAP status "aktif").
+    sisa = total - dp
+    lolos = False
+    try:
+        await do_checkout(checkin_id, CheckoutIn(pembayaran=[{"metode": "tunai", "jumlah": sisa}]), user=owner, property_id=property_id)
+        lolos = True
+    except Exception as e:
+        lolos = False
+        gagal_detail = str(getattr(e, "detail", e))
+    if not lolos:
+        return ("checkout_payment_protection", f"FAIL - checkout dgn pembayaran yg MELUNASI total booking tetap ditolak (false positive/deadlock): {gagal_detail}")
+    updated_booking = await db.bookings.find_one({"id": booking_id})
+    if updated_booking.get("status") != "checked_out":
+        return ("checkout_payment_protection", f"FAIL - booking status={updated_booking.get('status')}, expected checked_out")
+
+    # Cleanup incident test (booking/room/checkins ikut dibersihkan main() via property_id prefix)
+    await db.incidents.delete_many({"meta.checkin_id": checkin_id})
+    return ("checkout_payment_protection", "PASS")
+
+
 async def main():
     unit_tests = [
         test_tanggal_wita_dini_hari_geser_ke_hari_berikutnya,
@@ -214,6 +297,7 @@ async def main():
         skenario_dashboard_ringkasan_sinkron,
         skenario_whatsapp_auto_tidak_hilang_dan_tidak_dobel,
         skenario_checkout_sync_amount_due,
+        skenario_checkout_payment_protection,
     ]
 
     print("--- Unit test (murni, tanpa DB) ---")
@@ -238,7 +322,7 @@ async def main():
     # maupun gagal.
     from core import db
     prop_pattern = {"$regex": f"^{TEST_PROPERTY_PREFIX}"}
-    for coll in ["rooms", "bookings", "checkins", "guests", "issues", "housekeeping_log"]:
+    for coll in ["rooms", "bookings", "checkins", "guests", "issues", "housekeeping_log", "incidents"]:
         r = await db.get_collection(coll).delete_many({"property_id": prop_pattern})
         if r.deleted_count:
             print(f"cleanup: {r.deleted_count} dokumen {coll} test dihapus")

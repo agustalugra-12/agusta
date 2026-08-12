@@ -242,6 +242,54 @@ async def checkout(checkin_id: str, body: CheckoutIn, user: dict = Depends(get_c
     if total_bayar_baru < sisa_ditagih:
         raise HTTPException(400, f"Pembayaran extend/overtime kurang. Diperlukan Rp{sisa_ditagih:,}".replace(",", "."))
     pembayaran_final = list(c.get("pembayaran", [])) + list(body.pembayaran)
+
+    # Checkout Payment Protection (2026-08-12, PRD "Owner Control Center" §16, permintaan
+    # Agus - "blokir keras + tombol override owner"). Dicek SETELAH pembayaran_final
+    # dihitung, PROYEKSI total uang yang sudah terkumpul lewat checkin ini (pembayaran_final,
+    # UTUH tanpa dipotong) dibandingkan LANGSUNG ke booking_terkait["total"] - BUKAN
+    # menjumlahkan sisa_ditagih checkin + sisa_tagihan booking sbg 2 pool terpisah (bug nyata
+    # ditemukan lewat regresi checkout_sync_amount_due: checkin_from_booking SEED tarif_dasar
+    # & pembayaran checkin dari booking [lihat komentar "bug KRITIS ditagih dobel" di
+    # routes/bookings.py], jadi sisa_ditagih checkin & sisa_tagihan booking SERING kali angka
+    # yang SAMA dihitung 2x dari 2 sumber data mirip, menjumlahkannya salah total -
+    # false-positive blokir booking yang sebenarnya SUDAH akan lunas begitu body.pembayaran
+    # diproses).
+    #
+    # SENGAJA TIDAK dibatasi max calc["total"] (beda dari sync amount_due di bawah, yang
+    # tujuannya cuma tampilan supaya tidak lebih besar dari tagihan checkin) - kalau
+    # booking_terkait["total"] memuat komponen di luar tarif_dasar+service_fee checkin
+    # (mis. biaya tambahan yang di-set langsung ke booking.total, bukan lewat overtime
+    # checkin), pembatasan itu bikin sisa_setelah_bayar TIDAK PERNAH bisa 0 walau staf
+    # sudah bayar penuh - checkout jadi macet permanen tanpa jalan keluar selain override
+    # owner terus-menerus. Proyeksi harus bisa naik SETINGGI apa pun uang yang benar-benar
+    # masuk lewat pembayaran_final.
+    if c.get("from_booking_id") and not c.get("owner_override_at"):
+        booking_terkait = await db.bookings.find_one(scoped({"id": c["from_booking_id"]}, property_id))
+        if booking_terkait:
+            amount_due_proyeksi = sum(int(p.get("jumlah", 0)) for p in pembayaran_final)
+            sisa_setelah_bayar = max(0, int(booking_terkait.get("total") or 0) - amount_due_proyeksi)
+            if sisa_setelah_bayar > 0:
+                from routes.incidents import create_incident
+                sisa_str = f"{sisa_setelah_bayar:,}".replace(",", ".")
+                await create_incident(
+                    event_type="checkout_blocked", severity="urgent", source="pms",
+                    property_id=property_id, dedup_key=f"checkout_blocked:{checkin_id}",
+                    title=f"Checkout diblokir - {booking_terkait.get('kode')} sisa Rp{sisa_str}",
+                    detail=f"Kamar {c.get('room_nomor')} · {c.get('nama_tamu')} · staf coba checkout tapi "
+                           f"booking {booking_terkait.get('kode')} masih ada sisa tagihan Rp{sisa_str} "
+                           f"(setelah dihitung pembayaran yang diinput saat ini). "
+                           f"Tap tombol di bawah utk izinkan checkout lanjut walau belum lunas.",
+                    meta={"checkin_id": checkin_id, "booking_id": booking_terkait["id"],
+                          "booking_kode": booking_terkait.get("kode"), "sisa_tagihan": sisa_setelah_bayar},
+                )
+                raise HTTPException(
+                    402,
+                    f"Checkout ditolak - booking {booking_terkait.get('kode')} masih ada sisa tagihan "
+                    f"Rp{sisa_str} (setelah pembayaran yang diinput saat ini). Owner sudah diberi "
+                    f"notifikasi Telegram utk approve/override kalau memang perlu lanjut - tunggu "
+                    f"konfirmasi owner, lalu coba checkout lagi.",
+                )
+
     updates = {
         "jam_checkout": now.isoformat(),
         "durasi_jam": calc["durasi_jam"],

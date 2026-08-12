@@ -178,10 +178,16 @@ async def _render_detail_incident(incident_id: str) -> tuple:
     teks = f"{SEVERITY_EMOJI.get(it['severity'], '⚪')} {label}{it['title']}\n\n{it['detail']}"
     if it["status"] == "resolved":
         return teks + "\n\n✅ Sudah selesai.", [[{"text": "⬅️ Kembali", "callback_data": "aksi"}]]
-    return teks, [
-        [{"text": "✅ Tandai Selesai", "callback_data": f"resolve:{incident_id}"}],
-        [{"text": "⬅️ Kembali", "callback_data": "aksi"}],
-    ]
+    tombol = []
+    # Checkout Payment Protection (2026-08-12, §16) - HANYA event_type ini yang dapat
+    # tombol override, SENGAJA tidak digeneralisasi ke semua incident (override checkout
+    # itu aksi spesifik dgn efek nyata ke operasional, beda dari "Tandai Selesai" biasa
+    # yang cuma menutup catatan).
+    if it["event_type"] == "checkout_blocked" and it.get("meta", {}).get("checkin_id"):
+        tombol.append([{"text": "🔐 Override & Izinkan Checkout", "callback_data": f"override_checkout:{incident_id}"}])
+    tombol.append([{"text": "✅ Tandai Selesai", "callback_data": f"resolve:{incident_id}"}])
+    tombol.append([{"text": "⬅️ Kembali", "callback_data": "aksi"}])
+    return teks, tombol
 
 
 async def _render_daftar_payment() -> tuple:
@@ -352,6 +358,36 @@ async def _render_detail_tamu(guest_id: str) -> tuple:
         for b in bookings_tamu:
             tombol.append([{"text": f"🏨 {b.get('kode')} ({b.get('status')})", "callback_data": f"bookdetail:{b['id']}"}])
     return teks, tombol
+
+
+async def _override_checkout(incident_id: str, owner_user: dict) -> str:
+    """Owner override Checkout Payment Protection (2026-08-12, PRD §16 - "blokir keras +
+    tombol override owner"). Tap tombol ini TIDAK langsung menjalankan checkout dari sini
+    (data pembayaran overtime/extend checkin cuma ada di form staf di PMS, tidak
+    terbawa ke Telegram) - cuma MELEPAS blokir (set owner_override_at di checkin), staf
+    diminta ulangi checkout yang SAMA di PMS, kali ini lolos krn c.get("owner_override_at")
+    sudah terisi (lihat cek blokir di routes/checkins.py checkout())."""
+    from routes.incidents import get_incident, resolve_incident
+    it = await get_incident(incident_id)
+    if not it or it["event_type"] != "checkout_blocked":
+        return "Incident tidak ditemukan atau bukan checkout_blocked."
+    if it["status"] == "resolved":
+        return "Sudah diproses sebelumnya."
+    checkin_id = it.get("meta", {}).get("checkin_id")
+    if not checkin_id:
+        return "Data checkin tidak lengkap di incident ini, tidak bisa override."
+    await db.checkins.update_one(
+        {"id": checkin_id},
+        {"$set": {"owner_override_at": now_iso(), "owner_override_by": owner_user.get("nama") or "owner"}},
+    )
+    await log_activity(
+        owner_user, "override_checkout_payment_protection",
+        f"Override Checkout Payment Protection - booking {it.get('meta', {}).get('booking_kode')}, "
+        f"sisa tagihan Rp{it.get('meta', {}).get('sisa_tagihan', 0):,}".replace(",", "."),
+        entity=checkin_id,
+    )
+    await resolve_incident(incident_id, resolved_by=f"owner_override:{owner_user.get('nama') or 'owner'}")
+    return f"🔐 Override diberikan — {it['title']}\n\nStaf bisa coba checkout lagi sekarang di PMS."
 
 
 async def _push_incident_urgent(incident: dict):
@@ -817,6 +853,9 @@ async def _handle_telegram_update(kind: str, request: Request):
         elif data.startswith("guestdetail:"):
             teks, tombol = await _render_detail_tamu(data.split(":", 1)[1])
             await _edit_pesan(token, chat_id, message_id, teks, tombol)
+        elif data.startswith("override_checkout:"):
+            konfirmasi = await _override_checkout(data.split(":", 1)[1], owner_user=u)
+            await _edit_pesan(token, chat_id, message_id, konfirmasi, [])
         await _answer_callback_query(token, cq["id"])
         return {"ok": True}
 
