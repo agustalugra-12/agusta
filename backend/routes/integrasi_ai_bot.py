@@ -395,6 +395,50 @@ async def ai_bot_booking_status(no_hp: str, property_id: str = Depends(verifikas
     return {"no_hp": no_hp, "permintaan": out[:5]}
 
 
+@api.get("/integrasi-ai-bot/link-pembayaran-aktif")
+async def ai_bot_link_pembayaran_aktif(no_hp: str, property_id: str = Depends(verifikasi_ai_bot_key)):
+    """Cari link pembayaran booking Menginap tamu yang MASIH AKTIF (status waiting_payment,
+    checkout_url ada, belum lunas/kadaluarsa) - dipakai tombol staf "Kirim Ulang Link
+    Pembayaran" di ai-chat-bot (2026-08-12, permintaan Agus - jaring pengaman kalau AI
+    halu/lupa kirim link, staf bisa kirim ulang 1 klik tanpa buka PMS terpisah). READ-ONLY,
+    TIDAK PERNAH membuat booking/transaksi baru - kalau tidak ada link aktif, staf WAJIB
+    proses manual (booking baru butuh detail kamar/tanggal yang tidak bisa ditebak dari
+    sini), endpoint ini cuma bilang jujur "tidak ada" bukan mengarang link.
+
+    Reuse `_hitung_status_efektif` (sama fungsi yang dipakai halaman staf /booking-requests
+    & resend_payment_link) - satu sumber kebenaran, bukan hitungan status terpisah yang
+    bisa menyimpang."""
+    from routes.booking_requests import _hitung_status_efektif
+
+    digits = re.sub(r"\D", "", no_hp or "")
+    if not digits:
+        return {"ok": False, "checkout_url": None}
+    variasi = {digits}
+    if digits.startswith("62"):
+        variasi.add("0" + digits[2:])
+    elif digits.startswith("0"):
+        variasi.add("62" + digits[1:])
+
+    req = await db.booking_requests.find_one(
+        scoped({"no_hp": {"$in": list(variasi)}, "status": "waiting_payment"}, property_id),
+        sort=[("created_at", -1)],
+    )
+    if not req or not req.get("checkout_url"):
+        return {"ok": False, "checkout_url": None}
+
+    bks = []
+    if req.get("booking_ids"):
+        bks = await db.bookings.find(scoped({"id": {"$in": req["booking_ids"]}}, property_id), {"_id": 0}).to_list(20)
+    status_efektif = _hitung_status_efektif(req["status"], bks)
+    if status_efektif != "waiting_payment":
+        return {"ok": False, "checkout_url": None, "alasan": f"status_efektif={status_efektif}"}
+
+    return {
+        "ok": True, "checkout_url": req["checkout_url"], "total": req.get("total"),
+        "nama_tamu": req.get("nama_tamu"), "kode": req.get("kode"),
+    }
+
+
 class AiBotBookingRequestIn(BaseModel):
     nama_tamu: str
     no_hp: str
