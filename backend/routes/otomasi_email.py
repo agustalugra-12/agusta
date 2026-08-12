@@ -498,6 +498,35 @@ async def buat_reservasi_otomatis(log_id: str, data: dict, sumber: str, subjek: 
         }})
         return
 
+    # Kode PMS TERDETEKSI TAPI GAGAL cocok persis (2026-08-12, bug nyata ditemukan - tamu
+    # "Putri Erika" BKO-20260811113406-BFE3: kolom Permintaan Khusus RedDoorz berisi
+    # "BKO-xxxxxxxxxxxx06-BFE3" [sebagian huruf jadi "x", bukan kode asli - sumber
+    # kerusakannya di luar sistem ini, kemungkinan cara staf menyalin dari tampilan
+    # RedDoorz sendiri], KODE_BOOKING_PATTERN (_cocokkan_via_kode_pms) gagal match strict
+    # ("x" bukan digit) DAN fuzzy-nama (_cocokkan_booking_pending_reddoorz) JUGA gagal
+    # (ejaan RedDoorz "putu erika" vs PMS "putri erika" tidak beririsan sbg substring) -
+    # kedua jalur cocok gagal BERSAMAAN, sistem lanjut ke bawah bikin reservasi BARU
+    # (duplikat kamar utk tamu yang SAMA, 1 kamar nganggur percuma & sync_status booking
+    # asli tetap "waiting_reddoorz_sync" selamanya - baru ketahuan lewat laporan Agus).
+    # Kalau "Permintaan Khusus" MENGANDUNG "BKO-" sama sekali (longgar, bukan format
+    # ketat) tapi tidak lolos match persis di kedua jalur di atas, itu SINYAL KUAT ini
+    # SEHARUSNYA booking yang sudah ada, bukan reservasi baru genuine - JANGAN auto-buat,
+    # serahkan ke staf utk rekonsiliasi manual drpd diam-diam bikin duplikat lagi.
+    permintaan_khusus = data.get("permintaan_khusus") or ""
+    if "bko-" in permintaan_khusus.lower():
+        await db.email_logs.update_one({"id": log_id}, {"$set": {
+            "status": "Manual_Required",
+            "alasan": (
+                f'Kolom "Permintaan Khusus" RedDoorz berisi kode yang mirip kode booking PMS '
+                f'("{permintaan_khusus}") tapi tidak cocok persis dengan booking manapun (baik lewat '
+                f'kode maupun nama+tanggal) - kemungkinan ini booking yang SUDAH ada di PMS (dari '
+                f'WhatsApp) tapi kodenya rusak/sebagian saat tersalin ke RedDoorz. JANGAN dibuat '
+                f'reservasi baru otomatis - cari booking dengan nama "{data.get("nama_tamu")}" & '
+                f'check-in {data.get("check_in")} di Daftar Reservasi, cocokkan & sinkronkan manual.'
+            ),
+        }})
+        return
+
     kandidat = await db.rooms.find(scoped({"tipe": mapping["pms_tipe"]}, property_id), {"_id": 0}).to_list(200)
     # Bug nyata ditemukan 2026-08-01 (kasus Ricky Kusvianto, RedDoorz - kamar tampak kosong
     # secara tanggal booking tapi sedang dipakai Day Use SAAT diproses): sebelumnya kandidat
