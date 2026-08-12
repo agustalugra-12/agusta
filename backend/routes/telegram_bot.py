@@ -175,7 +175,15 @@ async def _render_detail_incident(incident_id: str) -> tuple:
     if not it:
         return "Incident tidak ditemukan.", [[{"text": "⬅️ Kembali", "callback_data": "aksi"}]]
     label = await _label_properti(it.get("property_id"))
-    teks = f"{SEVERITY_EMOJI.get(it['severity'], '⚪')} {label}{it['title']}\n\n{it['detail']}"
+    teks = f"{SEVERITY_EMOJI.get(it['severity'], '⚪')} {label}{it['title']}"
+    # Conversation Trace (2026-08-12) - pesan tamu yang MEMICU incident ai_claim_mismatch,
+    # snapshot dari conv["messages"][-1] di titik hook (ai-chat-bot server.py) - supaya
+    # owner tahu apa yang sebenarnya ditanya tamu, bukan cuma teks AI sebelum/sesudah
+    # koreksi (yang sudah ada di `detail`).
+    guest_msg = (it.get("meta") or {}).get("guest_message")
+    if guest_msg:
+        teks += f"\n\n👤 Tamu: \"{guest_msg}\""
+    teks += f"\n\n{it['detail']}"
     if it["status"] == "resolved":
         return teks + "\n\n✅ Sudah selesai.", [[{"text": "⬅️ Kembali", "callback_data": "aksi"}]]
     tombol = []
@@ -185,6 +193,13 @@ async def _render_detail_incident(incident_id: str) -> tuple:
     # yang cuma menutup catatan).
     if it["event_type"] == "checkout_blocked" and it.get("meta", {}).get("checkin_id"):
         tombol.append([{"text": "🔐 Override & Izinkan Checkout", "callback_data": f"override_checkout:{incident_id}"}])
+    # Conversation Trace (2026-08-12) - tombol URL (bukan callback_data) langsung buka
+    # dashboard percakapan ai-chat-bot yang SUDAH ADA, deep-link ke percakapan spesifik
+    # ini (?conv=<conv_id>, lihat Conversations.jsx) - sengaja tidak membangun ulang
+    # viewer percakapan penuh di dalam Telegram (lihat plan "Conversation Trace").
+    if it["event_type"] == "ai_claim_mismatch" and (it.get("meta") or {}).get("conv_id"):
+        tombol.append([{"text": "🌐 Buka Percakapan Lengkap",
+                         "url": f"https://bot.pelangihomestay.com/conversations?conv={it['meta']['conv_id']}"}])
     tombol.append([{"text": "✅ Tandai Selesai", "callback_data": f"resolve:{incident_id}"}])
     tombol.append([{"text": "⬅️ Kembali", "callback_data": "aksi"}])
     return teks, tombol
