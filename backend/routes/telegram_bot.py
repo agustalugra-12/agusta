@@ -102,6 +102,102 @@ async def _kirim_pesan(bot_token: str, chat_id: Any, text: str):
             logging.getLogger("telegram_bot").warning(f"Gagal kirim pesan Telegram ke {chat_id}: {e}")
 
 
+async def _kirim_pesan_dengan_tombol(bot_token: str, chat_id: Any, text: str, tombol: list) -> Optional[dict]:
+    """Sama pola dgn _kirim_pesan, versi dgn inline keyboard (2026-08-12, PRD "Owner
+    Control Center" Fase 1 - Action Center). TIDAK dipecah multi-bagian spt _kirim_pesan
+    (pesan Action Center selalu pendek by design, daftar dibatasi 15 item) - kalau nanti
+    butuh, tangani terpisah krn tombol cuma bisa nempel di 1 pesan. TIDAK pakai parse_mode
+    (sama konvensi teks-polos _kirim_pesan) - hindari bug escaping Markdown di kode
+    booking/rupiah yang mengandung "_"/".". Return `result` Telegram (ada `message_id`,
+    dipakai _edit_pesan) atau None kalau gagal."""
+    if not bot_token:
+        return None
+    try:
+        r = await _telegram_api(bot_token, "sendMessage", chat_id=chat_id, text=text,
+                                 reply_markup={"inline_keyboard": tombol})
+        return r.get("result")
+    except Exception as e:
+        logging.getLogger("telegram_bot").warning(f"Gagal kirim pesan+tombol ke {chat_id}: {e}")
+        return None
+
+
+async def _edit_pesan(bot_token: str, chat_id: Any, message_id: int, text: str, tombol: Optional[list] = None):
+    """Edit pesan yang sudah terkirim (2026-08-12) - dipakai navigasi Action Center (tap
+    tombol -> pesan yang SAMA berubah isi+tombolnya, bukan kirim pesan baru tiap tap)."""
+    try:
+        params: Dict[str, Any] = {"chat_id": chat_id, "message_id": message_id, "text": text}
+        if tombol is not None:
+            params["reply_markup"] = {"inline_keyboard": tombol}
+        await _telegram_api(bot_token, "editMessageText", **params)
+    except Exception as e:
+        logging.getLogger("telegram_bot").warning(f"Gagal edit pesan {message_id} utk {chat_id}: {e}")
+
+
+async def _answer_callback_query(bot_token: str, callback_query_id: str, text: str = ""):
+    """WAJIB dipanggil tiap kali callback_query masuk (2026-08-12) - kalau tidak, tombol
+    yang di-tap tetap terlihat "loading" (jam pasir) di UI Telegram walau aksinya sudah
+    diproses server."""
+    try:
+        await _telegram_api(bot_token, "answerCallbackQuery", callback_query_id=callback_query_id, text=text)
+    except Exception as e:
+        logging.getLogger("telegram_bot").warning(f"Gagal answerCallbackQuery: {e}")
+
+
+async def _label_properti(property_id: Optional[str]) -> str:
+    """Label "[Nama Properti] " di depan judul incident (2026-08-12) - owner belum
+    di-scope 1 properti di Action Center (lihat catatan di _render_daftar_incident),
+    daftar tampil gabungan Pelangi+Harmoni, label ini yang membedakan sekilas pandang."""
+    if not property_id:
+        return ""
+    p = await db.properties.find_one({"id": property_id}, {"_id": 0, "nama": 1})
+    return f"[{p['nama']}] " if p else ""
+
+
+async def _render_daftar_incident() -> tuple:
+    """Render teks+tombol daftar Action Center (2026-08-12) - dipanggil dari command
+    /aksi MAUPUN tombol "⬅️ Kembali" (callback_data "aksi"), makanya dipisah jadi fungsi
+    sendiri drpd inline di 2 tempat."""
+    from routes.incidents import list_open_incidents, SEVERITY_EMOJI
+    incidents = await list_open_incidents()
+    if not incidents:
+        return "✅ Tidak ada incident terbuka saat ini.", []
+    tombol = []
+    for it in incidents[:15]:
+        label = await _label_properti(it.get("property_id"))
+        teks_tombol = f"{SEVERITY_EMOJI.get(it['severity'], '⚪')} {label}{it['title'][:45]}"
+        tombol.append([{"text": teks_tombol, "callback_data": f"show:{it['id']}"}])
+    return f"🗒 Action Center — {len(incidents)} incident terbuka:", tombol
+
+
+async def _render_detail_incident(incident_id: str) -> tuple:
+    from routes.incidents import get_incident, SEVERITY_EMOJI
+    it = await get_incident(incident_id)
+    if not it:
+        return "Incident tidak ditemukan.", [[{"text": "⬅️ Kembali", "callback_data": "aksi"}]]
+    label = await _label_properti(it.get("property_id"))
+    teks = f"{SEVERITY_EMOJI.get(it['severity'], '⚪')} {label}{it['title']}\n\n{it['detail']}"
+    if it["status"] == "resolved":
+        return teks + "\n\n✅ Sudah selesai.", [[{"text": "⬅️ Kembali", "callback_data": "aksi"}]]
+    return teks, [
+        [{"text": "✅ Tandai Selesai", "callback_data": f"resolve:{incident_id}"}],
+        [{"text": "⬅️ Kembali", "callback_data": "aksi"}],
+    ]
+
+
+async def _push_incident_urgent(incident: dict):
+    """Push segera utk incident severity="urgent" (2026-08-12) - dipanggil dari
+    routes/incidents.py create_incident() lewat import tertunda (hindari circular
+    import). 🟠/🟡 SENGAJA TIDAK lewat sini - dibuat diam-diam, baru kelihatan pas owner
+    kirim /aksi (prinsip PRD §33-34: jangan banjiri, notify yang penting saja)."""
+    owners = await db.users.find({"role": "owner", "telegram_chat_id": {"$ne": None}},
+                                  {"_id": 0, "telegram_chat_id": 1}).to_list(50)
+    teks = f"🔴 URGENT — {incident['title']}\n\n{incident['detail']}"
+    tombol = [[{"text": "✅ Tandai Selesai", "callback_data": f"resolve:{incident['id']}"}]]
+    for u in owners:
+        await _kirim_pesan_dengan_tombol(BOT_CONFIG["owner"]["token"], u["telegram_chat_id"], teks, tombol)
+    await db.incidents.update_one({"id": incident["id"]}, {"$set": {"notified_at": now_iso()}})
+
+
 async def _get_bot_username(kind: str) -> str:
     if kind in _bot_username_cache:
         return _bot_username_cache[kind]
@@ -508,6 +604,40 @@ async def _handle_telegram_update(kind: str, request: Request):
     if secret and request.headers.get("X-Telegram-Bot-Api-Secret-Token") != secret:
         raise HTTPException(403, "Invalid secret token")
     payload = await request.json()
+
+    # Callback_query (2026-08-12, PRD "Owner Control Center" Fase 1 - Action Center) -
+    # update jenis BARU, sebelum ini tidak pernah ditangani sama sekali (tombol inline
+    # belum pernah ada di bot ini) - kalau tidak ditangani di sini, update ini akan jatuh
+    # lewat ke pengecekan `msg` di bawah & di-skip diam-diam (tidak ada "chat" langsung
+    # di payload callback_query, adanya di payload["callback_query"]["message"]["chat"]).
+    cq = payload.get("callback_query")
+    if cq:
+        chat_id = cq["message"]["chat"]["id"]
+        message_id = cq["message"]["message_id"]
+        token = BOT_CONFIG[kind]["token"]
+        role = BOT_CONFIG[kind]["role"]
+        data = cq.get("data") or ""
+        u = await db.users.find_one({"telegram_chat_id": chat_id, "role": role})
+        if not u or kind != "owner":
+            # Action Center khusus owner (staff bot tidak dapat tombol apa pun sejauh
+            # ini) - tombol ini secara desain tidak pernah dikirim ke staff, tapi dijaga
+            # di sini juga kalau2 ada yang coba tap dari luar alur normal.
+            await _answer_callback_query(token, cq["id"], "Fitur ini khusus owner.")
+            return {"ok": True}
+        if data == "aksi":
+            teks, tombol = await _render_daftar_incident()
+            await _edit_pesan(token, chat_id, message_id, teks, tombol)
+        elif data.startswith("show:"):
+            teks, tombol = await _render_detail_incident(data.split(":", 1)[1])
+            await _edit_pesan(token, chat_id, message_id, teks, tombol)
+        elif data.startswith("resolve:"):
+            from routes.incidents import resolve_incident
+            resolved = await resolve_incident(data.split(":", 1)[1], resolved_by=u.get("nama") or str(chat_id))
+            konfirmasi = f"✅ Selesai — {resolved['title']}" if resolved else "Sudah ditandai selesai sebelumnya."
+            await _edit_pesan(token, chat_id, message_id, konfirmasi, [])
+        await _answer_callback_query(token, cq["id"])
+        return {"ok": True}
+
     msg = payload.get("message") or payload.get("edited_message")
     if not msg or "chat" not in msg:
         return {"ok": True}
@@ -529,6 +659,18 @@ async def _handle_telegram_update(kind: str, request: Request):
     u = await db.users.find_one({"telegram_chat_id": chat_id, "role": role})
     if not u:
         await _kirim_pesan(token, chat_id, "Akun belum terhubung. Buat kode link dari halaman Profil di PMS, lalu kirim /start <kode> ke sini.")
+        return {"ok": True}
+
+    # /aksi (2026-08-12, Action Center) - command BARU terpisah, SENGAJA bukan reuse
+    # /start (yang sudah py 2 tanggung jawab: linking akun + instruksi belum-terhubung -
+    # entangle command baru ke situ tidak perlu, /aksi independen & 0 risiko ke flow
+    # linking yang sudah teruji).
+    if kind == "owner" and text.startswith("/aksi"):
+        teks, tombol = await _render_daftar_incident()
+        if tombol:
+            await _kirim_pesan_dengan_tombol(token, chat_id, teks, tombol)
+        else:
+            await _kirim_pesan(token, chat_id, teks)
         return {"ok": True}
 
     photos = msg.get("photo")

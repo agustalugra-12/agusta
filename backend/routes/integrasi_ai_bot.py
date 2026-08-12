@@ -593,3 +593,27 @@ async def ai_bot_alert_owner(body: AiBotAlertIn, _: str = Depends(verifikasi_ai_
     from routes.telegram_bot import kirim_alert_owner
     await kirim_alert_owner(body.pesan)
     return {"ok": True}
+
+
+class AiBotEmitIncidentIn(BaseModel):
+    event_type: str
+    severity: str
+    title: str
+    detail: Optional[str] = ""
+    meta: Optional[dict] = None
+    dedup_key: Optional[str] = None
+
+
+@api.post("/integrasi-ai-bot/emit-incident")
+async def ai_bot_emit_incident(body: AiBotEmitIncidentIn, property_id: str = Depends(verifikasi_ai_bot_key)):
+    """Relay incident dari ai-chat-bot ke Action Center PMS (2026-08-12, PRD "Owner Control
+    Center" Fase 1) - mirror pola alert-owner di atas, TAPI property_id DIPAKAI (bukan
+    dibuang lewat `_`) supaya incident dari AI ikut ter-scope per properti sama seperti
+    incident native PMS (Collection Required)."""
+    from routes.incidents import create_incident
+    await create_incident(
+        event_type=body.event_type, severity=body.severity, title=body.title,
+        detail=body.detail or "", source="ai-chat-bot", property_id=property_id,
+        dedup_key=body.dedup_key, meta=body.meta or {},
+    )
+    return {"ok": True}

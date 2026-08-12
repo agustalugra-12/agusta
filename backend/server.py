@@ -24,6 +24,7 @@ from routes.otomasi_email import background_gmail_fetch_loop
 from routes.telegram_bot import background_telegram_daily_report_loop
 from routes.rekening import background_smart_rule_loop
 from routes.ai_grow import background_ai_grow_cache_loop
+from routes.incidents import background_collection_required_scan_loop
 
 app = FastAPI(title="Pelangi Homestay API")
 app.mount("/uploads", StaticFiles(directory=str(ROOT_DIR / "uploads")), name="uploads")
@@ -80,6 +81,10 @@ async def startup():
     await db.kasbon.create_index("staff_id")
     await db.payroll.create_index([("staff_id", 1), ("periode", 1)], unique=True)
     await db.payroll.create_index("periode")
+
+    # Incident Engine (2026-08-12, PRD "Owner Control Center" Fase 1)
+    await db.incidents.create_index([("status", 1), ("created_at", -1)])
+    await db.incidents.create_index("dedup_key", sparse=True)
 
     # Seed users - SEKALI SAJA saat akun belum ada. Sebelumnya ada cabang elif yang
     # menimpa password_hash tiap restart kalau tidak cocok dengan ADMIN_PASSWORD/
@@ -191,6 +196,11 @@ async def startup():
     # dibuka). Slot ke-3 (23:00 WIB) dipicu dari background_telegram_daily_report_loop
     # sendiri, lihat catatan di sana.
     asyncio.create_task(background_ai_grow_cache_loop())
+
+    # Incident Engine - Collection Required (2026-08-12, PRD "Owner Control Center" Fase 1)
+    # scan booking Menginap checked_in dgn sisa tagihan tiap 15 menit (lihat
+    # routes/incidents.py utk detail lengkap kenapa dibatasi tipe="menginap" dulu).
+    asyncio.create_task(background_collection_required_scan_loop())
 
 
 @app.on_event("shutdown")
