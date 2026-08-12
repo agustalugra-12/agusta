@@ -326,10 +326,24 @@ async def _cocokkan_booking_pending_reddoorz(nama_tamu: str, room_tipe: str, che
     sync" jadi nol kandidat ketemu, sistem bikin booking BARU (kamar beda!) drpd nyambungin
     ke yang sudah ada & lunas - PERSIS jenis duplikat yang fungsi ini dibuat utk dicegah.
     Klik tombol staf itu cuma penanda UI "saya sudah kerjakan", BUKAN syarat sah utk
-    pencocokan - email yang benar2 masuk dari RedDoorz itu sendiri sudah bukti kuat cukup."""
+    pencocokan - email yang benar2 masuk dari RedDoorz itu sendiri sudah bukti kuat cukup.
+
+    status != "cancelled" (2026-08-12, bug nyata ditemukan - tamu Mas Cipto: percobaan
+    approve booking yang GAGAL & di-rollback [_proses_kamar_dan_kirim_link's except block]
+    menandai booking jadi status="cancelled" TAPI TIDAK PERNAH membersihkan sync_status
+    yang sudah kadung ke-set sebelum kegagalan itu - booking cancelled itu jadi tetap
+    "kelihatan" sbg kandidat valid di sini. Begitu ada 2 booking nama+tanggal+tipe kamar
+    SAMA [1 asli aktif, 1 sisa percobaan gagal yang cancelled] dan keduanya sama2 cocok
+    0 hari, urutan tidak dijamin - email RedDoorz sempat salah nyantol ke booking
+    CANCELLED, sync_status "synced" ke-set di booking yang salah, booking asli yang
+    beneran aktif tetap nyangkut "waiting_reddoorz_sync" walau tamu SUDAH lunas & email
+    SUDAH masuk. Booking cancelled TIDAK PERNAH representasi reservasi yang valid buat
+    disinkronkan - exclude dari kandidat sepenuhnya, apa pun sync_status basi yang masih
+    nempel di situ."""
     kandidat = await db.bookings.find({
         "source": "whatsapp_request",
         "sync_status": {"$in": ["waiting_reddoorz_sync", "waiting_reddoorz_input"]},
+        "status": {"$ne": "cancelled"},
         "room_tipe": room_tipe, "tipe": "menginap",
     }, {"_id": 0}).to_list(50)
     nama_norm = re.sub(r"[^a-z0-9]", "", (nama_tamu or "").lower())
