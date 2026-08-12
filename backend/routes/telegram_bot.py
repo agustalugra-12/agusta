@@ -184,6 +184,63 @@ async def _render_detail_incident(incident_id: str) -> tuple:
     ]
 
 
+async def _render_daftar_payment() -> tuple:
+    """Payment Center (2026-08-12, PRD "Owner Control Center" §12-13, Fase 2 - MURNI
+    monitoring, TIDAK mengubah perilaku sistem apa pun) - daftar booking Menginap/Day Use
+    yang BELUM lunas (belum_bayar/dp), diurutkan check-in terdekat dulu (paling mendesak
+    di atas). Reuse penuh status_bayar_booking() (core.py) - SATU sumber kebenaran yang
+    sama dipakai halaman staf Pembayaran, bukan hitungan terpisah yang bisa menyimpang.
+
+    Dibatasi status booking yang masih relevan (aktif/booking_pending/booking_paid/
+    checked_in) - booking cancelled/checked_out tidak perlu muncul di sini (kalaupun
+    belum lunas, itu bukan hal yang butuh tindakan owner lagi)."""
+    bookings = await db.bookings.find(
+        {"status": {"$in": ["aktif", "booking_pending", "booking_paid", "checked_in"]}},
+        {"_id": 0, "id": 1, "kode": 1, "nama_tamu": 1, "room_nomor": 1, "tipe": 1,
+         "total": 1, "payment_status": 1, "amount_due": 1, "jam_mulai": 1, "status": 1, "property_id": 1},
+    ).sort("jam_mulai", 1).to_list(500)
+    belum_lunas = []
+    for b in bookings:
+        sb = status_bayar_booking(b)
+        if sb["status_bayar"] in ("belum_bayar", "dp"):
+            belum_lunas.append((b, sb))
+    if not belum_lunas:
+        return "✅ Semua booking aktif sudah lunas.", []
+    tombol = []
+    for b, sb in belum_lunas[:15]:
+        label = await _label_properti(b.get("property_id"))
+        status_label = "Belum Bayar" if sb["status_bayar"] == "belum_bayar" else "DP"
+        cek_in = "-"
+        try:
+            cek_in = datetime.fromisoformat(b["jam_mulai"]).strftime("%d/%m")
+        except Exception:
+            pass
+        # Nominal SENGAJA tidak ditaruh di label tombol (Telegram batasi panjang teks
+        # tombol, angka rupiah bisa kepotong di tengah & tampak salah) - lihat detail
+        # lewat _render_detail_payment stlh tap, di sana ruang lebih longgar.
+        teks_tombol = f"🟡 {label}{b.get('kode', b['id'])[:24]} · {status_label} · {cek_in}"
+        tombol.append([{"text": teks_tombol, "callback_data": f"paydetail:{b['id']}"}])
+    return f"💰 Payment Center — {len(belum_lunas)} booking belum lunas:", tombol
+
+
+async def _render_detail_payment(booking_id: str) -> tuple:
+    b = await db.bookings.find_one({"id": booking_id}, {"_id": 0})
+    if not b:
+        return "Booking tidak ditemukan.", [[{"text": "⬅️ Kembali", "callback_data": "pembayaran"}]]
+    sb = status_bayar_booking(b)
+    label = await _label_properti(b.get("property_id"))
+    teks = (
+        f"💰 {label}{b.get('kode')}\n\n"
+        f"Tamu: {b.get('nama_tamu') or '-'}\n"
+        f"Kamar: {b.get('room_nomor') or '-'} ({b.get('tipe')})\n"
+        f"Status: {b.get('status')}\n\n"
+        f"Total: {_rp(b.get('total'))}\n"
+        f"Sudah dibayar: {_rp(sb['jumlah_dibayar'])}\n"
+        f"Sisa: {_rp(sb['sisa_tagihan'])}"
+    )
+    return teks, [[{"text": "⬅️ Kembali", "callback_data": "pembayaran"}]]
+
+
 async def _push_incident_urgent(incident: dict):
     """Push segera utk incident severity="urgent" (2026-08-12) - dipanggil dari
     routes/incidents.py create_incident() lewat import tertunda (hindari circular
@@ -635,6 +692,12 @@ async def _handle_telegram_update(kind: str, request: Request):
             resolved = await resolve_incident(data.split(":", 1)[1], resolved_by=u.get("nama") or str(chat_id))
             konfirmasi = f"✅ Selesai — {resolved['title']}" if resolved else "Sudah ditandai selesai sebelumnya."
             await _edit_pesan(token, chat_id, message_id, konfirmasi, [])
+        elif data == "pembayaran":
+            teks, tombol = await _render_daftar_payment()
+            await _edit_pesan(token, chat_id, message_id, teks, tombol)
+        elif data.startswith("paydetail:"):
+            teks, tombol = await _render_detail_payment(data.split(":", 1)[1])
+            await _edit_pesan(token, chat_id, message_id, teks, tombol)
         await _answer_callback_query(token, cq["id"])
         return {"ok": True}
 
@@ -667,6 +730,16 @@ async def _handle_telegram_update(kind: str, request: Request):
     # linking yang sudah teruji).
     if kind == "owner" and text.startswith("/aksi"):
         teks, tombol = await _render_daftar_incident()
+        if tombol:
+            await _kirim_pesan_dengan_tombol(token, chat_id, teks, tombol)
+        else:
+            await _kirim_pesan(token, chat_id, teks)
+        return {"ok": True}
+
+    # /pembayaran (2026-08-12, Payment Center - Fase 2 PRD, murni monitoring) - sama pola
+    # dgn /aksi, command terpisah sendiri.
+    if kind == "owner" and text.startswith("/pembayaran"):
+        teks, tombol = await _render_daftar_payment()
         if tombol:
             await _kirim_pesan_dengan_tombol(token, chat_id, teks, tombol)
         else:
