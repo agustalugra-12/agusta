@@ -724,6 +724,31 @@ async def update_booking(bid: str, body: BookingCreate, user: dict = Depends(get
     await upsert_guest(body.nama_tamu, body.no_hp, body.no_identitas, body.kendaraan, property_id, count_kunjungan=False)
     await log_activity(user, "update_booking", f"Edit booking {b['kode']} kamar {r['nomor']} untuk {body.nama_tamu}", entity=r["nomor"])
     doc = await db.bookings.find_one(scoped({"id": bid}, property_id), {"_id": 0})
+
+    # Voucher susulan (2026-08-13, bug nyata ditemukan - laporan Agus: tamu Putri Erika
+    # bayar DP saat booking masih kamar 15, voucher otomatis keluar dgn data itu, LALU
+    # ganti ke kamar 10 lewat endpoint ini - voucher pertama jadi basi/salah kamar, tidak
+    # ada yg otomatis kirim versi update, tamu bingung "belum dapat bukti"). Kalau booking
+    # ini SUDAH py bukti pembayaran terkirim (payment_status paid/dp - artinya voucher
+    # awal kemungkinan besar sudah keluar) & salah satu detail yg TAMPIL di voucher
+    # (kamar/tipe/jam) berubah, kirim ulang voucher OTOMATIS dgn data TERBARU - drpd
+    # bergantung staf/AI ingat kirim manual tiap kali reschedule.
+    voucher_relevant_changed = (
+        b.get("room_nomor") != doc.get("room_nomor")
+        or b.get("room_tipe") != doc.get("room_tipe")
+        or b.get("tipe") != doc.get("tipe")
+        or b.get("jam_mulai") != doc.get("jam_mulai")
+        or b.get("jam_selesai") != doc.get("jam_selesai")
+    )
+    if voucher_relevant_changed and doc.get("payment_status") in ("paid",):
+        try:
+            branding = await get_property_branding(property_id)
+            pdf_bytes = await asyncio.to_thread(generate_voucher_pdf, doc, branding)
+            await send_voucher_email(doc, pdf_bytes)
+            await kirim_voucher_wa(doc, pdf_bytes)
+        except Exception as e:
+            logging.getLogger("bookings").warning(f"Gagal kirim voucher update booking {doc.get('kode')}: {e}")
+
     return doc
 
 @api.delete("/bookings/{bid}")
