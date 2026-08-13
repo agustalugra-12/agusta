@@ -405,35 +405,38 @@ async def _cocokkan_via_kode_pms_masked(log_id: str, data: dict, property_id: st
     digit/hex) - SEBELUM ini langsung jatuh ke Manual_Required, staf harus cocokkan
     manual tiap kali pola ini berulang.
 
-    Aman drpd sekadar tebakan: WAJIB persis SATU booking yang cocok pola wildcard-nya
-    (prefix "BKO-" + panjang 14 digit timestamp + panjang 4 hex suffix, ditambah karakter
-    yg TIDAK ter-mask harus cocok PERSIS di posisinya) - kombinasi ini nyaris mustahil
-    cocok ke 2 booking berbeda scr kebetulan (creation-timestamp presisi ke detik). Kalau
-    ketemu 0 atau LEBIH dari 1 kandidat, MENYERAH ke Manual_Required spt sebelumnya -
-    prinsip yang sama dgn _cocokkan_via_kode_pms: lebih baik butuh staf drpd salah tebak."""
+    Disederhanakan (2026-08-13, masukan langsung Agus stlh lihat rencana awal yg cocokkan
+    SELURUH pola wildcard) - "aku cek setiap bookingan berbeda huruf belakangnya" -
+    4 karakter TERAKHIR (suffix hex acak, lihat KODE_BOOKING_PATTERN) SUDAH cukup unik
+    sendirian, tidak perlu ikut mencocokkan digit timestamp yg ter-mask (yg pola mask-nya
+    sendiri tidak 100% pasti konsisten tiap kejadian). Lebih simpel = lebih tahan thd
+    variasi pola mask yang belum tentu selalu sama persis.
+
+    Aman drpd sekadar tebakan: WAJIB persis SATU booking yang kode-nya berakhiran suffix
+    yang sama - kalau 0 atau LEBIH dari 1 kandidat (mis. suffix-nya sendiri ikut ter-mask,
+    atau kebetulan ada 2 booking suffix sama - acak 4-hex 65536 kemungkinan, sangat jarang
+    tapi TETAP dijaga), MENYERAH ke Manual_Required spt sebelumnya - prinsip yang sama dgn
+    _cocokkan_via_kode_pms: lebih baik butuh staf drpd salah tebak."""
     permintaan_khusus = (data.get("permintaan_khusus") or "").upper()
     m = KODE_BOOKING_MASKED_PATTERN.search(permintaan_khusus)
     if not m or "X" not in m.group(0):
         return False  # tidak ada kode ter-mask sama sekali di sini - beda kasus dari fungsi ini
     kode_masked = m.group(0)
-    wildcard_pattern = re.compile("^" + re.sub("X", ".", re.escape(kode_masked)) + "$")
+    suffix = kode_masked[-4:]
+    if "X" in suffix:
+        return False  # suffix sendiri ikut ter-mask - tidak ada apa pun yg bisa diandalkan drpd nebak
 
-    # Lookback 45 hari (2026-08-13) - cukup lebar drpd kode booking mana pun yang masuk
-    # akal jadi kandidat (booking + sinkron RedDoorz biasanya selesai dlm hitungan hari,
-    # bukan bulan), tapi TIDAK menyapu SELURUH histori bookings.kode tanpa batas.
-    batas = (datetime.now(timezone.utc) - timedelta(days=45)).isoformat()
     kandidat = await db.bookings.find(
-        scoped({"created_at": {"$gte": batas}}, property_id), {"_id": 0}
-    ).to_list(2000)
-    cocok = [b for b in kandidat if wildcard_pattern.match((b.get("kode") or "").upper())]
-    if len(cocok) != 1:
+        scoped({"kode": {"$regex": f"-{re.escape(suffix)}$"}}, property_id), {"_id": 0}
+    ).to_list(50)
+    if len(kandidat) != 1:
         logging.getLogger("otomasi_email").warning(
-            f"Kode ter-mask '{kode_masked}' di Permintaan Khusus cocok ke {len(cocok)} booking "
-            f"(butuh persis 1 spy aman auto-sinkron) - lanjut alur biasa/Manual_Required"
+            f"Suffix kode ter-mask '{suffix}' (dari '{kode_masked}') di Permintaan Khusus cocok ke "
+            f"{len(kandidat)} booking (butuh persis 1 spy aman auto-sinkron) - lanjut alur biasa/Manual_Required"
         )
         return False
 
-    booking = cocok[0]
+    booking = kandidat[0]
     grup = [booking]
     if booking.get("group_id"):
         grup = await db.bookings.find(scoped({"group_id": booking["group_id"]}, property_id), {"_id": 0}).to_list(20)
