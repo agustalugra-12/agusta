@@ -117,6 +117,101 @@ async def background_collection_required_scan_loop():
         await asyncio.sleep(INTERVAL_SEC)
 
 
+async def background_business_truth_scan_loop():
+    """Business Truth Reconciliation (2026-08-13, PRD "Owner Control Center" §21) - silang
+    cek 2 sumber uang yang independen (db.payment_log = log transaksi Tripay, dan
+    db.rekening_transaksi = ledger kas via auto_posting()) yang SELAMA INI tidak pernah
+    disilangkan sama sekali - keduanya bisa drift diam-diam tanpa ada yang tahu (lihat
+    komentar auto_posting() di routes/rekening.py: "kalau belum ada rekening default,
+    diam-diam dilewati").
+
+    SENGAJA cuma 2 cek yang buktinya jelas (bukan spekulatif) - lihat plan lengkap utk
+    cek yang SENGAJA belum dibangun (booking_paid_no_settlement, Day Use reconciliation)
+    krn butuh filter payment_option yang belum pasti presisi/sumber kebenaran terpisah.
+
+    INTERVAL 1 jam (beda dari collection_required 15 menit) - ini isu pembukuan
+    back-office, bukan urgensi tamu."""
+    INTERVAL_SEC = 3600  # 1 jam
+    LOOKBACK_HARI = 7
+    while True:
+        try:
+            batas_lookback = (datetime.now(timezone.utc) - timedelta(days=LOOKBACK_HARI)).isoformat()
+            properti_aktif = await db.properties.find({"aktif": True}, {"_id": 0, "id": 1}).to_list(50)
+            for p in properti_aktif:
+                pid = p["id"]
+
+                # Cek A - tripay_settlement_not_posted: settlement Tripay yang TIDAK
+                # ketemu baris rekening_transaksi yang cocok (auto_posting kemungkinan
+                # ke-skip diam-diam, atau bug serupa 2026-08-09 "ditagih dobel"/"tidak
+                # ke-post" yang pernah nyata terjadi).
+                settlements = await db.payment_log.find(
+                    scoped({"transaction_status": {"$in": ["settlement", "capture"]},
+                            "updated_at": {"$gte": batas_lookback}}, pid),
+                    {"_id": 0, "id": 1, "booking_kode": 1, "gross_amount": 1, "updated_at": 1},
+                ).to_list(500)
+                for s in settlements:
+                    dedup_key = f"tripay_settlement_not_posted:{s['id']}"
+                    try:
+                        nominal = int(float(s.get("gross_amount") or 0))
+                    except (TypeError, ValueError):
+                        continue
+                    if nominal <= 0:
+                        continue
+                    try:
+                        t_settle = datetime.fromisoformat(s["updated_at"])
+                    except (TypeError, ValueError):
+                        continue
+                    jendela_awal = (t_settle - timedelta(days=1)).isoformat()
+                    jendela_akhir = (t_settle + timedelta(days=1)).isoformat()
+                    match = await db.rekening_transaksi.find_one(scoped({
+                        "kategori": "Booking Tamu (Tripay)", "nominal": nominal,
+                        "tanggal": {"$gte": jendela_awal, "$lte": jendela_akhir},
+                    }, pid))
+                    if not match:
+                        nominal_str = f"{nominal:,}".replace(",", ".")
+                        await create_incident(
+                            event_type="tripay_settlement_not_posted", severity="warning", source="pms",
+                            property_id=pid, dedup_key=dedup_key,
+                            title=f"Settlement Tripay belum ke-posting - {s.get('booking_kode') or '-'} Rp{nominal_str}",
+                            detail=f"Booking {s.get('booking_kode') or '-'} · settlement Tripay Rp{nominal_str} "
+                                   f"tapi tidak ketemu baris ledger kas (rekening_transaksi) yang cocok - "
+                                   f"kemungkinan rekening operasional default belum diset, atau ada bug posting.",
+                            meta={"payment_log_id": s["id"], "booking_kode": s.get("booking_kode"), "nominal": nominal},
+                        )
+                    else:
+                        existing = await db.incidents.find_one({"dedup_key": dedup_key, "status": "open"})
+                        if existing:
+                            await resolve_incident(existing["id"], resolved_by="system:auto-match")
+
+                # Cek B - payment_log_orphan: callback Tripay yang gagal ditebak booking-nya
+                # sama sekali (routes/tripay.py:206-213, saat ini cuma di-log warning,
+                # TIDAK PERNAH sampai ke owner). Tidak ada scoped() property_id di sini
+                # krn justru property_id-nya sendiri yang tidak diketahui (booking_id null).
+                orphans = await db.payment_log.find(
+                    {"booking_id": None, "updated_at": {"$gte": batas_lookback}},
+                    {"_id": 0, "id": 1, "order_id": 1, "gross_amount": 1},
+                ).to_list(200)
+                for o in orphans:
+                    try:
+                        nominal = int(float(o.get("gross_amount") or 0))
+                    except (TypeError, ValueError):
+                        nominal = 0
+                    nominal_str = f"{nominal:,}".replace(",", ".")
+                    await create_incident(
+                        event_type="payment_log_orphan", severity="warning", source="pms",
+                        property_id=None, dedup_key=f"payment_log_orphan:{o['id']}",
+                        title=f"Callback Tripay tanpa booking - order {o.get('order_id')} Rp{nominal_str}",
+                        detail=f"Order {o.get('order_id')} · Rp{nominal_str} · sistem gagal mencocokkan "
+                               f"callback ini ke booking manapun (order_id tidak match pola kode booking "
+                               f"apa pun). Uang mungkin sudah diterima Tripay tapi tidak tertaut ke booking "
+                               f"nyata - perlu ditinjau manual, mungkin butuh dicocokkan tangan lewat dashboard Tripay.",
+                        meta={"payment_log_id": o["id"], "order_id": o.get("order_id"), "nominal": nominal},
+                    )
+        except Exception as e:
+            logging.getLogger("incidents").warning(f"Gagal scan Business Truth Reconciliation: {e}")
+        await asyncio.sleep(INTERVAL_SEC)
+
+
 @api.get("/incidents")
 async def list_incidents_endpoint(user: dict = Depends(require_owner)):
     """Verifikasi/debug tanpa Telegram (2026-08-12) - list incident open, sumber kebenaran

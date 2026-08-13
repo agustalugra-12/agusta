@@ -24,7 +24,7 @@ from routes.otomasi_email import background_gmail_fetch_loop
 from routes.telegram_bot import background_telegram_daily_report_loop
 from routes.rekening import background_smart_rule_loop
 from routes.ai_grow import background_ai_grow_cache_loop
-from routes.incidents import background_collection_required_scan_loop
+from routes.incidents import background_collection_required_scan_loop, background_business_truth_scan_loop
 
 app = FastAPI(title="Pelangi Homestay API")
 app.mount("/uploads", StaticFiles(directory=str(ROOT_DIR / "uploads")), name="uploads")
@@ -201,6 +201,11 @@ async def startup():
     # scan booking Menginap checked_in dgn sisa tagihan tiap 15 menit (lihat
     # routes/incidents.py utk detail lengkap kenapa dibatasi tipe="menginap" dulu).
     asyncio.create_task(background_collection_required_scan_loop())
+
+    # Business Truth Reconciliation (2026-08-13, PRD "Owner Control Center" §21) - silang
+    # cek settlement Tripay (db.payment_log) vs ledger kas (db.rekening_transaksi) tiap
+    # 1 jam, lihat routes/incidents.py utk detail 2 cek yang dijalankan.
+    asyncio.create_task(background_business_truth_scan_loop())
 
 
 @app.on_event("shutdown")
