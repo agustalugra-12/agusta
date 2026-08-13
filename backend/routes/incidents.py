@@ -301,7 +301,7 @@ async def background_business_truth_scan_loop():
                 # (132/138 paid tanpa payment_log - tamu RedDoorz bayar ke RedDoorz,
                 # bukan ke PMS, lihat komentar _cocokkan_booking_pending_reddoorz di
                 # routes/otomasi_email.py) DIKECUALIKAN krn memang tidak pernah & tidak
-                # perlu py payment_log - flag di sini utk keduanya SELALU false positive.
+                # perlu punya payment_log - flag di sini utk keduanya SELALU false positive.
                 #
                 # Ditemukan sendiri lewat investigasi validasi di atas (2026-08-13):
                 # booking GRUP (>1 kamar, 1x checkout, lihat komentar group_id di
