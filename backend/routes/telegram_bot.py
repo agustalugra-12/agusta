@@ -871,6 +871,22 @@ async def _handle_telegram_update(kind: str, request: Request):
         elif data.startswith("override_checkout:"):
             konfirmasi = await _override_checkout(data.split(":", 1)[1], owner_user=u)
             await _edit_pesan(token, chat_id, message_id, konfirmasi, [])
+        elif data.startswith("deploy_fix:"):
+            from routes.claude_fix import confirm_deploy
+            gagal = await confirm_deploy(data.split(":", 1)[1], owner_user=u)
+            if gagal:
+                await _answer_callback_query(token, cq["id"], gagal)
+                return {"ok": True}
+        elif data.startswith("regate_fix:"):
+            from routes.claude_fix import retry_gate
+            gagal = await retry_gate(data.split(":", 1)[1], owner_user=u)
+            if gagal:
+                await _answer_callback_query(token, cq["id"], gagal)
+                return {"ok": True}
+        elif data.startswith("discard_fix:"):
+            from routes.claude_fix import discard_run
+            konfirmasi = await discard_run(data.split(":", 1)[1], owner_user=u)
+            await _edit_pesan(token, chat_id, message_id, konfirmasi, [])
         await _answer_callback_query(token, cq["id"])
         return {"ok": True}
 
@@ -947,6 +963,29 @@ async def _handle_telegram_update(kind: str, request: Request):
             await _kirim_pesan_dengan_tombol(token, chat_id, teks, tombol)
         else:
             await _kirim_pesan(token, chat_id, teks)
+        return {"ok": True}
+
+    # /fixpms & /fixbot (2026-08-13, Fase 4 "Claude Code Control" - PRD §26-32) - trigger
+    # Claude Code diagnose+fix+regression-gate di worktree terisolasi (TIDAK PERNAH
+    # langsung di folder live), deploy MAJU cuma setelah tap konfirmasi terpisah. Sama
+    # pola command+argumen dgn /booking & /tamu - logic sungguhan di routes/claude_fix.py,
+    # sini cuma glue tipis.
+    if kind == "owner" and text.startswith("/fixpms"):
+        instruksi = text[len("/fixpms"):].strip()
+        if not instruksi:
+            await _kirim_pesan(token, chat_id, "Format: /fixpms <deskripsi masalah>, mis. /fixpms tombol export PDF jadwal kerja error 500")
+            return {"ok": True}
+        from routes.claude_fix import handle_fix_command
+        await handle_fix_command("pms", instruksi, u, chat_id, token)
+        return {"ok": True}
+
+    if kind == "owner" and text.startswith("/fixbot"):
+        instruksi = text[len("/fixbot"):].strip()
+        if not instruksi:
+            await _kirim_pesan(token, chat_id, "Format: /fixbot <deskripsi masalah>, mis. /fixbot AI kadang salah jawab harga kamar Harmoni")
+            return {"ok": True}
+        from routes.claude_fix import handle_fix_command
+        await handle_fix_command("aichatbot", instruksi, u, chat_id, token)
         return {"ok": True}
 
     photos = msg.get("photo")

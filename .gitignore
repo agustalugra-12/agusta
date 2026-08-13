@@ -3,6 +3,9 @@
 # Runtime user uploads (foto struk Telegram, dll) — data pengguna, bukan source code
 backend/uploads/
 
+# Fase 4 Claude Code Control (2026-08-13) - raw output tiap run `claude -p`, bukan source
+backend/claude_code_control/logs/
+
 # IDE and editors
 .idea/
 .vscode/

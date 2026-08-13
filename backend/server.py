@@ -25,6 +25,7 @@ from routes.telegram_bot import background_telegram_daily_report_loop
 from routes.rekening import background_smart_rule_loop
 from routes.ai_grow import background_ai_grow_cache_loop
 from routes.incidents import background_collection_required_scan_loop, background_business_truth_scan_loop
+from routes.claude_fix import reconcile_stale_claude_runs
 
 app = FastAPI(title="Pelangi Homestay API")
 app.mount("/uploads", StaticFiles(directory=str(ROOT_DIR / "uploads")), name="uploads")
@@ -206,6 +207,11 @@ async def startup():
     # cek settlement Tripay (db.payment_log) vs ledger kas (db.rekening_transaksi) tiap
     # 1 jam, lihat routes/incidents.py utk detail 2 cek yang dijalankan.
     asyncio.create_task(background_business_truth_scan_loop())
+
+    # Fase 4 Claude Code Control (2026-08-13) - restart-safety: run yang masih "in
+    # progress" saat backend restart ditandai error, jangan nyangkut lock/status
+    # ambigu selamanya (lihat routes/claude_fix.py).
+    await reconcile_stale_claude_runs()
 
 
 @app.on_event("shutdown")

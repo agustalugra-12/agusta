@@ -1,0 +1,44 @@
+{
+  "permissions": {
+    "defaultMode": "dontAsk",
+    "allow": [
+      "Read(./**)",
+      "Grep",
+      "Glob",
+      "Edit(./**)",
+      "Write(./**)",
+      "Bash(git diff*)",
+      "Bash(git status*)",
+      "Bash(git log*)",
+      "Bash(git show*)",
+      "Bash(ls*)",
+      "Bash(grep *)",
+      "Bash(find . *)",
+      "Bash(backend/venv/bin/python -m py_compile *)"
+    ],
+    "deny": [
+      "Read(./.git/**)",
+      "Edit(./.git/**)",
+      "Write(./.git/**)",
+      "Read(**/.env*)",
+      "Edit(**/.env*)",
+      "Write(**/.env*)",
+      "Bash(git push*)",
+      "Bash(git commit*)",
+      "Bash(git config*)",
+      "Bash(git remote*)",
+      "Bash(sudo*)",
+      "Bash(systemctl*)",
+      "Bash(rm -rf*)",
+      "Bash(curl*)",
+      "Bash(wget*)",
+      "Bash(chmod*)",
+      "Bash(chown*)",
+      "Bash(npm *)",
+      "Bash(pip install*)",
+      "WebFetch",
+      "WebSearch"
+    ],
+    "additionalDirectories": []
+  }
+}
