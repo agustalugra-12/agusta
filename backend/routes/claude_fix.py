@@ -611,7 +611,57 @@ async def reconcile_stale_claude_runs():
     """Restart-safety (2026-08-13, pola sama db.scheduler_state di telegram_bot.py) -
     restart pms-backend di tengah 1 run bikin asyncio.Lock in-process otomatis balik
     unlocked (benar), tapi dokumen DB bisa nyangkut "in progress" selamanya kalau tidak
-    ditandai ulang di startup."""
+    ditandai ulang di startup.
+
+    Bug NYATA ditemukan sendiri lewat tes live end-to-end pertama (2026-08-13, run
+    89c584735721, disaksikan Agus): utk repo="pms", `_deploy_pms()` men-push ke `main`
+    yang MEMICU GitHub Actions restart `pms-backend` - tapi kode yang nunggu+lapor hasil
+    deploy itu jalan DI DALAM `pms-backend` sendiri, jadi restart yang dipicunya sendiri
+    membunuh proses yang sedang nyupervisi deploy-nya SEBELUM sempat menulis
+    status="deployed". Versi lama fungsi ini menandai run itu "error" begitu saja -
+    padahal deploy-nya SUDAH BENAR-BENAR BERHASIL (branch ke-merge+push, service sudah
+    restart dgn kode baru) - cuma laporan/cleanup finalnya yang terputus. Ini BUKAN race
+    langka, tapi PASTI terjadi tiap kali deploy PMS sukses lewat fitur ini.
+
+    Sekarang, khusus status="deploying", verifikasi ke git SEBELUM menyerah - kalau
+    `git_sha_after` run itu ternyata sudah jadi bagian riwayat `main` di folder live,
+    deploy-nya nyata sukses - pulihkan status jadi "deployed" (bukan "error"), beres-beres
+    worktree/branch yang lama nyangkut, & kabari owner via Telegram (edit pesan yang sama,
+    yang lain kalau sempat nyangkut di "⏳ Deploy sedang berjalan..." selamanya). Repo lain
+    (aichatbot) TIDAK kena masalah ini (restart service-nya beda dari proses controller),
+    tapi cek yang sama tetap aman & benar diterapkan ke keduanya."""
+    stale_deploying = await db.claude_code_runs.find({"status": "deploying"}, {"_id": 0}).to_list(20)
+    for run in stale_deploying:
+        cfg = REPO_CONFIG.get(run.get("repo"))
+        sha = run.get("git_sha_after")
+        if not cfg or not sha:
+            continue
+        rc, _, _ = await _run(
+            ["git", "-C", str(cfg["live_dir"]), "merge-base", "--is-ancestor", sha, "main"], timeout=15,
+        )
+        if rc != 0:
+            continue  # belum kebukti ke-merge - biarkan jatuh ke penandaan "error" umum di bawah
+        await db.claude_code_runs.update_one(
+            {"id": run["id"]},
+            {"$set": {"status": "deployed", "deployed_at": now_iso(), "error": None,
+                      "recovered_note": "Deploy sebenarnya sukses - status dipulihkan otomatis saat "
+                                         "startup (proses lama terputus restart yang dipicunya sendiri)."}},
+        )
+        try:
+            kirim, _, edit, BOT_CONFIG = _telegram()
+            token = BOT_CONFIG["owner"]["token"]
+            if run.get("telegram_message_id"):
+                await edit(token, run["telegram_chat_id"], run["telegram_message_id"],
+                           f"✅ Deploy berhasil - {cfg['label']} (sha {sha[:8]})\n\n"
+                           f"(Status dipulihkan otomatis - proses sempat terputus oleh restart "
+                           f"yang dipicunya sendiri, tapi deploy-nya nyata sukses.)", [])
+        except Exception as e:
+            logging.getLogger("claude_fix").warning(f"Gagal lapor recovery deploy run {run['id']}: {e}")
+        try:
+            await _remove_worktree(cfg, Path(run["worktree_path"]), run.get("branch"))
+        except Exception as e:
+            logging.getLogger("claude_fix").warning(f"Gagal cleanup worktree run {run['id']} stlh recovery: {e}")
+
     await db.claude_code_runs.update_many(
         {"status": {"$in": ACTIVE_STATUSES}},
         {"$set": {"status": "error", "error": "Interrupted by backend restart"}},
