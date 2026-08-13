@@ -12,6 +12,74 @@ from core import *
 
 SEVERITY_EMOJI = {"urgent": "🔴", "warning": "🟠", "info": "🟡"}
 
+BURST_WINDOW_MIN = 15  # (2026-08-13) jendela deteksi burst utk Root Cause Correlation
+BURST_THRESHOLD = 3    # >= N incident event_type+source+property_id sama dlm jendela ini
+                        # dianggap kemungkinan 1 akar masalah, bukan N insiden independen
+
+
+async def _correlate_incident(doc: dict) -> None:
+    """Root Cause Correlation v1 (2026-08-13, PRD "Owner Control Center" Fase 5 §46) -
+    mengisi doc["correlation_id"] kalau incident baru ini kemungkinan besar berbagi akar
+    masalah dgn incident lain yang masih open. Dipanggil dari create_incident() SEBELUM
+    insert. SENGAJA cuma 2 sinyal yang buktinya jelas dari data yang sudah ada (bukan
+    ML/statistik spekulatif - Incident Engine sendiri baru berjalan sejak 2026-08-12,
+    belum ada histori cukup utk "belajar" pola apa pun - lihat diskusi Fase 5 dgn Agus:
+    predictive anomaly detection & auto-remediation SENGAJA ditunda krn alasan yang sama):
+
+    1. Entity correlation - incident lain (event_type APA PUN) yg meta.booking_id-nya
+       SAMA PERSIS. Contoh nyata: collection_required (tamu checked-in belum lunas) &
+       checkout_blocked (staf coba checkout, ditolak) utk booking yang sama = SATU akar
+       masalah (tamu belum bayar), bukan 2 masalah terpisah - sebelum ini keduanya tampil
+       sbg 2 baris tak terhubung di Action Center.
+    2. Burst correlation - >= BURST_THRESHOLD incident dgn event_type+source+property_id
+       SAMA dlm BURST_WINDOW_MIN menit terakhir. Contoh nyata: ai_claim_mismatch bisa
+       meletup berkali-kali dlm hitungan menit kalau 1 KB entry rusak/1 tool salah schema
+       - tanpa ini, tiap kejadian severity="urgent" push Telegram terpisah (lihat
+       _push_incident_urgent di telegram_bot.py), jadi 5 kejadian dari 1 akar masalah =
+       5 notifikasi URGENT terpisah yg membanjiri owner.
+
+    TIDAK mencoba korelasi meta.booking_kode (tripay_settlement_not_posted/
+    payment_log_orphan) ke meta.booking_id - butuh resolusi kode->id yg belum pasti
+    presisi utk semua kasus, sama alasan hati-hati yg sudah dipakai di
+    background_business_truth_scan_loop (lihat komentar di situ) - jangan gabungkan yg
+    buktinya belum jelas."""
+    booking_id = (doc.get("meta") or {}).get("booking_id")
+    if booking_id:
+        sibling = await db.incidents.find_one(
+            {"status": "open", "meta.booking_id": booking_id, "id": {"$ne": doc["id"]}},
+            {"_id": 0, "id": 1, "correlation_id": 1},
+        )
+        if sibling:
+            cid = sibling.get("correlation_id") or str(uuid.uuid4())
+            if not sibling.get("correlation_id"):
+                await db.incidents.update_one({"id": sibling["id"]}, {"$set": {"correlation_id": cid}})
+                await db.incident_correlation_groups.insert_one({
+                    "id": cid, "kind": "entity", "key": f"booking_id:{booking_id}",
+                    "property_id": doc.get("property_id"), "created_at": now_iso(),
+                    "telegram_messages": [],
+                })
+            doc["correlation_id"] = cid
+            return
+
+    batas = (datetime.now(timezone.utc) - timedelta(minutes=BURST_WINDOW_MIN)).isoformat()
+    recent = await db.incidents.find(
+        {"status": "open", "event_type": doc["event_type"], "source": doc["source"],
+         "property_id": doc.get("property_id"), "created_at": {"$gte": batas}},
+        {"_id": 0, "id": 1, "correlation_id": 1},
+    ).to_list(50)
+    if len(recent) + 1 >= BURST_THRESHOLD:
+        existing_cid = next((r["correlation_id"] for r in recent if r.get("correlation_id")), None)
+        cid = existing_cid or str(uuid.uuid4())
+        if not existing_cid:
+            ids = [r["id"] for r in recent]
+            await db.incidents.update_many({"id": {"$in": ids}}, {"$set": {"correlation_id": cid}})
+            await db.incident_correlation_groups.insert_one({
+                "id": cid, "kind": "burst", "key": f"{doc['event_type']}:{doc['source']}",
+                "property_id": doc.get("property_id"), "created_at": now_iso(),
+                "telegram_messages": [],
+            })
+        doc["correlation_id"] = cid
+
 
 async def create_incident(event_type: str, severity: str, title: str, detail: str = "",
                            source: str = "pms", property_id: Optional[str] = None,
@@ -29,8 +97,9 @@ async def create_incident(event_type: str, severity: str, title: str, detail: st
         "id": str(uuid.uuid4()), "event_type": event_type, "severity": severity, "status": "open",
         "source": source, "property_id": property_id, "title": title, "detail": detail,
         "dedup_key": dedup_key, "meta": meta or {}, "created_at": now_iso(),
-        "notified_at": None, "resolved_at": None, "resolved_by": None,
+        "notified_at": None, "resolved_at": None, "resolved_by": None, "correlation_id": None,
     }
+    await _correlate_incident(doc)
     await db.incidents.insert_one(doc)
     if severity == "urgent":
         # Import DI DALAM fungsi (bukan top-level) - hindari circular import, sama trik

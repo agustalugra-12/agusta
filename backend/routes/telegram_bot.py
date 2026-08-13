@@ -184,6 +184,14 @@ async def _render_detail_incident(incident_id: str) -> tuple:
     if guest_msg:
         teks += f"\n\n👤 Tamu: \"{guest_msg}\""
     teks += f"\n\n{it['detail']}"
+    # Root Cause Correlation (2026-08-13, PRD Fase 5 §46) - kasih tahu owner kalau
+    # incident ini terhubung ke incident lain (booking sama, atau bagian dari burst
+    # event_type yang sama) - lihat _correlate_incident (routes/incidents.py).
+    if it.get("correlation_id"):
+        terkait = await db.incidents.count_documents(
+            {"correlation_id": it["correlation_id"], "id": {"$ne": incident_id}})
+        if terkait:
+            teks += f"\n\n🔗 Terkait dgn {terkait} incident lain di Action Center (kemungkinan 1 akar masalah)."
     if it["status"] == "resolved":
         return teks + "\n\n✅ Sudah selesai.", [[{"text": "⬅️ Kembali", "callback_data": "aksi"}]]
     tombol = []
@@ -409,14 +417,38 @@ async def _push_incident_urgent(incident: dict):
     """Push segera utk incident severity="urgent" (2026-08-12) - dipanggil dari
     routes/incidents.py create_incident() lewat import tertunda (hindari circular
     import). 🟠/🟡 SENGAJA TIDAK lewat sini - dibuat diam-diam, baru kelihatan pas owner
-    kirim /aksi (prinsip PRD §33-34: jangan banjiri, notify yang penting saja)."""
+    kirim /aksi (prinsip PRD §33-34: jangan banjiri, notify yang penting saja).
+
+    Root Cause Correlation (2026-08-13, PRD Fase 5 §46) - kalau incident ini sudah
+    ditandai correlation_id (lihat _correlate_incident, routes/incidents.py) & grup itu
+    SUDAH pernah push sebelumnya, EDIT pesan yang sama drpd kirim baru - cegah banjir
+    Telegram dari 1 akar masalah yang meletup berkali-kali (mis. ai_claim_mismatch dari
+    1 KB entry rusak). Push PERTAMA dlm sebuah grup tetap kirim pesan baru spt biasa,
+    sekalian menyimpan message_id-nya ke db.incident_correlation_groups utk dipakai
+    push berikutnya dlm grup yang sama."""
+    cid = incident.get("correlation_id")
+    group = await db.incident_correlation_groups.find_one({"id": cid}) if cid else None
+    if group and group.get("telegram_messages"):
+        jumlah = await db.incidents.count_documents({"correlation_id": cid, "status": "open"})
+        teks = (f"🔴 URGENT — {jumlah} incident serupa terdeteksi, kemungkinan 1 akar masalah "
+                f"(lihat /aksi utk detail tiap kejadian)\n\nTerbaru: {incident['title']}\n\n{incident['detail']}")
+        tombol = [[{"text": "🗒 Buka Action Center", "callback_data": "aksi"}]]
+        for m in group["telegram_messages"]:
+            await _edit_pesan(BOT_CONFIG["owner"]["token"], m["chat_id"], m["message_id"], teks, tombol)
+        await db.incidents.update_one({"id": incident["id"]}, {"$set": {"notified_at": now_iso()}})
+        return
     owners = await db.users.find({"role": "owner", "telegram_chat_id": {"$ne": None}},
                                   {"_id": 0, "telegram_chat_id": 1}).to_list(50)
     teks = f"🔴 URGENT — {incident['title']}\n\n{incident['detail']}"
     tombol = [[{"text": "✅ Tandai Selesai", "callback_data": f"resolve:{incident['id']}"}]]
+    sent_messages = []
     for u in owners:
-        await _kirim_pesan_dengan_tombol(BOT_CONFIG["owner"]["token"], u["telegram_chat_id"], teks, tombol)
+        r = await _kirim_pesan_dengan_tombol(BOT_CONFIG["owner"]["token"], u["telegram_chat_id"], teks, tombol)
+        if r and r.get("message_id"):
+            sent_messages.append({"chat_id": u["telegram_chat_id"], "message_id": r["message_id"]})
     await db.incidents.update_one({"id": incident["id"]}, {"$set": {"notified_at": now_iso()}})
+    if cid and sent_messages:
+        await db.incident_correlation_groups.update_one({"id": cid}, {"$set": {"telegram_messages": sent_messages}})
 
 
 async def _get_bot_username(kind: str) -> str:
