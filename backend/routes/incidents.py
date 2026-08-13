@@ -194,9 +194,12 @@ async def background_business_truth_scan_loop():
     komentar auto_posting() di routes/rekening.py: "kalau belum ada rekening default,
     diam-diam dilewati").
 
-    SENGAJA cuma 2 cek yang buktinya jelas (bukan spekulatif) - lihat plan lengkap utk
-    cek yang SENGAJA belum dibangun (booking_paid_no_settlement, Day Use reconciliation)
-    krn butuh filter payment_option yang belum pasti presisi/sumber kebenaran terpisah.
+    3 cek yang buktinya jelas (bukan spekulatif) - Cek A/B (2026-08-12) + Cek C
+    booking_marked_paid_no_settlement (2026-08-13, sebelumnya sengaja ditunda, lihat
+    komentar di Cek C soal validasi thd data produksi asli sblm dibangun). Day Use
+    reconciliation TETAP belum dibangun - sumber kebenarannya terpisah
+    (db.checkins.pembayaran, bukan db.bookings), perlu perlakuan sendiri spt
+    background_collection_required_scan_loop.
 
     INTERVAL 1 jam (beda dari collection_required 15 menit) - ini isu pembukuan
     back-office, bukan urgensi tamu."""
@@ -288,6 +291,62 @@ async def background_business_truth_scan_loop():
                                f"nyata - perlu ditinjau manual, mungkin butuh dicocokkan tangan lewat dashboard Tripay.",
                         meta={"payment_log_id": o["id"], "order_id": o.get("order_id"), "nominal": nominal},
                     )
+
+                # Cek C - booking_marked_paid_no_settlement (2026-08-13, sebelumnya
+                # SENGAJA ditunda - lihat catatan lama di docstring - krn butuh filter
+                # payment_option yang presisi. Diverifikasi thd data produksi asli
+                # sebelum dibangun (bukan tebakan): booking.source == "walk_in" (7/7
+                # paid tanpa payment_log - cash dibayar LANGSUNG saat Quick Book dibuat,
+                # dicatat di booking.pembayaran, bukan payment_log by design) & "ota"
+                # (132/138 paid tanpa payment_log - tamu RedDoorz bayar ke RedDoorz,
+                # bukan ke PMS, lihat komentar _cocokkan_booking_pending_reddoorz di
+                # routes/otomasi_email.py) DIKECUALIKAN krn memang tidak pernah & tidak
+                # perlu py payment_log - flag di sini utk keduanya SELALU false positive.
+                #
+                # Ditemukan sendiri lewat investigasi validasi di atas (2026-08-13):
+                # booking GRUP (>1 kamar, 1x checkout, lihat komentar group_id di
+                # tripay_create_transaction) - transaksi Tripay dibuat SEKALI atas nama
+                # booking PERTAMA grup saja, jadi payment_log HANYA tertaut ke kode
+                # booking pertama itu - booking lain dlm grup yang sama (payment_status
+                # ikut "paid") TIDAK PERNAH punya payment_log dgn kode mereka SENDIRI,
+                # walau uangnya sudah benar-benar tercatat (via sibling-nya). Ini pola
+                # BY DESIGN, bukan bug - cek group_id dulu sblm menyimpulkan "tidak ada
+                # settlement", cegah false-positive utk SETIAP booking grup di masa
+                # depan (bukan cuma 3 kejadian yg ditemukan hari ini).
+                kandidat = await db.bookings.find(
+                    scoped({"payment_status": "paid", "source": {"$nin": ["walk_in", "ota"]},
+                            "paid_at": {"$gte": batas_lookback}}, pid),
+                    {"_id": 0, "id": 1, "kode": 1, "total": 1, "amount_due": 1, "group_id": 1, "source": 1},
+                ).to_list(500)
+                for b in kandidat:
+                    dedup_key = f"booking_marked_paid_no_settlement:{b['id']}"
+                    log_sendiri = await db.payment_log.find_one({"booking_kode": b.get("kode")})
+                    ada_settlement = bool(log_sendiri)
+                    if not ada_settlement and b.get("group_id"):
+                        saudara = await db.bookings.find(
+                            {"group_id": b["group_id"], "id": {"$ne": b["id"]}}, {"_id": 0, "kode": 1},
+                        ).to_list(20)
+                        for s2 in saudara:
+                            if await db.payment_log.find_one({"booking_kode": s2.get("kode")}):
+                                ada_settlement = True
+                                break
+                    if not ada_settlement:
+                        total_str = f"{int(b.get('total') or 0):,}".replace(",", ".")
+                        await create_incident(
+                            event_type="booking_marked_paid_no_settlement", severity="warning", source="pms",
+                            property_id=pid, dedup_key=dedup_key,
+                            title=f"Booking lunas tanpa jejak pembayaran - {b.get('kode')} Rp{total_str}",
+                            detail=f"Booking {b.get('kode')} (sumber: {b.get('source')}) berstatus lunas tapi "
+                                   f"tidak ketemu baris payment_log yang membuktikannya (bukan walk_in/OTA yang "
+                                   f"memang dikecualikan, & bukan bagian booking grup yang settlement-nya ada di "
+                                   f"kode saudaranya) - perlu ditinjau, kemungkinan bug di jalur yang menandai "
+                                   f"lunas atau data pembayaran yang hilang.",
+                            meta={"booking_id": b["id"], "booking_kode": b.get("kode"), "total": b.get("total")},
+                        )
+                    else:
+                        existing = await db.incidents.find_one({"dedup_key": dedup_key, "status": "open"})
+                        if existing:
+                            await resolve_incident(existing["id"], resolved_by="system:auto-match")
         except Exception as e:
             logging.getLogger("incidents").warning(f"Gagal scan Business Truth Reconciliation: {e}")
         await asyncio.sleep(INTERVAL_SEC)
