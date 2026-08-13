@@ -385,6 +385,74 @@ async def _resolve_property_dari_subjek(subjek: str) -> Optional[str]:
 
 KODE_BOOKING_PATTERN = re.compile(r"BKO-\d{14}-[0-9A-F]{4}")
 
+# Toleran-mask (2026-08-13, PATTERN TERPISAH dari KODE_BOOKING_PATTERN di atas - bukan
+# menggantikan, exact match TETAP dicoba lebih dulu & tetap satu-satunya kriteria di
+# _cocokkan_via_kode_pms). Terima 'X' sbg placeholder di posisi digit MAUPUN hex -
+# lihat _cocokkan_via_kode_pms_masked utk kenapa & bukti nyata pola ini.
+KODE_BOOKING_MASKED_PATTERN = re.compile(r"BKO-[0-9X]{14}-[0-9A-FX]{4}")
+
+
+async def _cocokkan_via_kode_pms_masked(log_id: str, data: dict, property_id: str) -> bool:
+    """Fallback toleran-mask - dipanggil SETELAH _cocokkan_via_kode_pms (exact match)
+    gagal. Bug nyata BERULANG 2x (2026-08-12 & 2026-08-13, laporan Agus, tamu Putri
+    Erika keduanya): kolom "Permintaan Khusus" RedDoorz kadang berisi kode PMS yang
+    SEBAGIAN karakternya ter-mask jadi 'X' (mis. "BKO-XXXXXXXXXXXX59-768E" drpd kode
+    asli "BKO-20260813204559-768E") - sumber kerusakan di LUAR sistem ini (dicek
+    langsung: TIDAK ada fungsi masking apa pun di PMS maupun ai-chat-bot, prompt AI
+    bahkan sudah eksplisit melarang AI memotong/menyingkat kode - kemungkinan besar cara
+    staf menyalin/mengetik ulang kode saat input manual ke RedDoorz, di luar kendali kode
+    ini). KODE_BOOKING_PATTERN (exact) gagal total thd kode semacam ini ('X' bukan
+    digit/hex) - SEBELUM ini langsung jatuh ke Manual_Required, staf harus cocokkan
+    manual tiap kali pola ini berulang.
+
+    Aman drpd sekadar tebakan: WAJIB persis SATU booking yang cocok pola wildcard-nya
+    (prefix "BKO-" + panjang 14 digit timestamp + panjang 4 hex suffix, ditambah karakter
+    yg TIDAK ter-mask harus cocok PERSIS di posisinya) - kombinasi ini nyaris mustahil
+    cocok ke 2 booking berbeda scr kebetulan (creation-timestamp presisi ke detik). Kalau
+    ketemu 0 atau LEBIH dari 1 kandidat, MENYERAH ke Manual_Required spt sebelumnya -
+    prinsip yang sama dgn _cocokkan_via_kode_pms: lebih baik butuh staf drpd salah tebak."""
+    permintaan_khusus = (data.get("permintaan_khusus") or "").upper()
+    m = KODE_BOOKING_MASKED_PATTERN.search(permintaan_khusus)
+    if not m or "X" not in m.group(0):
+        return False  # tidak ada kode ter-mask sama sekali di sini - beda kasus dari fungsi ini
+    kode_masked = m.group(0)
+    wildcard_pattern = re.compile("^" + re.sub("X", ".", re.escape(kode_masked)) + "$")
+
+    # Lookback 45 hari (2026-08-13) - cukup lebar drpd kode booking mana pun yang masuk
+    # akal jadi kandidat (booking + sinkron RedDoorz biasanya selesai dlm hitungan hari,
+    # bukan bulan), tapi TIDAK menyapu SELURUH histori bookings.kode tanpa batas.
+    batas = (datetime.now(timezone.utc) - timedelta(days=45)).isoformat()
+    kandidat = await db.bookings.find(
+        scoped({"created_at": {"$gte": batas}}, property_id), {"_id": 0}
+    ).to_list(2000)
+    cocok = [b for b in kandidat if wildcard_pattern.match((b.get("kode") or "").upper())]
+    if len(cocok) != 1:
+        logging.getLogger("otomasi_email").warning(
+            f"Kode ter-mask '{kode_masked}' di Permintaan Khusus cocok ke {len(cocok)} booking "
+            f"(butuh persis 1 spy aman auto-sinkron) - lanjut alur biasa/Manual_Required"
+        )
+        return False
+
+    booking = cocok[0]
+    grup = [booking]
+    if booking.get("group_id"):
+        grup = await db.bookings.find(scoped({"group_id": booking["group_id"]}, property_id), {"_id": 0}).to_list(20)
+    for b in grup:
+        await db.bookings.update_one(
+            {"id": b["id"]},
+            {"$set": {"sync_status": "synced", "ota_reservation_no": data.get("no_reservasi")}},
+        )
+    await db.email_logs.update_one({"id": log_id}, {"$set": {
+        "status": "Parsed_Success", "aksi": "sinkron_via_kode_pms_masked",
+        "reservation_id": booking["id"], "reservation_ids": [b["id"] for b in grup],
+        "alasan": f"Kode ter-mask \"{kode_masked}\" di Permintaan Khusus dicocokkan otomatis ke "
+                  f"booking {booking['kode']} (satu-satunya yg cocok pola wildcard-nya).",
+    }})
+    logging.getLogger("otomasi_email").info(
+        f"Email disinkronkan via kode ter-mask '{kode_masked}' -> booking asli {booking['kode']} ({len(grup)} kamar)"
+    )
+    return True
+
 
 async def _cocokkan_via_kode_pms(log_id: str, data: dict, property_id: str) -> bool:
     """Sinkron Kode-Anchor (2026-08-07, diskusi langsung dgn Agus, akar masalah asli:
@@ -461,6 +529,11 @@ async def buat_reservasi_otomatis(log_id: str, data: dict, sumber: str, subjek: 
     # kalau ketemu, ini booking WA yang SUDAH ada & sudah diproses PMS, tidak perlu (dan
     # BERBAHAYA kalau) lanjut ke alur "buat reservasi baru" di bawah.
     if await _cocokkan_via_kode_pms(log_id, data, property_id):
+        return
+    # Fallback toleran-mask (2026-08-13) - exact match di atas gagal, coba lagi dgn 'X'
+    # dianggap wildcard sebelum menyerah ke Manual_Required (lihat catatan lengkap di
+    # _cocokkan_via_kode_pms_masked).
+    if await _cocokkan_via_kode_pms_masked(log_id, data, property_id):
         return
 
     mapping = await db.room_mappings.find_one({"ota_nama": data.get("tipe_kamar"), "sumber": sumber})
