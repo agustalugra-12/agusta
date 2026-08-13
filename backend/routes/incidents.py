@@ -144,8 +144,20 @@ async def background_business_truth_scan_loop():
                 # ketemu baris rekening_transaksi yang cocok (auto_posting kemungkinan
                 # ke-skip diam-diam, atau bug serupa 2026-08-09 "ditagih dobel"/"tidak
                 # ke-post" yang pernah nyata terjadi).
+                #
+                # `gateway: "tripay"` WAJIB ada di filter (2026-08-13, bug nyata ditemukan
+                # SENDIRI pas cek hasil scan pertama) - draft awal tidak filter `gateway`
+                # sama sekali, jadi entri payment_log dari collect_balance()/mark_paid_manual()
+                # (transaction_status="settlement" juga, tapi `gateway` TIDAK PERNAH diisi di
+                # 2 fungsi itu, beda sumber sama sekali dari webhook Tripay) ikut ke-scan &
+                # SEMUA 16 kejadian nyata di scan pertama ternyata FALSE POSITIVE murni -
+                # bukan settlement Tripay yang belum ke-posting, tapi memang bukan Tripay
+                # sama sekali (auto_posting "Booking Tamu (Tripay)" tidak pernah relevan
+                # utknya). Investigasi false positive ini JUSTRU nemu bug NYATA terpisah:
+                # collect_balance()/mark_paid_manual() sendiri TIDAK PERNAH panggil
+                # auto_posting() sama sekali - lihat fix di routes/bookings.py.
                 settlements = await db.payment_log.find(
-                    scoped({"transaction_status": {"$in": ["settlement", "capture"]},
+                    scoped({"gateway": "tripay", "transaction_status": {"$in": ["settlement", "capture"]},
                             "updated_at": {"$gte": batas_lookback}}, pid),
                     {"_id": 0, "id": 1, "booking_kode": 1, "gross_amount": 1, "updated_at": 1},
                 ).to_list(500)

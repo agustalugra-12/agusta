@@ -296,6 +296,14 @@ async def collect_balance(bid: str, body: CollectBalanceBody, user: dict = Depen
     await log_activity(user, "collect_balance",
                        f"Collect sisa pelunasan booking {b['kode']}: Rp{body.nominal:,} via {body.metode} (total terbayar Rp{new_paid:,}/Rp{total:,})".replace(",", "."),
                        entity=b.get("room_nomor", ""))
+    # Cash & Account Intelligence (2026-08-13, bug nyata ditemukan lewat Business Truth
+    # Reconciliation) - fungsi ini TIDAK PERNAH memanggil auto_posting() sama sekali sejak
+    # awal dibuat, uang yang benar-benar diterima staf (cash/QRIS) lewat Collect Balance
+    # tidak pernah tercatat ke ledger kas (db.rekening_transaksi) - beda kategori dari
+    # "Booking Tamu (Tripay)" (bukan settlement Tripay) supaya tetap bisa dibedakan asalnya.
+    from routes.rekening import auto_posting
+    await auto_posting("pemasukan", body.nominal, "Pelunasan Sisa (Collect Balance)",
+                       f"Booking {b['kode']} - {b.get('nama_tamu', '-')} via {body.metode}", property_id)
     # Owner Control Center (2026-08-12) - auto-resolve incident "Collection Required"
     # SEGERA kalau lunas di sini, bukan nunggu siklus scan berikutnya (maks 15 menit,
     # lihat background_collection_required_scan_loop) - staf collect bayaran & Action
@@ -491,6 +499,13 @@ async def mark_paid_manual(bid: str, body: ManualMarkPaidBody, user: dict = Depe
     await log_activity(user, "manual_paid",
                        f"Konfirmasi manual booking {b['kode']} kamar {b.get('room_nomor','')}: Rp{nominal:,} via {body.metode}".replace(",", "."),
                        entity=b.get("room_nomor", ""))
+    # Cash & Account Intelligence (2026-08-13, bug nyata ditemukan lewat Business Truth
+    # Reconciliation, sama akar masalah dgn collect_balance()) - fungsi ini juga TIDAK
+    # PERNAH memanggil auto_posting() sama sekali, pembayaran yang staf verifikasi manual
+    # (transfer bank dll) tidak pernah tercatat ke ledger kas.
+    from routes.rekening import auto_posting
+    await auto_posting("pemasukan", nominal, "Konfirmasi Pembayaran Manual",
+                       f"Booking {b['kode']} - {b.get('nama_tamu', '-')} via {body.metode}", property_id)
     # kirim voucher otomatis begitu pembayaran manual dikonfirmasi lunas
     if b.get("payment_status") != "paid":
         try:
