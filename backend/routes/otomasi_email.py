@@ -301,7 +301,7 @@ async def parse_email_with_ai(subjek: str, pengirim: str, isi_email: str) -> dic
     return json.loads(resp.choices[0].message.content)
 
 
-async def _cocokkan_booking_pending_reddoorz(nama_tamu: str, room_tipe: str, check_in: datetime, jumlah_kamar: int) -> list:
+async def _cocokkan_booking_pending_reddoorz(nama_tamu: str, room_tipe: str, check_in: datetime, jumlah_kamar: int, property_id: str) -> list:
     """Cari booking yang sudah dibuat & lunas lewat Booking Request (AI WhatsApp -> approval
     -> Tripay, `backend/routes/booking_requests.py`) dan sedang menunggu sinkron RedDoorz
     (`sync_status="waiting_reddoorz_sync"` — staf sudah klik "Sudah Input ke RedDoorz") yang
@@ -310,6 +310,14 @@ async def _cocokkan_booking_pending_reddoorz(nama_tamu: str, room_tipe: str, che
     check-in beda maksimal 1 hari (RedDoorz kadang beda pembulatan zona waktu), dan nama tamu
     beririsan (longgar, huruf/angka saja, case-insensitive) — tidak exact match karena ejaan
     AI WhatsApp vs RedDoorz bisa sedikit beda. Return maksimal `jumlah_kamar` kandidat.
+
+    `property_id` WAJIB (2026-08-14, audit keamanan menemukan bug nyata: fungsi ini TIDAK
+    difilter property_id sama sekali sejak awal dibuat, beda dari 2 fungsi kembarannya
+    [`_cocokkan_via_kode_pms`/`_masked`] yang sudah benar pakai `scoped()`. Begitu ada
+    properti kedua pakai RedDoorz sync, email konfirmasi properti A bisa salah tandai
+    booking properti B sebagai "synced" — kebocoran data lintas properti. Dipanggil dari
+    `buat_reservasi_otomatis` SETELAH `property_id` sudah diresolusi, sama seperti 2
+    kembarannya.)
 
     Diurutkan berdasarkan selisih tanggal (0 hari dulu, baru ±1 hari) SEBELUM dipotong ke
     `jumlah_kamar` (2026-07-27, ditemukan lewat laporan nyata: 3 booking tamu sama menunggu
@@ -340,12 +348,12 @@ async def _cocokkan_booking_pending_reddoorz(nama_tamu: str, room_tipe: str, che
     SUDAH masuk. Booking cancelled TIDAK PERNAH representasi reservasi yang valid buat
     disinkronkan - exclude dari kandidat sepenuhnya, apa pun sync_status basi yang masih
     nempel di situ."""
-    kandidat = await db.bookings.find({
+    kandidat = await db.bookings.find(scoped({
         "source": "whatsapp_request",
         "sync_status": {"$in": ["waiting_reddoorz_sync", "waiting_reddoorz_input"]},
         "status": {"$ne": "cancelled"},
         "room_tipe": room_tipe, "tipe": "menginap",
-    }, {"_id": 0}).to_list(50)
+    }, property_id), {"_id": 0}).to_list(50)
     nama_norm = re.sub(r"[^a-z0-9]", "", (nama_tamu or "").lower())
     cocok = []
     for b in kandidat:
@@ -566,7 +574,7 @@ async def buat_reservasi_otomatis(log_id: str, data: dict, sumber: str, subjek: 
     # di bawah (lebih aman duplikat yang bisa direkonsiliasi manual staf, daripada salah tandai
     # booking orang lain sebagai tersinkron).
     pending_match = await _cocokkan_booking_pending_reddoorz(
-        data.get("nama_tamu", ""), mapping["pms_tipe"], check_in, jumlah_kamar
+        data.get("nama_tamu", ""), mapping["pms_tipe"], check_in, jumlah_kamar, property_id
     )
     if len(pending_match) == jumlah_kamar:
         reservation_ids = []

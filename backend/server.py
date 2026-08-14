@@ -62,6 +62,19 @@ async def startup():
     await db.bookings.create_index("ota_reservation_no", sparse=True)
     await db.bookings.create_index("modifikasi_status", sparse=True)
     await db.bookings.create_index("sync_status", sparse=True)
+    # (2026-08-14, LOW - audit temuan #4) db.payment_log di-query by order_id di SETIAP
+    # webhook callback Tripay (routes/tripay.py) - sebelumnya nol index sama sekali, degradasi
+    # bertahap seiring collection membesar. NON-unique (bukan unique) - order_id "MANUAL-
+    # {kode}" (routes/bookings.py mark_paid_manual) berpotensi berulang kalau endpoint itu
+    # dipanggil lebih dari sekali utk booking yang sama, jadi unique constraint berisiko
+    # gagal thd data valid - non-unique index sudah cukup utk percepat query tanpa risiko itu.
+    await db.payment_log.create_index("order_id")
+    # (2026-08-14, LOW-MEDIUM - audit temuan #5) bookings.kode sebelumnya nol constraint DB
+    # sama sekali - proteksi tabrakan murni probabilistik (timestamp-ke-detik + 4 hex acak,
+    # reservation_service.py:210). VERIFIKASI dulu (scripts/check_bookings_kode_duplicates.py,
+    # read-only) - NOL duplikat historis ditemukan di data produksi (263 dokumen dicek,
+    # 2026-08-14) sebelum index ini ditambahkan, jadi aman retrofit sebagai unique.
+    await db.bookings.create_index("kode", unique=True)
     await _replace_unique_index(db.rates, "room_type_1_tanggal_1",
                                  [("property_id", 1), ("room_type", 1), ("tanggal", 1)])
     await db.availability_logs.create_index("room_id")

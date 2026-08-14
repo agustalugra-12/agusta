@@ -349,116 +349,141 @@ async def checkin_from_booking(bid: str, body: CheckinFromBookingBody = CheckinF
         raise HTTPException(404, "Booking tidak ditemukan")
     if b.get("status") not in ("booking_paid", "aktif"):
         raise HTTPException(400, f"Booking ini tidak bisa di-check-in (status: {b.get('status')})")
-    r = await db.rooms.find_one(scoped({"id": b["room_id"]}, property_id))
-    if not r:
+    r_check = await db.rooms.find_one(scoped({"id": b["room_id"]}, property_id))
+    if not r_check:
         raise HTTPException(404, "Kamar tidak ditemukan")
-    if r["status"] != "kosong":
-        raise HTTPException(400, f"Kamar {r['nomor']} sedang dipakai (status: {r['status']})")
 
-    no_hp = (b.get("no_hp") or "").strip() or (body.no_hp or "").strip()
-    if not no_hp:
-        raise HTTPException(400, "Nomor telepon tamu wajib diisi sebelum check-in")
-    if no_hp != (b.get("no_hp") or ""):
-        await db.bookings.update_one({"id": bid}, {"$set": {"no_hp": no_hp}})
-        b["no_hp"] = no_hp
+    # ATOMIC claim kamar (2026-08-14, celah TOCTOU yang SAMA dengan insiden race-condition
+    # nyata 2026-08-05 di jalur walk-in `/checkins` - lihat `checkins.py:82` - fix atomic-nya
+    # dipasang di sana tapi lupa dipasang di jalur booking->checkin ini (satu-satunya jalur
+    # lain yang menandai kamar sebagai terisi). Dua request checkin_from_booking nyaris
+    # bersamaan pada booking yang sama (mis. double-click) bisa SAMA-SAMA lolos baca status
+    # kamar "kosong" (read lama, plain find_one) sebelum salah satu sempat menulis status
+    # baru - menghasilkan sisi-efek dobel (dokumen checkins day_use dobel, total_transaksi
+    # tamu ke-`$inc` dua kali utk menginap). Fix: `find_one_and_update` ATOMIC dengan
+    # status="kosong" di FILTER yang sama dengan update-nya - MongoDB sendiri yang jamin
+    # cuma SATU request menang klaim, request yang kalah dapat None & ditolak - pola persis
+    # sama dengan `checkins.py`.
+    r = await db.rooms.find_one_and_update(
+        scoped({"id": b["room_id"], "status": "kosong"}, property_id),
+        {"$set": {"status": "_checkin_pending"}},
+        return_document=True,
+    )
+    if not r:
+        raise HTTPException(400, f"Kamar {r_check['nomor']} sedang dipakai dan tidak dapat digunakan untuk check-in.")
 
-    total = int(b.get("total") or 0)
-    paid = int(b.get("amount_due") or 0)
-    sisa = max(0, total - paid)
-    now = now_iso()
+    try:
+        no_hp = (b.get("no_hp") or "").strip() or (body.no_hp or "").strip()
+        if not no_hp:
+            raise HTTPException(400, "Nomor telepon tamu wajib diisi sebelum check-in")
+        if no_hp != (b.get("no_hp") or ""):
+            await db.bookings.update_one({"id": bid}, {"$set": {"no_hp": no_hp}})
+            b["no_hp"] = no_hp
 
-    guest_id = await upsert_guest(b.get("nama_tamu", ""), no_hp, b.get("no_identitas", ""), b.get("kendaraan", ""), property_id, room_nomor=r["nomor"])
+        total = int(b.get("total") or 0)
+        paid = int(b.get("amount_due") or 0)
+        sisa = max(0, total - paid)
+        now = now_iso()
 
-    if b.get("tipe") == "menginap":
-        await db.rooms.update_one({"id": b["room_id"]}, {"$set": {
-            "status": "menginap", "info": {"nama_tamu": b.get("nama_tamu", "")},
-        }})
-        booking_update: Dict[str, Any] = {
-            "status": "checked_in", "checked_in_at": now, "checked_in_by": user["nama"],
+        guest_id = await upsert_guest(b.get("nama_tamu", ""), no_hp, b.get("no_identitas", ""), b.get("kendaraan", ""), property_id, room_nomor=r["nomor"])
+
+        if b.get("tipe") == "menginap":
+            await db.rooms.update_one({"id": b["room_id"]}, {"$set": {
+                "status": "menginap", "info": {"nama_tamu": b.get("nama_tamu", "")},
+            }})
+            booking_update: Dict[str, Any] = {
+                "status": "checked_in", "checked_in_at": now, "checked_in_by": user["nama"],
+            }
+            # Early check-in (2026-08-01, bug nyata ditemukan: kamar yang tamunya sudah
+            # check-in LEBIH AWAL dari jam_mulai terjadwal tetap dianggap "kosong" oleh
+            # check_room_available sampai jam_mulai aslinya tiba - risiko double-booking
+            # kamar yang fisiknya sudah terisi tamu nyata). Kalau check-in terjadi lebih awal
+            # TAPI masih di tanggal kalender yang sama dengan jam_mulai terjadwal, majukan
+            # jam_mulai ke waktu check-in sungguhan supaya check_room_available langsung
+            # menganggap kamar terisi dari SEKARANG - tidak mengubah TANGGAL (jumlah malam/
+            # perhitungan pendapatan per malam tidak terpengaruh). Kalau check-in di tanggal
+            # LEBIH AWAL dari jadwal (kasus langka, ada implikasi tagihan malam tambahan),
+            # SENGAJA tidak disentuh di sini - itu keputusan staf/billing manual.
+            try:
+                jam_mulai_lama = datetime.fromisoformat(b["jam_mulai"])
+                now_dt = datetime.fromisoformat(now)
+                if now_dt < jam_mulai_lama and now_dt.date() == jam_mulai_lama.date():
+                    booking_update["jam_mulai"] = now
+            except (KeyError, ValueError, TypeError):
+                pass
+            await db.bookings.update_one({"id": bid}, {"$set": booking_update})
+            # (2026-07-31, bug nyata ditemukan sambil kerjakan card member "Total Belanja") -
+            # total_transaksi tamu SEBELUMNYA cuma naik dari checkout Day Use
+            # (routes/checkins.py) - booking Menginap TIDAK PERNAH menambah angka ini sama
+            # sekali, jadi tamu yang mayoritas booking Menginap salah tampil belanja Rp0.
+            if guest_id:
+                await db.guests.update_one({"id": guest_id}, {"$inc": {"total_transaksi": total}})
+            await log_activity(user, "checkin_from_booking",
+                               f"Check-in tamu {b.get('nama_tamu','')} dari booking {b['kode']} ke kamar {r['nomor']} (menginap, sisa Rp{sisa:,})".replace(",", "."),
+                               entity=r["nomor"])
+            return {"ok": True, "booking_kode": b["kode"], "remaining": sisa}
+
+        # Buat checkin doc (day_use) - (2026-07-31, keputusan bisnis Agus "bayar di depan
+        # semua", berlaku Day Use booking utk tanggal lain juga) - tarif_dasar/total/
+        # pembayaran WAJIB dibawa dari booking aslinya (yang sudah lunas dibayar saat
+        # dibuat), BUKAN direset ke 0/tarif kamar saat ini - kalau tidak, uang yang sudah
+        # dikumpulkan staf saat booking dibuat jadi seolah belum dibayar sama sekali di sini,
+        # dan checkout nanti akan salah minta bayar penuh lagi dari awal.
+        #
+        # (2026-08-02, bug KRITIS nyata ditemukan - seorang tamu ditagih dobel saat
+        # checkout) - niat komentar di atas TIDAK PERNAH benar-benar jalan: `db.bookings`
+        # SAMA SEKALI tidak punya field `pembayaran` (booking cuma menyimpan `amount_due`/
+        # `payment_status`), jadi `b.get("pembayaran")` selalu None -> checkin doc selalu
+        # mulai dengan pembayaran KOSONG walau `paid` (dari amount_due) sudah > 0. Akibatnya
+        # checkout() (routes/checkins.py) menghitung `sudah_dibayar=0` dan menagih SELURUH
+        # `total` lagi dari awal - tamu yang sudah lunas dobel dicatat sebagai pemasukan,
+        # tamu yang baru DP ditagih penuh (bukan cuma sisa DP-nya). Fix: seed `pembayaran`
+        # dari `paid` (amount_due booking, sudah dihitung di atas) supaya checkout menghitung
+        # sisa yang BENAR (cuma overtime + sisa DP kalau ada).
+        trx_no = f"CI-{datetime.now().strftime('%Y%m%d%H%M%S')}-{uuid.uuid4().hex[:4].upper()}"
+        ci_doc = {
+            "id": str(uuid.uuid4()),
+            "trx_no": trx_no,
+            "guest_id": guest_id,
+            "nama_tamu": b.get("nama_tamu", ""),
+            "no_hp": no_hp,
+            "no_identitas": b.get("no_identitas", ""),
+            "kendaraan": b.get("kendaraan", ""),
+            "jumlah_tamu": b.get("jumlah_tamu", 1),
+            "room_id": b["room_id"], "room_nomor": r["nomor"], "room_tipe": r["tipe"],
+            "tarif_dasar": int(b.get("subtotal") or r["tarif"]),
+            "jam_checkin": now, "jam_checkout": None,
+            "durasi_jam": 0, "overtime_jam": 0, "biaya_tambahan": 0,
+            "subtotal": int(b.get("subtotal") or 0), "service_fee": int(b.get("service_fee") or 0), "total": total,
+            "status": "aktif",
+            "catatan": f"Dari booking {b['kode']}.".strip(),
+            "foto_identitas_url": "",
+            "pembayaran": ([{"metode": (b.get("payment_type") or "online"), "jumlah": paid}] if paid > 0 else []),
+            "from_booking_id": b["id"], "from_booking_kode": b["kode"],
+            "booking_paid": paid, "booking_remaining": sisa,
+            "petugas_checkin": user["nama"], "petugas_checkin_id": user["id"],
+            "created_at": now,
+            "property_id": property_id,
         }
-        # Early check-in (2026-08-01, bug nyata ditemukan: kamar yang tamunya sudah
-        # check-in LEBIH AWAL dari jam_mulai terjadwal tetap dianggap "kosong" oleh
-        # check_room_available sampai jam_mulai aslinya tiba - risiko double-booking
-        # kamar yang fisiknya sudah terisi tamu nyata). Kalau check-in terjadi lebih awal
-        # TAPI masih di tanggal kalender yang sama dengan jam_mulai terjadwal, majukan
-        # jam_mulai ke waktu check-in sungguhan supaya check_room_available langsung
-        # menganggap kamar terisi dari SEKARANG - tidak mengubah TANGGAL (jumlah malam/
-        # perhitungan pendapatan per malam tidak terpengaruh). Kalau check-in di tanggal
-        # LEBIH AWAL dari jadwal (kasus langka, ada implikasi tagihan malam tambahan),
-        # SENGAJA tidak disentuh di sini - itu keputusan staf/billing manual.
-        try:
-            jam_mulai_lama = datetime.fromisoformat(b["jam_mulai"])
-            now_dt = datetime.fromisoformat(now)
-            if now_dt < jam_mulai_lama and now_dt.date() == jam_mulai_lama.date():
-                booking_update["jam_mulai"] = now
-        except (KeyError, ValueError, TypeError):
-            pass
-        await db.bookings.update_one({"id": bid}, {"$set": booking_update})
-        # (2026-07-31, bug nyata ditemukan sambil kerjakan card member "Total Belanja") -
-        # total_transaksi tamu SEBELUMNYA cuma naik dari checkout Day Use
-        # (routes/checkins.py) - booking Menginap TIDAK PERNAH menambah angka ini sama
-        # sekali, jadi tamu yang mayoritas booking Menginap salah tampil belanja Rp0.
-        if guest_id:
-            await db.guests.update_one({"id": guest_id}, {"$inc": {"total_transaksi": total}})
+        await db.checkins.insert_one(ci_doc)
+        await db.rooms.update_one({"id": b["room_id"]}, {"$set": {
+            "status": "day_use", "info": {"checkin_id": ci_doc["id"], "nama_tamu": b.get("nama_tamu", "")},
+        }})
+        await db.bookings.update_one({"id": bid}, {"$set": {
+            "status": "checked_in", "checked_in_at": now, "checked_in_by": user["nama"],
+            "checkin_id": ci_doc["id"],
+        }})
         await log_activity(user, "checkin_from_booking",
-                           f"Check-in tamu {b.get('nama_tamu','')} dari booking {b['kode']} ke kamar {r['nomor']} (menginap, sisa Rp{sisa:,})".replace(",", "."),
+                           f"Check-in tamu {b.get('nama_tamu','')} dari booking {b['kode']} ke kamar {r['nomor']} (sisa Rp{sisa:,})".replace(",", "."),
                            entity=r["nomor"])
-        return {"ok": True, "booking_kode": b["kode"], "remaining": sisa}
-
-    # Buat checkin doc (day_use) - (2026-07-31, keputusan bisnis Agus "bayar di depan
-    # semua", berlaku Day Use booking utk tanggal lain juga) - tarif_dasar/total/
-    # pembayaran WAJIB dibawa dari booking aslinya (yang sudah lunas dibayar saat
-    # dibuat), BUKAN direset ke 0/tarif kamar saat ini - kalau tidak, uang yang sudah
-    # dikumpulkan staf saat booking dibuat jadi seolah belum dibayar sama sekali di sini,
-    # dan checkout nanti akan salah minta bayar penuh lagi dari awal.
-    #
-    # (2026-08-02, bug KRITIS nyata ditemukan - tamu Vina & Dewa Putu ditagih dobel saat
-    # checkout) - niat komentar di atas TIDAK PERNAH benar-benar jalan: `db.bookings`
-    # SAMA SEKALI tidak punya field `pembayaran` (booking cuma menyimpan `amount_due`/
-    # `payment_status`), jadi `b.get("pembayaran")` selalu None -> checkin doc selalu
-    # mulai dengan pembayaran KOSONG walau `paid` (dari amount_due) sudah > 0. Akibatnya
-    # checkout() (routes/checkins.py) menghitung `sudah_dibayar=0` dan menagih SELURUH
-    # `total` lagi dari awal - tamu yang sudah lunas dobel dicatat sebagai pemasukan,
-    # tamu yang baru DP ditagih penuh (bukan cuma sisa DP-nya). Fix: seed `pembayaran`
-    # dari `paid` (amount_due booking, sudah dihitung di atas) supaya checkout menghitung
-    # sisa yang BENAR (cuma overtime + sisa DP kalau ada).
-    trx_no = f"CI-{datetime.now().strftime('%Y%m%d%H%M%S')}-{uuid.uuid4().hex[:4].upper()}"
-    ci_doc = {
-        "id": str(uuid.uuid4()),
-        "trx_no": trx_no,
-        "guest_id": guest_id,
-        "nama_tamu": b.get("nama_tamu", ""),
-        "no_hp": no_hp,
-        "no_identitas": b.get("no_identitas", ""),
-        "kendaraan": b.get("kendaraan", ""),
-        "jumlah_tamu": b.get("jumlah_tamu", 1),
-        "room_id": b["room_id"], "room_nomor": r["nomor"], "room_tipe": r["tipe"],
-        "tarif_dasar": int(b.get("subtotal") or r["tarif"]),
-        "jam_checkin": now, "jam_checkout": None,
-        "durasi_jam": 0, "overtime_jam": 0, "biaya_tambahan": 0,
-        "subtotal": int(b.get("subtotal") or 0), "service_fee": int(b.get("service_fee") or 0), "total": total,
-        "status": "aktif",
-        "catatan": f"Dari booking {b['kode']}.".strip(),
-        "foto_identitas_url": "",
-        "pembayaran": ([{"metode": (b.get("payment_type") or "online"), "jumlah": paid}] if paid > 0 else []),
-        "from_booking_id": b["id"], "from_booking_kode": b["kode"],
-        "booking_paid": paid, "booking_remaining": sisa,
-        "petugas_checkin": user["nama"], "petugas_checkin_id": user["id"],
-        "created_at": now,
-        "property_id": property_id,
-    }
-    await db.checkins.insert_one(ci_doc)
-    await db.rooms.update_one({"id": b["room_id"]}, {"$set": {
-        "status": "day_use", "info": {"checkin_id": ci_doc["id"], "nama_tamu": b.get("nama_tamu", "")},
-    }})
-    await db.bookings.update_one({"id": bid}, {"$set": {
-        "status": "checked_in", "checked_in_at": now, "checked_in_by": user["nama"],
-        "checkin_id": ci_doc["id"],
-    }})
-    await log_activity(user, "checkin_from_booking",
-                       f"Check-in tamu {b.get('nama_tamu','')} dari booking {b['kode']} ke kamar {r['nomor']} (sisa Rp{sisa:,})".replace(",", "."),
-                       entity=r["nomor"])
-    return {"ok": True, "checkin_id": ci_doc["id"], "trx_no": trx_no, "booking_kode": b["kode"], "remaining": sisa}
+        return {"ok": True, "checkin_id": ci_doc["id"], "trx_no": trx_no, "booking_kode": b["kode"], "remaining": sisa}
+    except Exception:
+        # Rollback klaim kamar (2026-08-14, sama pola dgn `_rollback_claims` di checkins.py) -
+        # kalau ADA error apa pun setelah klaim atomic tapi sebelum checkin benar2 selesai
+        # (mis. no_hp kosong), lepas kamar balik ke "kosong" supaya tidak stuck selamanya di
+        # status sementara "_checkin_pending".
+        await db.rooms.update_one(scoped({"id": b["room_id"]}, property_id), {"$set": {"status": "kosong"}})
+        raise
 
 
 @api.post("/bookings/{bid}/mark-paid-manual")
