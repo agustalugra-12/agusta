@@ -15,11 +15,13 @@ manual) -> refund_sent (staf klik "Sudah Dikirim", otomatis kirim WA konfirmasi 
 hilang dari daftar aktif/dashboard tapi riwayat tetap ada di db.bookings, bisa dilihat
 lewat GET /cancellation-requests?status=riwayat)."""
 from core import *
+from pymongo.errors import DuplicateKeyError
 
 CANCEL_STATUS_AKTIF = ["requested", "pending"]
 
 
-async def ajukan_pembatalan_ai(kode: str, no_hp: str, property_id: str, alasan: str = "") -> Dict[str, Any]:
+async def ajukan_pembatalan_ai(kode: str, no_hp: str, property_id: str, alasan: str = "",
+                               idempotency_key: Optional[str] = None) -> Dict[str, Any]:
     """Dipanggil dari routes/integrasi_ai_bot.py (tool cancel_booking di ai-chat-bot) —
     non-binding, TIDAK PERNAH langsung mengubah status booking, cuma menandai
     cancel_request_status supaya staf lihat & approve/reject manual di Dashboard.
@@ -35,7 +37,28 @@ async def ajukan_pembatalan_ai(kode: str, no_hp: str, property_id: str, alasan: 
 
     `property_id` (2026-07-25, Fase 4) - dari API key ai-chat-bot yang dipakai, supaya
     tamu di properti A tidak bisa (sengaja/kebetulan nomor HP mirip) mengenai booking di
-    properti B."""
+    properti B.
+
+    `idempotency_key` (2026-08-14, MEDIUM - audit lanjutan pola bug idempotency_key
+    booking_request/2026-08-14, §6.1 raw audit ai-chat-bot) - endpoint AI-facing
+    (`ai_bot_ajukan_pembatalan`, dipanggil lewat `_pms_ajukan_pembatalan` di ai-chat-bot
+    yang dibungkus `_pms_http_retry`) TIDAK punya dedup sebelumnya - `httpx.ReadTimeout`
+    (PMS lambat balas krn kirim push+alert Telegram, bukan gagal sungguhan) di-retry, dan
+    tiap panggilan fungsi ini tanpa syarat menandai cancel_request_status + kirim
+    push/alert lagi. Blast radius lebih kecil dari booking_request/ganti-metode-pembayaran
+    (non-binding, staf tetap review manual, dan guard `cancel_request_status in
+    CANCEL_STATUS_AKTIF` di bawah SUDAH mencegah dobel-state) tapi ditutup jg utk
+    konsistensi pola. Sama seperti `_lakukan_ganti_metode_pembayaran` (routes/payments.py)
+    - fungsi ini TIDAK insert dokumen "hasil"-nya sendiri (hasilnya cuma dict ringkasan),
+    jadi dedup pakai collection kecil terpisah `pembatalan_idempotency` yang menyimpan
+    HASIL, bukan field di `db.bookings` (beda dari booking_request yang insert dokumen
+    baru). Optional/None supaya kompatibel mundur dgn pemanggil lama yang belum kirim
+    field ini."""
+    if idempotency_key:
+        existing = await db.pembatalan_idempotency.find_one({"idempotency_key": idempotency_key}, {"_id": 0})
+        if existing:
+            return existing["hasil"]
+
     digits = re.sub(r"\D", "", no_hp or "")
     if not digits:
         return {"ok": False, "error": "Nomor WhatsApp tidak valid"}
@@ -90,10 +113,27 @@ async def ajukan_pembatalan_ai(kode: str, no_hp: str, property_id: str, alasan: 
         f"Estimasi refund: Rp{refund_estimate:,}".replace(",", ".")
     )
 
-    return {
+    hasil = {
         "ok": True, "kode": b["kode"], "policy_label": policy["label"],
         "biaya_persen": policy["biaya_persen"], "refund_estimate": refund_estimate,
     }
+
+    if idempotency_key:
+        try:
+            await db.pembatalan_idempotency.insert_one({
+                "idempotency_key": idempotency_key, "booking_id": b["id"], "hasil": hasil,
+                "created_at": now,
+            })
+        except DuplicateKeyError:
+            # Race sungguhan (2 request ber-idempotency_key sama lolos find_one di atas
+            # nyaris bersamaan sebelum salah satunya sempat insert) - index unique sparse
+            # `pembatalan_idempotency.idempotency_key` (server.py startup) jadi penjaga
+            # terakhir, sama pola dgn ganti_metode_pembayaran_idempotency. Kembalikan hasil
+            # milik percobaan yang MENANG balapan, bukan `hasil` milik percobaan ini.
+            existing = await db.pembatalan_idempotency.find_one({"idempotency_key": idempotency_key}, {"_id": 0})
+            if existing:
+                hasil = existing["hasil"]
+    return hasil
 
 
 @api.get("/cancellation-requests")

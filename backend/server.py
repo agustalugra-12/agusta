@@ -104,6 +104,13 @@ async def startup():
     # issues). unique+sparse - sparse krn cuma jalur AI (ai_bot_ganti_metode_pembayaran)
     # yang kirim idempotency_key, endpoint staf manual tidak pernah insert ke collection ini.
     await db.ganti_metode_pembayaran_idempotency.create_index("idempotency_key", unique=True, sparse=True)
+    # Idempotency key (2026-08-14, MEDIUM - audit lanjutan pola bug idempotency_key
+    # booking_request/2026-08-14, lihat komentar ajukan_pembatalan_ai di
+    # routes/pembatalan.py) - collection kecil terpisah khusus dedup hasil pengajuan
+    # pembatalan, sama pola dgn ganti_metode_pembayaran_idempotency (fungsi ini juga
+    # tidak insert dokumen "hasil"-nya sendiri). unique+sparse - sparse krn cuma jalur AI
+    # (ai_bot_ajukan_pembatalan) yang kirim idempotency_key.
+    await db.pembatalan_idempotency.create_index("idempotency_key", unique=True, sparse=True)
     await _replace_unique_index(db.jadwal_kerja, "year_1_month_1",
                                  [("property_id", 1), ("year", 1), ("month", 1)])
     await db.jadwal_shifts.create_index([("jadwal_id", 1), ("staff_id", 1), ("tanggal", 1)], unique=True)

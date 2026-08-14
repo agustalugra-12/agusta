@@ -579,6 +579,11 @@ class AiBotCancelRequestIn(BaseModel):
     kode: Optional[str] = None  # kode booking (BKO-...), BUKAN kode booking_request (REQ-...). Opsional - kosong = cari otomatis dari no_hp (lihat ajukan_pembatalan_ai)
     no_hp: str
     alasan: Optional[str] = ""
+    # Idempotency key (2026-08-14, MEDIUM - audit lanjutan pola bug idempotency_key
+    # booking_request/2026-08-14) - lihat guard di ajukan_pembatalan_ai (routes/
+    # pembatalan.py). Optional/None supaya kompatibel mundur dgn pemanggil lama yang
+    # belum kirim field ini.
+    idempotency_key: Optional[str] = None
 
 
 @api.post("/integrasi-ai-bot/cancel-request")
@@ -591,7 +596,9 @@ async def ai_bot_ajukan_pembatalan(body: AiBotCancelRequestIn, property_id: str 
     # tamu punya >1 booking aktif, field "kandidat" perlu tetap sampai ke ai-chat-bot
     # supaya AI bisa tanya tamu mana yang dimaksud (2026-07-21, HTTPException(400, str)
     # sebelumnya MEMBUANG field kandidat, cuma pesan errornya yang sampai).
-    return await ajukan_pembatalan_ai(body.kode, body.no_hp, property_id, body.alasan or "")
+    return await ajukan_pembatalan_ai(
+        body.kode, body.no_hp, property_id, body.alasan or "", idempotency_key=body.idempotency_key,
+    )
 
 
 class AiBotAlertIn(BaseModel):
