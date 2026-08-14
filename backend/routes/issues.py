@@ -1,5 +1,6 @@
 from core import *
 from routes.push import send_push
+from pymongo.errors import DuplicateKeyError
 
 # ---- Complaint & Maintenance & Permintaan Layanan ----
 # Satu collection `issues` dipakai untuk 3 tipe (complaint/maintenance/service_request) —
@@ -15,10 +16,24 @@ ISSUE_PRIORITAS = {"rendah", "normal", "tinggi"}
 
 async def buat_issue(tipe: str, deskripsi: str, user: dict, property_id: str, room_id: Optional[str] = None,
                      room_nomor: str = "", nama_tamu: str = "", prioritas: str = "normal",
-                     teknisi: str = "", estimasi_selesai: Optional[str] = None, no_hp: str = "") -> Dict[str, Any]:
+                     teknisi: str = "", estimasi_selesai: Optional[str] = None, no_hp: str = "",
+                     idempotency_key: Optional[str] = None) -> Dict[str, Any]:
     """Logika insert bersama — dipakai endpoint POST /issues (staf manual) DAN klasifikasi
     otomatis AI WhatsApp (routes/pesan_whatsapp.py) supaya audit log & push notif konsisten
-    dari kedua jalur, tidak ada logika ganda yang bisa saling menyimpang."""
+    dari kedua jalur, tidak ada logika ganda yang bisa saling menyimpang.
+
+    `idempotency_key` (2026-08-14, audit lanjutan pola bug idempotency_key
+    booking_request/2026-08-14) - `ai_bot_buat_tiket` (routes/integrasi_ai_bot.py) reuse
+    endpoint ini lewat `_pms_buat_tiket` (ai-chat-bot), yang dibungkus `_pms_http_retry`
+    sama seperti `_pms_buat_booking_request` - retry pada `httpx.ReadTimeout` (PMS cuma
+    LAMBAT balas krn sibuk kirim push notif, bukan gagal sungguhan) akan bikin tiket
+    duplikat + push notif dobel tanpa guard ini. Optional/None supaya kompatibel mundur
+    dgn pemanggil lama (endpoint staf manual POST /issues TIDAK PERNAH kirim field ini -
+    tidak ada retry HTTP di jalur itu, jadi tetap selalu insert baru seperti sebelumnya)."""
+    if idempotency_key:
+        existing = await db.issues.find_one({"idempotency_key": idempotency_key}, {"_id": 0})
+        if existing:
+            return existing
     if tipe not in ISSUE_TIPE:
         raise HTTPException(400, f"Tipe harus salah satu dari: {', '.join(sorted(ISSUE_TIPE))}")
     if not deskripsi or not deskripsi.strip():
@@ -50,8 +65,19 @@ async def buat_issue(tipe: str, deskripsi: str, user: dict, property_id: str, ro
         "resolved_by": None,
         "resolved_at": None,
         "property_id": property_id,
+        "idempotency_key": idempotency_key,
     }
-    await db.issues.insert_one(doc)
+    try:
+        await db.issues.insert_one(doc)
+    except DuplicateKeyError:
+        # Race sungguhan (2 request ber-idempotency_key sama lolos find_one di atas nyaris
+        # bersamaan) - index unique sparse `issues.idempotency_key` (server.py startup) jadi
+        # penjaga terakhir. Percobaan yang kalah balapan cukup ambil dokumen pemenang &
+        # kembalikan itu, TANPA mengulang push notif.
+        existing = await db.issues.find_one({"idempotency_key": idempotency_key}, {"_id": 0})
+        if existing:
+            return existing
+        raise
     label = ISSUE_TIPE_LABEL[tipe]
     push_url = {"complaint": "/komplain", "maintenance": "/maintenance", "service_request": "/service-requests"}[tipe]
     await log_activity(user, "create_issue", f"{label} kamar {doc['room_nomor'] or '-'}: {doc['deskripsi']}", entity=doc["room_nomor"])

@@ -1,6 +1,7 @@
 import asyncio
 from core import *
 from email_service import generate_voucher_pdf, send_voucher_email, kirim_voucher_wa, get_property_branding
+from pymongo.errors import DuplicateKeyError
 
 # Endpoint Midtrans (config/create-snap-token/notification/status) dihapus 2026-07-14 —
 # gateway pembayaran tamu publik sepenuhnya pindah ke Tripay (lihat routes/tripay.py),
@@ -98,7 +99,8 @@ async def list_payment_log(search: Optional[str] = None, status: Optional[str] =
     return items
 
 async def _lakukan_ganti_metode_pembayaran(booking_id: str, method: str, payment_option: str,
-                                            actor_nama: str, property_id: str) -> dict:
+                                            actor_nama: str, property_id: str,
+                                            idempotency_key: Optional[str] = None) -> dict:
     """Inti ganti metode bayar (mis. VA BRI -> QRIS, atau VA bank A -> VA bank B) untuk
     booking yang LINK-nya masih aktif/belum kadaluarsa (2026-08-11, permintaan Agus -
     kejadian nyata tamu Nyoman Satria Wiguna: sudah dibuatkan link VA BRIVA, ternyata
@@ -123,7 +125,31 @@ async def _lakukan_ganti_metode_pembayaran(booking_id: str, method: str, payment
     yang SAMA (reuse tripay_create_transaction, endpoint yang sama dipakai dialog "Buat
     Tagihan Baru" & staf 'ganti DP jadi lunas' - webhook Tripay callback sudah ada guard
     supaya transaksi lama yang ditinggalkan expired belakangan TIDAK menimpa balik booking
-    yang sudah lunas dibayar via transaksi baru, lihat tripay.py tripay_callback())."""
+    yang sudah lunas dibayar via transaksi baru, lihat tripay.py tripay_callback()).
+
+    `idempotency_key` (2026-08-14, HIGH - audit lanjutan pola bug idempotency_key
+    booking_request/2026-08-14) - endpoint AI-facing (`ai_bot_ganti_metode_pembayaran`,
+    dipanggil lewat `_pms_ganti_metode_pembayaran` di ai-chat-bot yang dibungkus
+    `_pms_http_retry`) TIDAK punya dedup sebelumnya - `httpx.ReadTimeout` (PMS cuma LAMBAT
+    balas krn menunggu Tripay + kirim WA, bukan gagal sungguhan) di-retry, dan tiap
+    panggilan fungsi ini tanpa syarat bikin transaksi Tripay BARU + kirim WA link BARU ke
+    tamu -> tamu bisa terima 2 link pembayaran BEDA utk booking yang sama, membingungkan
+    di tengah checkout (real financial/guest-facing exposure). Beda dari
+    booking_request/issues (yang insert dokumen baru ke collection sendiri) - fungsi ini
+    tidak insert dokumen "hasil"-nya sendiri (hasilnya cuma dict dari tripay_create_
+    transaction + wa_terkirim), jadi dedup di sini pakai collection kecil terpisah
+    `ganti_metode_pembayaran_idempotency` yang menyimpan HASIL supaya retry bisa
+    dikembalikan apa adanya tanpa memanggil Tripay/kirim WA lagi. Optional/None supaya
+    kompatibel mundur dgn endpoint staf manual `ganti_metode_pembayaran` di bawah (klik UI
+    langsung, tidak ada retry HTTP di jalurnya - tetap selalu buat transaksi baru seperti
+    sebelumnya, itu memang perilaku yang diminta staf tiap klik)."""
+    if idempotency_key:
+        existing = await db.ganti_metode_pembayaran_idempotency.find_one(
+            {"idempotency_key": idempotency_key}, {"_id": 0},
+        )
+        if existing:
+            return existing["hasil"]
+
     from routes.booking_requests import TRIPAY_METODE_VALID
     if method not in TRIPAY_METODE_VALID:
         raise HTTPException(400, f"Metode harus salah satu dari: {', '.join(sorted(TRIPAY_METODE_VALID))}")
@@ -165,7 +191,29 @@ async def _lakukan_ganti_metode_pembayaran(booking_id: str, method: str, payment
 
     await log_activity({"nama": actor_nama, "username": actor_nama}, "ganti_metode_pembayaran",
                        f"Ganti metode bayar booking {b['kode']} ({b.get('nama_tamu','')}) -> {method}")
-    return {**trx, "wa_terkirim": wa_terkirim, "booking_kode": b["kode"]}
+    hasil = {**trx, "wa_terkirim": wa_terkirim, "booking_kode": b["kode"]}
+
+    if idempotency_key:
+        try:
+            await db.ganti_metode_pembayaran_idempotency.insert_one({
+                "idempotency_key": idempotency_key, "booking_id": booking_id, "hasil": hasil,
+                "created_at": now,
+            })
+        except DuplicateKeyError:
+            # Race sungguhan (2 request ber-idempotency_key sama lolos find_one di atas
+            # nyaris bersamaan sebelum salah satunya sempat insert) - index unique sparse
+            # `ganti_metode_pembayaran_idempotency.idempotency_key` (server.py startup) jadi
+            # penjaga terakhir. Kembalikan hasil transaksi Tripay yang MENANG balapan (bukan
+            # `hasil` milik percobaan ini) - tamu/staf harus lihat satu link yang sama, bukan
+            # 2 checkout_url beda dari 2 transaksi Tripay yang terlanjur sama2 dibuat kalau
+            # race-nya terjadi PERSIS di titik ini (celah sempit, tidak bisa dihindari total
+            # tanpa lock terdistribusi - index ini cuma jaga konsistensi dokumen dedup-nya).
+            existing = await db.ganti_metode_pembayaran_idempotency.find_one(
+                {"idempotency_key": idempotency_key}, {"_id": 0},
+            )
+            if existing:
+                hasil = existing["hasil"]
+    return hasil
 
 
 @api.post("/bookings/{booking_id}/ganti-metode-pembayaran")

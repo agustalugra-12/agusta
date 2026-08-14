@@ -240,6 +240,10 @@ class AiBotTiketIn(BaseModel):
     no_hp: str
     nama_tamu: str = ""
     room_nomor: Optional[str] = None  # kalau tamu sebutkan nomor kamarnya sendiri di chat (2026-07-20)
+    # Idempotency key (2026-08-14, audit lanjutan pola bug idempotency_key
+    # booking_request/2026-08-14) - lihat guard di buat_issue (routes/issues.py). Optional/
+    # None supaya kompatibel mundur dgn pemanggil lama yang belum kirim field ini.
+    idempotency_key: Optional[str] = None
 
 
 @api.post("/integrasi-ai-bot/tiket")
@@ -272,6 +276,7 @@ async def ai_bot_buat_tiket(body: AiBotTiketIn, property_id: str = Depends(verif
     tiket = await buat_issue(
         body.tipe, body.deskripsi, {"id": "ai-chat-bot", "nama": "AI Chat Bot", "role": "owner"}, property_id,
         room_id=room_id, room_nomor=room_nomor, nama_tamu=body.nama_tamu, no_hp=body.no_hp,
+        idempotency_key=body.idempotency_key,
     )
     return {"ok": True, "tiket": tiket}
 
@@ -517,6 +522,9 @@ async def ai_bot_buat_booking_request(body: AiBotBookingRequestIn, property_id: 
 class AiBotGantiMetodeIn(BaseModel):
     no_hp: str
     metode_pembayaran: str  # QRIS2 | PERMATAVA | BNIVA | BRIVA | MANDIRIVA
+    # Idempotency key (2026-08-14, HIGH - lihat guard di _lakukan_ganti_metode_pembayaran,
+    # routes/payments.py). Optional/None supaya kompatibel mundur dgn pemanggil lama.
+    idempotency_key: Optional[str] = None
 
 
 @api.post("/integrasi-ai-bot/ganti-metode-pembayaran")
@@ -562,7 +570,7 @@ async def ai_bot_ganti_metode_pembayaran(body: AiBotGantiMetodeIn, property_id: 
         return {"ok": False, "error": f"Booking tidak dalam status menunggu pembayaran (status: {status_efektif}) - tidak bisa ganti metode, teruskan ke staf."}
     hasil = await _lakukan_ganti_metode_pembayaran(
         req["booking_ids"][0], body.metode_pembayaran, req.get("payment_option_diminta") or "dp50",
-        "AI WhatsApp (otomatis)", property_id,
+        "AI WhatsApp (otomatis)", property_id, idempotency_key=body.idempotency_key,
     )
     return {"ok": True, **hasil}
 
@@ -590,13 +598,46 @@ class AiBotAlertIn(BaseModel):
     pesan: str
 
 
+# Dedup in-memory utk /integrasi-ai-bot/alert-owner (2026-08-14, LOW - audit lanjutan pola
+# bug idempotency_key booking_request/2026-08-14). `_pms_alert_owner` (ai-chat-bot) dibungkus
+# `_pms_http_retry` sama seperti endpoint lain di modul ini - `httpx.ReadTimeout` (PMS lambat
+# balas krn `kirim_alert_owner` loop kirim ke SEMUA owner yang terhubung Telegram satu-satu,
+# bisa lambat kalau owner-nya banyak/Telegram API sedang lelet, bukan gagal sungguhan)
+# di-retry, dan endpoint ini kirim ulang teks alert yang SAMA PERSIS ke semua owner tanpa
+# guard - trivial (cuma pesan Telegram dobel, tidak ada data/uang yang salah), tapi tetap
+# diperbaiki krn diminta. BEDA dari fix 1-3 di atas: endpoint ini TIDAK membuat record DB
+# apa pun ("kirim_alert_owner" murni relay, tidak ada dokumen utk "dikembalikan" ke
+# pemanggil) - jadi tidak ada `idempotency_key` eksplisit dari ai-chat-bot di sini
+# (bedanya BUKAN krn lupa, tapi krn tidak ada apa pun utk dikembalikan/dicocokkan), cukup
+# in-memory window singkat by TEKS PERSIS SAMA - kalau proses restart di antara percobaan
+# asli & retry (celah sangat sempit, backoff cuma hitungan detik), guard hilang & alert
+# terkirim ulang - risiko diterima, sama toleransi yg sudah dipakai guard in-memory
+# background_ai_grow_cache_loop (routes/ai_grow.py) utk kasus serupa. Scoped ke endpoint
+# INI SAJA (bukan di kirim_alert_owner sendiri) - fungsi itu juga dipanggil dari banyak
+# tempat lain PMS (payment masuk, booking baru, dst) yang TIDAK lewat retry HTTP apa pun,
+# dedup global di sana berisiko salah menelan 2 alert BEDA yang kebetulan teksnya sama.
+_ALERT_OWNER_DEDUP_WINDOW = timedelta(seconds=30)
+_recent_alert_owner_sends: Dict[str, datetime] = {}
+
+
 @api.post("/integrasi-ai-bot/alert-owner")
 async def ai_bot_alert_owner(body: AiBotAlertIn, _: str = Depends(verifikasi_ai_bot_key)):
     """Relay alert Telegram ke owner (2026-07-20) - dipakai ai-chat-bot untuk lapor masalah
     infrastrukturnya sendiri (mis. koneksi WhatsApp/WAHA terputus) lewat channel yang SUDAH
     ada & sudah terhubung ke HP owner (Telegram bot PMS), bukan bikin integrasi Telegram
     terpisah lagi di ai-chat-bot. Sengaja generik (cuma terima teks bebas) - ai-chat-bot
-    yang menentukan isinya, PMS cuma jadi jalur kirim."""
+    yang menentukan isinya, PMS cuma jadi jalur kirim.
+
+    Dedup in-memory (2026-08-14) - lihat komentar `_recent_alert_owner_sends` di atas."""
+    now = datetime.now(timezone.utc)
+    last = _recent_alert_owner_sends.get(body.pesan)
+    if last is not None and (now - last) < _ALERT_OWNER_DEDUP_WINDOW:
+        return {"ok": True, "deduped": True}
+    _recent_alert_owner_sends[body.pesan] = now
+    if len(_recent_alert_owner_sends) > 200:  # jaga dict tidak membengkak tanpa batas
+        cutoff = now - _ALERT_OWNER_DEDUP_WINDOW
+        for k in [k for k, v in _recent_alert_owner_sends.items() if v < cutoff]:
+            _recent_alert_owner_sends.pop(k, None)
     from routes.telegram_bot import kirim_alert_owner
     await kirim_alert_owner(body.pesan)
     return {"ok": True}

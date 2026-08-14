@@ -71,6 +71,10 @@ async def startup():
     await db.push_subscriptions.create_index("user_id")
     await db.issues.create_index([("tipe", 1), ("status", 1)])
     await db.issues.create_index("created_at")
+    # Idempotency key (2026-08-14, MEDIUM - lihat komentar buat_issue di routes/issues.py) -
+    # unique jadi penjaga terakhir kalau find_one dedup kalah balapan, sparse krn dokumen
+    # lama/tiket manual staf tidak punya field ini sama sekali.
+    await db.issues.create_index("idempotency_key", unique=True, sparse=True)
     await db.housekeeping_log.create_index([("room_id", 1), ("status", 1)])
     await db.housekeeping_log.create_index("tanggal")
     await db.push_subscriptions.create_index("user_id")
@@ -81,6 +85,12 @@ async def startup():
     # kalah balapan (2 request nyaris bersamaan), sparse krn dokumen lama tidak punya
     # field ini sama sekali (bukan null - field benar2 tidak ada, unique+sparse cocok).
     await db.booking_requests.create_index("idempotency_key", unique=True, sparse=True)
+    # Idempotency key (2026-08-14, HIGH - lihat komentar _lakukan_ganti_metode_pembayaran
+    # di routes/payments.py) - collection kecil terpisah khusus dedup hasil ganti metode
+    # bayar (fungsi ini tidak insert dokumen "hasil"-nya sendiri, beda dari booking_requests/
+    # issues). unique+sparse - sparse krn cuma jalur AI (ai_bot_ganti_metode_pembayaran)
+    # yang kirim idempotency_key, endpoint staf manual tidak pernah insert ke collection ini.
+    await db.ganti_metode_pembayaran_idempotency.create_index("idempotency_key", unique=True, sparse=True)
     await _replace_unique_index(db.jadwal_kerja, "year_1_month_1",
                                  [("property_id", 1), ("year", 1), ("month", 1)])
     await db.jadwal_shifts.create_index([("jadwal_id", 1), ("staff_id", 1), ("tanggal", 1)], unique=True)
