@@ -31,6 +31,7 @@ from reservation_service import create_reservation
 import asyncio
 from collections import defaultdict
 from contextlib import asynccontextmanager
+from pymongo.errors import DuplicateKeyError
 
 STATUS_TERBUKA = ["waiting_approval"]
 
@@ -578,6 +579,25 @@ async def buat_booking_request(data: Dict[str, Any], property_id: Optional[str] 
     sendiri (ai_bot_buat_booking_request, resolve dari API key ai-chat-bot). Kalau None
     (belum ada pemanggil lain yang kasih ini), fallback ke get_default_property_id()
     stopgap - jaga kompatibilitas kalau ada pemanggil lama."""
+    # Idempotency guard (2026-08-14, bug nyata - tamu Bagus Wira kirim 1 pesan WA "1
+    # malam" tapi menghasilkan 2 booking_requests terpisah 15.8 detik: PMS insert doc di
+    # awal fungsi ini TAPI baru return setelah alert Telegram/WA selesai dikirim (bisa
+    # >15 detik) - httpx timeout=15 di ai-chat-bot lalu retry POST identik lewat
+    # _pms_http_retry (retry itu sendiri fitur yang benar, cuma untuk kegagalan JARINGAN
+    # transient, bukan "PMS lambat balas padahal sudah sukses"). Endpoint ini sebelumnya
+    # 0 deduplikasi - tiap POST bikin dokumen baru tanpa syarat. `idempotency_key`
+    # (2026-08-14) dibuat SEKALI di ai-chat-bot SEBELUM masuk retry loop-nya, jadi request
+    # asli & retry-nya kirim key yang SAMA - kalau key ini sudah pernah dipakai, ini
+    # BUKAN booking baru, kembalikan dokumen yang sudah ada apa adanya & JANGAN ulangi
+    # insert/alert Telegram/WA (sudah terkirim di percobaan pertama, kirim ulang jadi bug
+    # baru: tamu/staf dapat notifikasi dobel). Optional - None untuk pemanggil lama yang
+    # belum kirim field ini, perilaku tetap seperti sebelumnya (selalu insert baru).
+    idempotency_key = (data.get("idempotency_key") or "").strip() or None
+    if idempotency_key:
+        existing = await db.booking_requests.find_one({"idempotency_key": idempotency_key}, {"_id": 0})
+        if existing:
+            return existing
+
     payment_option = data.get("payment_option")
 
     # Guard nama & no_hp wajib (2026-07-26, permintaan user - berlaku SEMUA tenant, sama
@@ -710,9 +730,21 @@ async def buat_booking_request(data: Dict[str, Any], property_id: Optional[str] 
         "preview_harga": preview_harga,
         "status": "waiting_approval", "source": "whatsapp",
         "booking_ids": [], "group_id": None,
+        "idempotency_key": idempotency_key,
         "created_at": now_iso(), "updated_at": now_iso(),
     }
-    await db.booking_requests.insert_one(doc)
+    try:
+        await db.booking_requests.insert_one(doc)
+    except DuplicateKeyError:
+        # Race sungguhan (2 request ber-idempotency_key sama lolos find_one di atas
+        # nyaris bersamaan sebelum salah satunya sempat insert) - index unique sparse
+        # `idempotency_key` (server.py startup) jadi penjaga terakhir. Percobaan yang
+        # kalah balapan insert cukup ambil dokumen yang menang & kembalikan itu, TANPA
+        # mengulang alert Telegram/WA (sama seperti fast-path find_one di atas).
+        existing = await db.booking_requests.find_one({"idempotency_key": idempotency_key}, {"_id": 0})
+        if existing:
+            return existing
+        raise
 
     from routes.push import send_push
     from routes.telegram_bot import kirim_alert_owner

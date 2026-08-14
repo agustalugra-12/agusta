@@ -465,6 +465,13 @@ class AiBotBookingRequestIn(BaseModel):
     # tarif tanpa sarapan) - HANYA relevan untuk tipe menginap, lihat BREAKFAST_PRICE
     # di core.py & _hitung_preview_harga.
     dengan_sarapan: bool = False
+    # Idempotency key (2026-08-14, bug nyata ditemukan - tamu Bagus Wira dapat 2
+    # booking_requests dari 1 pesan "1 malam": POST ai-chat-bot timeout 15s sebelum PMS
+    # selesai kirim alert Telegram/WA, _pms_http_retry retry POST identik, endpoint ini
+    # tidak pernah dedup jadi bikin dokumen kedua). Optional/None supaya kompatibel
+    # mundur dgn pemanggil lama yang belum kirim field ini - lihat guard di
+    # buat_booking_request (routes/booking_requests.py).
+    idempotency_key: Optional[str] = None
 
 
 class AiBotPreviewHargaIn(BaseModel):

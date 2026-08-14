@@ -76,6 +76,11 @@ async def startup():
     await db.push_subscriptions.create_index("user_id")
     await db.booking_requests.create_index("status")
     await db.booking_requests.create_index("created_at")
+    # Idempotency key (2026-08-14, bug nyata - lihat komentar buat_booking_request di
+    # routes/booking_requests.py) - unique jadi penjaga terakhir kalau find_one dedup
+    # kalah balapan (2 request nyaris bersamaan), sparse krn dokumen lama tidak punya
+    # field ini sama sekali (bukan null - field benar2 tidak ada, unique+sparse cocok).
+    await db.booking_requests.create_index("idempotency_key", unique=True, sparse=True)
     await _replace_unique_index(db.jadwal_kerja, "year_1_month_1",
                                  [("property_id", 1), ("year", 1), ("month", 1)])
     await db.jadwal_shifts.create_index([("jadwal_id", 1), ("staff_id", 1), ("tanggal", 1)], unique=True)
