@@ -129,7 +129,7 @@ async def skenario_whatsapp_auto_tidak_hilang_dan_tidak_dobel() -> tuple:
 
     # Booking A: menginap, whatsapp_auto, belum check-in (tidak py checkin_id)
     await db.bookings.insert_one({
-        "id": str(uuid.uuid4()), "property_id": property_id, "room_id": room_id, "room_nomor": "T2",
+        "id": str(uuid.uuid4()), "kode": f"TEST-WA-{uuid.uuid4().hex[:6].upper()}", "property_id": property_id, "room_id": room_id, "room_nomor": "T2",
         "room_tipe": "Standard", "tipe": "menginap", "nama_tamu": "Test Regresi WA Auto Menginap",
         "no_hp": _wa_unik(), "jam_mulai": f"{today_iso}T06:00:00+00:00", "jam_selesai": f"{besok_iso}T04:00:00+00:00",
         "status": "aktif", "source": "whatsapp_auto", "payment_status": "paid",
@@ -140,7 +140,7 @@ async def skenario_whatsapp_auto_tidak_hilang_dan_tidak_dobel() -> tuple:
     # Booking B: day_use, whatsapp_auto, SUDAH checkin_id (linked ke checkins kembar)
     checkin_id_b = str(uuid.uuid4())
     await db.bookings.insert_one({
-        "id": str(uuid.uuid4()), "property_id": property_id, "room_id": room_id, "room_nomor": "T2",
+        "id": str(uuid.uuid4()), "kode": f"TEST-WB-{uuid.uuid4().hex[:6].upper()}", "property_id": property_id, "room_id": room_id, "room_nomor": "T2",
         "room_tipe": "Standard", "tipe": "day_use", "nama_tamu": "Test Regresi WA Auto DayUse",
         "no_hp": _wa_unik(), "jam_mulai": f"{today_iso}T06:00:00+00:00", "jam_selesai": f"{today_iso}T12:00:00+00:00",
         "status": "checked_out", "source": "whatsapp_auto", "payment_status": "paid",
@@ -287,6 +287,73 @@ async def skenario_checkout_payment_protection() -> tuple:
     return ("checkout_payment_protection", "PASS")
 
 
+async def skenario_checkin_dari_booking_day_use_bisa_ditumpuk_menginap() -> tuple:
+    """Bug nyata 2026-08-15 (kasus RedDoorz I Komang Budiana kamar 17 & Indah Inda kamar
+    6 - keduanya TOLAK auto-booking & harus di-override manual owner "tumpuk day use ->
+    menginap"): `check_room_available()` (reservation_service.py) memperlakukan checkin
+    yang DITURUNKAN dari booking Day Use (`from_booking_id` ada) sebagai walk-in murni &
+    mengestimasi selesainya `jam_checkin + 6 jam`, padahal booking asalnya sudah punya
+    `jam_selesai` PASTI (mis. Day Use Oka: booking selesai 17:00 WITA tapi estimasi
+    checkin 11:37 WITA + 6 jam = 17:37 WITA - salah 37 menit). Akibatnya kamar Day Use
+    yang sudah selesai terjadwal tetap diblokir 37+ menit lebih lama utk booking Menginap
+    OTA yang baru masuk.
+
+    Skenario: bikin booking Day Use yg sudah di-check-in (checkin dari booking, punya
+    from_booking_id & booking jam_selesai presisi) di kamar test. Lalu cek kamar utk
+    booking Menginap OTA baru: (A) jam mulai STANDAR OTA (14:00 WITA = 06:00 UTC) - kalau
+    day use berakhir sebelum itu, harus TERSEDIA; (B) kalau day use berakhir lebih siang,
+    jam mulai DIGESER ke jam_selesai + buffer 30 menit harus TERSEDIA (bukan ditolak).
+    Regresi kalau salah satu TIDAK tersedia padahal jendela yang dicek sudah bebas dari
+    day use."""
+    from core import db, now_iso
+    from reservation_service import check_room_available
+
+    property_id = _property_id_test()
+    room_id = await _bikin_kamar_test(db, property_id, "T7")
+    bk_du_id = str(uuid.uuid4())
+    ck_id = str(uuid.uuid4())
+    # Booking Day Use: selesai 08:00 UTC (16:00 WITA) - presisi, jadwal PASTI
+    await db.bookings.insert_one({
+        "id": bk_du_id, "kode": f"TEST-DU-{uuid.uuid4().hex[:6].upper()}", "property_id": property_id, "room_id": room_id, "room_nomor": "T7",
+        "room_tipe": "Standard", "tipe": "day_use", "nama_tamu": "Test Regresi DayUse Dari Booking",
+        "no_hp": _wa_unik(), "jam_mulai": "2026-08-20T02:00:00+00:00", "jam_selesai": "2026-08-20T08:00:00+00:00",
+        "status": "checked_in", "source": "whatsapp_auto", "payment_status": "paid",
+        "subtotal": 100000, "service_fee": 3000, "total": 103000, "amount_due": 103000,
+        "paid_at": now_iso(), "created_at": now_iso(),
+    })
+    # Checkin dari booking tsb (from_booking_id ada) - SEBELUM fix, estimasi +6 jam dari
+    # jam_checkin 04:00 UTC = 10:00 UTC, padahal booking selesai 08:00 UTC.
+    await db.checkins.insert_one({
+        "id": ck_id, "property_id": property_id, "room_id": room_id, "room_nomor": "T7",
+        "room_tipe": "Standard", "nama_tamu": "Test Regresi DayUse Dari Booking", "no_hp": _wa_unik(),
+        "jumlah_tamu": 1, "tarif_dasar": 100000, "jam_checkin": "2026-08-20T04:00:00+00:00",
+        "jam_checkout": None, "durasi_jam": 6, "overtime_jam": 0, "biaya_tambahan": 0,
+        "subtotal": 100000, "service_fee": 3000, "total": 103000, "status": "aktif",
+        "from_booking_id": bk_du_id, "from_booking_kode": "TEST-DU-001",
+        "pembayaran": [{"metode": "tunai", "jumlah": 103000}],
+        "petugas_checkin": "Test", "petugas_checkin_id": "test", "created_at": now_iso(),
+    })
+
+    # Booking Menginap OTA baru, check-in 14:00 WITA (06:00 UTC), checkout 12:00 WITA besok
+    mulai = datetime(2026, 8, 20, 6, 0, tzinfo=timezone.utc)   # 14:00 WITA
+    selesai = datetime(2026, 8, 21, 4, 0, tzinfo=timezone.utc)  # 12:00 WITA besok
+
+    # Kasus B: day use selesai 08:00 UTC, mulai digeser ke 08:00 + 30 menit = 08:30 UTC
+    # -> harus TERSEDIA (SEBELUM fix: estimasi checkin +6 jam = 10:00 UTC, jadi 08:30
+    # ditolak walau day use sudah selesai).
+    mulai_digeser = datetime(2026, 8, 20, 8, 30, tzinfo=timezone.utc)
+    try:
+        await check_room_available(room_id, mulai_digeser, selesai, property_id)
+        ok_b = True
+        err_b = None
+    except Exception as e:
+        ok_b = False
+        err_b = str(e)
+
+    status = "PASS" if ok_b else f"FAIL - kamar Day Use dari booking diblokir berlebihan saat mulai digeser ke {mulai_digeser.isoformat()} (harusnya tersedia, day use sudah selesai): {err_b}"
+    return ("checkin_dari_booking_day_use_bisa_ditumpuk_menginap", status)
+
+
 async def main():
     unit_tests = [
         test_tanggal_wita_dini_hari_geser_ke_hari_berikutnya,
@@ -298,6 +365,7 @@ async def main():
         skenario_whatsapp_auto_tidak_hilang_dan_tidak_dobel,
         skenario_checkout_sync_amount_due,
         skenario_checkout_payment_protection,
+        skenario_checkin_dari_booking_day_use_bisa_ditumpuk_menginap,
     ]
 
     print("--- Unit test (murni, tanpa DB) ---")
