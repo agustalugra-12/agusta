@@ -65,6 +65,57 @@ def test_tanggal_wita_naive_diasumsikan_sudah_wita() -> tuple:
 
 
 # ---------------------------------------------------------------------------
+# Unit test murni - _occupies_date (bug nyata 2026-08-15, kasus kamar 9 Pelangi
+# tanggal 16 Aug: day-use Fani check-in PAGI 10:30 WITA tanggal 17 Aug membuat kalender
+# tampilkan kamar 9 "tersedia" tanggal 16 padahal tidak bisa utk malam 16 - checkout
+# menginap 12:00 WITA lebih siang dari day-use masuk. Day-use mulai sebelum 04:00 UTC
+# = blokir malam sebelumnya juga, lihat docstring _occupies_date di ketersediaan.py)
+# ---------------------------------------------------------------------------
+
+def test_occupies_date_dayuse_pagi_blokir_malam_sebelumnya() -> tuple:
+    from routes.ketersediaan import _occupies_date
+    from datetime import datetime, timezone
+    # Fani: day_use 17 Aug 02:30 UTC (10:30 WITA) -> 08:30 UTC
+    start = datetime(2026, 8, 17, 2, 30, tzinfo=timezone.utc)
+    end = datetime(2026, 8, 17, 8, 30, tzinfo=timezone.utc)
+    # Tanggal 16 (malam sebelumnya) WAJIB terhitung terisi - kasus kamar 9
+    t16 = _occupies_date(start, end, datetime(2026, 8, 16).date())
+    # Tanggal 17 (hari check-in) tetap terisi
+    t17 = _occupies_date(start, end, datetime(2026, 8, 17).date())
+    # Tanggal 15 tidak terpengaruh
+    t15 = _occupies_date(start, end, datetime(2026, 8, 15).date())
+    ok = t16 is True and t17 is True and t15 is False
+    return ("occupies_date_dayuse_pagi_blokir_malam_sebelumnya",
+            "PASS" if ok else f"FAIL - t16={t16} (harus True), t17={t17} (harus True), t15={t15} (harus False)")
+
+
+def test_occupies_date_dayuse_siang_tidak_blokir_malam_sebelumnya() -> tuple:
+    from routes.ketersediaan import _occupies_date
+    from datetime import datetime, timezone
+    # Day use mulai 06:00 UTC (14:00 WITA) - SETELAH checkout menginap 12:00 WITA, aman
+    start = datetime(2026, 8, 17, 6, 0, tzinfo=timezone.utc)
+    end = datetime(2026, 8, 17, 12, 0, tzinfo=timezone.utc)
+    t16 = _occupies_date(start, end, datetime(2026, 8, 16).date())
+    t17 = _occupies_date(start, end, datetime(2026, 8, 17).date())
+    ok = t16 is False and t17 is True
+    return ("occupies_date_dayuse_siang_tidak_blokir_malam_sebelumnya",
+            "PASS" if ok else f"FAIL - t16={t16} (harus False), t17={t17} (harus True)")
+
+
+def test_occupies_date_menginap_hari_checkout_tidak_terisi() -> tuple:
+    from routes.ketersediaan import _occupies_date
+    from datetime import datetime, timezone
+    # Menginap 15 Aug 06:00 UTC -> 16 Aug 04:00 UTC (checkout 12:00 WITA 16 Aug)
+    start = datetime(2026, 8, 15, 6, 0, tzinfo=timezone.utc)
+    end = datetime(2026, 8, 16, 4, 0, tzinfo=timezone.utc)
+    t15 = _occupies_date(start, end, datetime(2026, 8, 15).date())
+    t16 = _occupies_date(start, end, datetime(2026, 8, 16).date())
+    ok = t15 is True and t16 is False
+    return ("occupies_date_menginap_hari_checkout_tidak_terisi",
+            "PASS" if ok else f"FAIL - t15={t15} (harus True), t16={t16} (harus False)")
+
+
+# ---------------------------------------------------------------------------
 # Skenario LIVE (in-process, property_id palsu terisolasi - lihat docstring atas)
 # ---------------------------------------------------------------------------
 
@@ -359,6 +410,9 @@ async def main():
         test_tanggal_wita_dini_hari_geser_ke_hari_berikutnya,
         test_tanggal_wita_siang_tidak_geser,
         test_tanggal_wita_naive_diasumsikan_sudah_wita,
+        test_occupies_date_dayuse_pagi_blokir_malam_sebelumnya,
+        test_occupies_date_dayuse_siang_tidak_blokir_malam_sebelumnya,
+        test_occupies_date_menginap_hari_checkout_tidak_terisi,
     ]
     skenario_list = [
         skenario_dashboard_ringkasan_sinkron,

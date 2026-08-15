@@ -40,9 +40,29 @@ def _occupies_date(start: datetime, end: datetime, day) -> bool:
     yang membuat hari check-out booking menginap selalu ikut terhitung terisi (mis. checkin
     tanggal 20/checkout tanggal 21 tampil terisi di tanggal 20 DAN 21, padahal cuma 1 malam
     yang seharusnya terisi di tanggal 20 saja).
-    """
+
+    (2026-08-15, bug nyata ditemukan lewat audit - kasus kamar 9 Pelangi tanggal 16 Agustus:
+    Kalender Ketersediaan menampilkan kamar 9 "tersedia" utk tanggal 16 padahal sebenarnya
+    TIDAK bisa utk malam 16. Penyebabnya day-use Fani yang check-in PAGI (10:30 WITA) tanggal
+    17 Agustus: `_occupies_date` lama cuma menghitung day-use terisi di tanggal check-in-nya
+    (`day == start_date`), jadi tanggal 16 dianggap kosong. Padahal checkout standar Menginap
+    adalah 12:00 WITA, lebih SIANG dari day-use masuk 10:30 WITA - tamu malam 16 checkout
+    17/08 12:00 WITA BENTROK 1.5 jam dgn day-use Fani. Day-use yang mulai sebelum 12:00 WITA
+    (04:00 UTC) = memblokir malam sebelumnya juga; day-use mulai jam 12:00 WITA ke atas aman
+    (checkout menginap selesai dulu). Diperbaiki: utk day-use (start_date == end_date) yang
+    mulai sebelum 04:00 UTC, selain `day == start_date` juga `day == start_date - 1` dihitung
+    terisi. `_occupies_date` murni tanggal (input `start`/`end` sudah aware UTC dari
+    parse_iso), perbandingan jam dipakai jam UTC murni utk menghindari ambiguitas offset."""
     start_date, end_date = start.date(), end.date()
     if start_date == end_date:
+        # Day use satu hari: terisi di tanggal check-in-nya. Kalau mulai SEBELUM 04:00 UTC
+        # (12:00 WITA - checkout standar Menginap), berarti pagi harinya menabrak malam
+        # SEBELUMNYA juga (checkout menginap 12:00 WITA lebih siang dari day-use masuk) -
+        # blokir tanggal sebelumnya juga supaya kalender tidak menampilkan kamar "tersedia"
+        # utk malam yang sebenarnya tidak bisa (kasus nyata kamar 9, 2026-08-15).
+        blokir_sebelumnya = start.hour < 4
+        if blokir_sebelumnya:
+            return day in (start_date, start_date - timedelta(days=1))
         return day == start_date
     return start_date <= day < end_date
 
@@ -114,9 +134,16 @@ async def kalender_bulanan(
     month_start = datetime(year, month, 1, tzinfo=timezone.utc)
     month_end = datetime(year + 1, 1, 1, tzinfo=timezone.utc) if month == 12 else datetime(year, month + 1, 1, tzinfo=timezone.utc)
 
+    # (2026-08-15, bug nyata kasus kamar 9 - lihat ketersediaan_hari): day-use yang check-in
+    # PAGI tanggal 1 bulan berikutnya (mulai sebelum 04:00 UTC / 12:00 WITA) memblokir malam
+    # TERAKHIR bulan ini. Query `jam_mulai < month_end` tidak menangkapnya - perlebar batas
+    # atas sampai pagi hari berikutnya supaya _occupies_date bisa menilai (dia yang putuskan
+    # apakah benar meng-occupy, bukan overlap mentah).
+    month_end_query = month_end + timedelta(hours=4)
+
     bookings = await db.bookings.find(scoped({
         "status": {"$in": ACTIVE_BOOKING_STATUSES},
-        "jam_mulai": {"$lt": month_end.isoformat()},
+        "jam_mulai": {"$lt": month_end_query.isoformat()},
         "jam_selesai": {"$gte": month_start.isoformat()},
     }, property_id), {"_id": 0, "room_id": 1, "jam_mulai": 1, "jam_selesai": 1}).to_list(2000)
 
@@ -156,11 +183,22 @@ async def ketersediaan_hari(
         raise HTTPException(400, "Format tanggal harus YYYY-MM-DD")
     day_end = day_start + timedelta(days=1)
 
+    # (2026-08-15, bug nyata kasus kamar 9): day-use yang check-in PAGI hari BERIKUTNYA
+    # (mulai sebelum 04:00 UTC / 12:00 WITA, lihat _occupies_date) memblokir malam
+    # SEBELUMNYA - tapi filter `jam_mulai < day_end` TIDAK menangkapnya (Fani mulai 17/08
+    # 02:30 UTC, day_end utk tanggal 16 = 17/08 00:00 UTC, 02:30 < 00:00 = False). Perluas
+    # batas atas `jam_mulai` sampai pagi hari berikutnya (12:00 WITA = 04:00 UTC, batas
+    # checkout standar Menginap yang relevan utk day-use pagi) supaya booking dini-hari
+    # hari berikutnya ikut dipertimbangkan; _occupies_date yang memutuskan apakah
+    # benar-benar meng-occupy tanggal ini (bukan sekadar overlap mentah).
+    query_start = day_start - timedelta(days=1)
+    jam_mulai_batas = day_end + timedelta(hours=4)
+
     rooms = await db.rooms.find(scoped({}, property_id), {"_id": 0, "id": 1, "tipe": 1}).to_list(500)
     bookings = await db.bookings.find(scoped({
         "status": {"$in": ACTIVE_BOOKING_STATUSES},
-        "jam_mulai": {"$lt": day_end.isoformat()},
-        "jam_selesai": {"$gte": day_start.isoformat()},
+        "jam_mulai": {"$lt": jam_mulai_batas.isoformat()},
+        "jam_selesai": {"$gte": query_start.isoformat()},
     }, property_id), {"_id": 0, "room_id": 1, "jam_mulai": 1, "jam_selesai": 1}).to_list(2000)
     occupied_room_ids = {
         b["room_id"] for b in bookings
