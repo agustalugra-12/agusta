@@ -99,7 +99,9 @@ async def estimasi_kamar_siap_pada_tanggal(room_id: str, property_id: str, tangg
     Menginap/Day Use yang checkout-nya JATUH PADA `tanggal` tersebut (bukan hanya `now`).
 
     HANYA mengembalikan estimasi untuk penghalang yang checkout-nya PASTI di `tanggal`:
-    - Menginap checked_in yang `jam_selesai` tanggalnya == `tanggal` (checkout 12:00 WITA)
+    - Menginap (status terkonfirmasi - aktif/booking_paid/booking_pending/checked_in, bukan
+      cuma checked_in, lihat bug 2026-08-15 kasus Bagus) yang `jam_selesai` tanggalnya ==
+      `tanggal` (checkout 12:00 WITA)
     - Day Use yang `jam_selesai` tanggalnya == `tanggal`
     None kalau tidak ada penghalang yang selesai di tanggal itu (kamar kosong hari itu, atau
     penghalangnya Menginap multi-malam yang checkout tanggal lain - jangan janji kekosongan
@@ -112,10 +114,15 @@ async def estimasi_kamar_siap_pada_tanggal(room_id: str, property_id: str, tangg
 
     kandidat_siap = []
 
-    # Menginap yang checkout-nya jatuh PADA tanggal target (status checked_in = sudah tiba,
-    # belum checkout). Checkout standar = 12:00 WITA (jam_selesai), + buffer housekeeping.
+    # Menginap yang checkout-nya jatuh PADA tanggal target. Status menginap yang
+    # menghalangi: semua yang TERKONFIRMASI (aktif/booking_paid/booking_pending/checked_in),
+    # bukan cuma checked_in - (2026-08-15, bug nyata ditemukan lewat audit chat Bagus:
+    # kamar 6 [Indah, status=aktif] & kamar 7 [Haifa, status=booking_paid] keduanya checkout
+    # 16/08 12:00 WITA dan menghalangi Day Use pagi, tapi versi sebelumnya cuma cek
+    # status=checked_in -> None -> AI salah bilang 'penuh' tanpa tawaran jam 12:30 padahal
+    # kamar siap setelah checkout).
     menginap_checkout_tanggal = await db.bookings.find_one(scoped({
-        "room_id": room_id, "tipe": "menginap", "status": "checked_in",
+        "room_id": room_id, "tipe": "menginap", "status": {"$in": BOOKING_TERKONFIRMASI_STATUS},
     }, property_id), sort=[("jam_selesai", 1)])
     if menginap_checkout_tanggal and menginap_checkout_tanggal.get("jam_selesai"):
         checkout_dt = datetime.fromisoformat(menginap_checkout_tanggal["jam_selesai"])
@@ -133,7 +140,20 @@ async def estimasi_kamar_siap_pada_tanggal(room_id: str, property_id: str, tangg
 
     if not kandidat_siap:
         return None
-    return min(kandidat_siap)
+    siap = min(kandidat_siap)
+    # Verifikasi slot Day Use 6 jam dari `siap` benar-benar aman (tidak bentrok booking lain
+    # yang sudah terlanjur, mis. Day Use kedua yg sudah booking di jam itu) - (2026-08-15,
+    # bug nyata: kamar 2 Cottage punya Melly checkout 12:00 WITA + Ni Kadek day_use 12:30-17:00
+    # yg sudah terlanjur, jadi kamar 2 sebenarnya TIDAK tersedia mulai 12:30 walau checkout-nya
+    # 12:00. Kalau slot tidak aman, kamar ini bukan kandidat utk ditawarkan AI.)
+    try:
+        aman = await slot_dayuse_aman(room_id, siap, property_id)
+        if aman["jam_selesai_aman"] <= siap:
+            return None
+        await check_room_available(room_id, siap, aman["jam_selesai_aman"], property_id)
+    except HTTPException:
+        return None
+    return siap
 
 
 async def rekomendasi_slot_kosong(tipe_kamar: str, property_id: str, jumlah: int = 1) -> Optional[Dict[str, Any]]:
