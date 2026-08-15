@@ -22,15 +22,30 @@ async def _resolve_property(properti: Optional[str] = None) -> str:
     return p["id"]
 
 
-def _booking_date_range(start: datetime, end: datetime):
+def _booking_date_range(start: datetime, end: datetime, jam_checkin_ada: bool = False):
     """Rentang TANGGAL [start_date, end_date_exclusive) yang benar-benar ditempati booking —
     end_date_exclusive (hari check-out) TIDAK dihitung menempati, tamu sudah checkout sebelum
     hari itu dianggap kosong lagi, KECUALI booking day-use yang checkin/checkout di hari yang
     sama (tetap menempati hari itu). Sama seperti `_occupies_date` di routes/ketersediaan.py —
     lihat bug 2026-07-12 di sana untuk detail kenapa overlap timestamp mentah salah di sini juga.
+
+    (2026-08-15, bug nyata kasus kamar 9): day-use yang check-in PAGI (mulai sebelum 04:00 UTC
+    / 12:00 WITA - batas checkout standar Menginap) tanggal berikutnya memblokir malam
+    SEBELUMNYA: checkout Menginap 12:00 WITA lebih siang dari day-use masuk (mis. 10:30 WITA),
+    jadi kamar yang punya day-use pagi besok TIDAK tersedia utk slot yang overlap malam itu.
+    `jam_checkin_ada`: kalau True (tamu sudah sebutkan jam spesifik), day-use pagi besok TIDAK
+    diperluas ke hari sebelumnya di sini - serahkan ke filter presisi jam di bawah
+    (check_room_available) yang tahu persis slot mana yang bentrok (day-use 17 pagi hanya
+    memblokir slot yg overlap-nya, bukan seluruh hari 16 - mis. Day Use 16 siang 12:30-18:30
+    tetap aman). Kalau False (tamu belum sebut jam, cek tanggal umum), konservatif: anggap
+    malam hari sebelumnya terblokir.
     """
     start_date, end_date = start.date(), end.date()
     if start_date == end_date:
+        if not jam_checkin_ada and start.hour < 4:
+            # day-use pagi, tanpa jam_checkin: blokir malam sebelumnya juga (checkout menginap
+            # 12:00 WITA lebih siang dari day-use masuk < 12:00 WITA)
+            return start_date - timedelta(days=1), start_date + timedelta(days=1)
         end_date = start_date + timedelta(days=1)
     return start_date, end_date
 
@@ -228,12 +243,21 @@ async def public_availability(tanggal: str, tipe: Optional[str] = None, checkout
             # tetap ditolak check_room_available (tidak double-booking asli, tapi tamu/AI
             # bisa terlanjur janji kamar yang ternyata tidak bisa dipakai).
             "status": {"$in": ["aktif", "booking_paid", "booking_pending", "checked_in"]},
-            "jam_mulai": {"$lt": d_end.isoformat()},
+            # (2026-08-15, bug nyata kasus kamar 9 - konsisten dgn fix _occupies_date di
+            # ketersediaan.py): day-use yang check-in PAGI hari berikutnya (mulai sebelum
+            # 04:00 UTC / 12:00 WITA) memblokir malam SEBELUMNYA - tapi `jam_mulai < d_end`
+            # (d_end = 00:00 UTC hari berikutnya) TIDAK menangkapnya (Fani mulai 17/08
+            # 02:30 UTC, d_end utk tanggal 16 = 17/08 00:00 UTC, 02:30 < 00:00 = False).
+            # Perlebar batas atas `jam_mulai` sampai pagi hari berikutnya (04:00 UTC, batas
+            # checkout standar Menginap) supaya day-use dini-hari ikut dipertimbangkan;
+            # `_booking_date_range`/filter overlap di bawah yang memutuskan apakah
+            # benar-benar menempati rentang ini.
+            "jam_mulai": {"$lt": (d_end + timedelta(hours=4)).isoformat()},
             "jam_selesai": {"$gt": d_start.isoformat()},
         }, property_id), {"_id": 0, "jam_mulai": 1, "jam_selesai": 1}).to_list(50)
         bk = None
         for c in kandidat:
-            b_start, b_end = _booking_date_range(parse_iso(c["jam_mulai"], "jam_mulai"), parse_iso(c["jam_selesai"], "jam_selesai"))
+            b_start, b_end = _booking_date_range(parse_iso(c["jam_mulai"], "jam_mulai"), parse_iso(c["jam_selesai"], "jam_selesai"), jam_checkin_ada=bool(jam_checkin))
             if b_start < q_range_end and q_range_start < b_end:
                 bk = c
                 break

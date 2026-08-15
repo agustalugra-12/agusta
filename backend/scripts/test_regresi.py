@@ -116,6 +116,63 @@ def test_occupies_date_menginap_hari_checkout_tidak_terisi() -> tuple:
 
 
 # ---------------------------------------------------------------------------
+# Unit test murni - _booking_date_range (bug nyata 2026-08-15, kasus kamar 9 -
+# konsisten dgn fix _occupies_date; public_availability / tool check_availability
+# AI pakai fungsi ini, jadi harus sepaham dgn Kalender)
+# ---------------------------------------------------------------------------
+
+def test_booking_date_range_dayuse_pagi_blokir_malam_sebelumnya() -> tuple:
+    from routes.public import _booking_date_range
+    from datetime import datetime, timezone
+    # Fani: day_use 17 Aug 02:30 UTC (10:30 WITA) -> 08:30 UTC, pagi.
+    # TANPA jam_checkin (cek tanggal umum): blokir malam sebelumnya (16) juga.
+    start = datetime(2026, 8, 17, 2, 30, tzinfo=timezone.utc)
+    end = datetime(2026, 8, 17, 8, 30, tzinfo=timezone.utc)
+    rs, re = _booking_date_range(start, end, jam_checkin_ada=False)
+    ok = rs == datetime(2026, 8, 16).date() and re == datetime(2026, 8, 18).date()
+    return ("booking_date_range_dayuse_pagi_blokir_malam_sebelumnya",
+            "PASS" if ok else f"FAIL - range=({rs}, {re}), harusnya (2026-08-16, 2026-08-18)")
+
+
+def test_booking_date_range_dayuse_pagi_dengan_jam_checkin_hanya_hari_itu() -> tuple:
+    from routes.public import _booking_date_range
+    from datetime import datetime, timezone
+    # Fani day_use pagi 17 Aug, TAPI tamu sudah sebutkan jam_checkin spesifik (mis. 12:30) -
+    # day-use pagi besok TIDAK diperluas ke hari sebelumnya di sini; filter presisi jam
+    # (check_room_available) yang menentukan slot mana yang benar-benar bentrok.
+    start = datetime(2026, 8, 17, 2, 30, tzinfo=timezone.utc)
+    end = datetime(2026, 8, 17, 8, 30, tzinfo=timezone.utc)
+    rs, re = _booking_date_range(start, end, jam_checkin_ada=True)
+    ok = rs == datetime(2026, 8, 17).date() and re == datetime(2026, 8, 18).date()
+    return ("booking_date_range_dayuse_pagi_dengan_jam_checkin_hanya_hari_itu",
+            "PASS" if ok else f"FAIL - range=({rs}, {re}), harusnya (2026-08-17, 2026-08-18)")
+
+
+def test_booking_date_range_dayuse_siang_hanya_hari_itu() -> tuple:
+    from routes.public import _booking_date_range
+    from datetime import datetime, timezone
+    # Day use mulai 06:00 UTC (14:00 WITA) - SETELAH checkout menginap 12:00 WITA, aman
+    start = datetime(2026, 8, 17, 6, 0, tzinfo=timezone.utc)
+    end = datetime(2026, 8, 17, 12, 0, tzinfo=timezone.utc)
+    rs, re = _booking_date_range(start, end, jam_checkin_ada=False)
+    ok = rs == datetime(2026, 8, 17).date() and re == datetime(2026, 8, 18).date()
+    return ("booking_date_range_dayuse_siang_hanya_hari_itu",
+            "PASS" if ok else f"FAIL - range=({rs}, {re}), harusnya (2026-08-17, 2026-08-18)")
+
+
+def test_booking_date_range_menginap() -> tuple:
+    from routes.public import _booking_date_range
+    from datetime import datetime, timezone
+    # Menginap 15 -> 16 (checkout hari 16 tidak menempati)
+    start = datetime(2026, 8, 15, 6, 0, tzinfo=timezone.utc)
+    end = datetime(2026, 8, 16, 4, 0, tzinfo=timezone.utc)
+    rs, re = _booking_date_range(start, end)
+    ok = rs == datetime(2026, 8, 15).date() and re == datetime(2026, 8, 16).date()
+    return ("booking_date_range_menginap",
+            "PASS" if ok else f"FAIL - range=({rs}, {re}), harusnya (2026-08-15, 2026-08-16)")
+
+
+# ---------------------------------------------------------------------------
 # Skenario LIVE (in-process, property_id palsu terisolasi - lihat docstring atas)
 # ---------------------------------------------------------------------------
 
@@ -405,6 +462,50 @@ async def skenario_checkin_dari_booking_day_use_bisa_ditumpuk_menginap() -> tupl
     return ("checkin_dari_booking_day_use_bisa_ditumpuk_menginap", status)
 
 
+async def skenario_estimasi_siap_pada_tanggal_dayuse_pagi() -> tuple:
+    """Bug nyata 2026-08-15 (permintaan Agus - kasus kamar 9 tanggal 16 Aug): tamu minta
+    Day Use PAGI di tanggal masa depan yang kamarnya masih dipakai Menginap checkout 12:00
+    WITA tanggal itu. `estimasi_kamar_siap` LAMA cuma hitung "hari ini" -> None utk tanggal
+    masa depan -> AI jawab "penuh" tanpa tawaran jam 12:30. Fungsi baru
+    `estimasi_kamar_siap_pada_tanggal` menghitung estimasi dari booking yang checkout-nya
+    JATUH pada tanggal diminta (12:00 WITA + buffer 30 menit = siap ~12:30 WITA).
+
+    Skenario: kamar test ada Menginap checked_in checkout besok 04:00 UTC (12:00 WITA).
+    Panggil estimasi_kamar_siap_pada_tanggal utk tanggal checkout tsb - harus return
+    04:30 UTC (12:30 WITA). Untuk tanggal LAIN (checkout bukan tanggal itu) - harus None."""
+    from core import db, now_iso
+    from scheduling_engine import estimasi_kamar_siap_pada_tanggal
+
+    property_id = _property_id_test()
+    room_id = await _bikin_kamar_test(db, property_id, "T8")
+    # Booking Menginap: checkin kemarin, checkout BESOK 04:00 UTC (12:00 WITA), checked_in
+    besok = (datetime.now(timezone.utc) + timedelta(days=1)).strftime("%Y-%m-%d")
+    lusa = (datetime.now(timezone.utc) + timedelta(days=2)).strftime("%Y-%m-%d")
+    await db.bookings.insert_one({
+        "id": str(uuid.uuid4()), "kode": f"TEST-ES-{uuid.uuid4().hex[:6].upper()}",
+        "property_id": property_id, "room_id": room_id, "room_nomor": "T8",
+        "room_tipe": "Standard", "tipe": "menginap", "nama_tamu": "Test Regresi Estimasi",
+        "no_hp": _wa_unik(), "jam_mulai": f"{besok}T06:00:00+00:00", "jam_selesai": f"{lusa}T04:00:00+00:00",
+        "status": "checked_in", "source": "whatsapp_auto", "payment_status": "paid",
+        "subtotal": 150000, "service_fee": 4500, "total": 154500, "amount_due": 154500,
+        "paid_at": now_iso(), "created_at": now_iso(),
+    })
+
+    # estimasi utk tanggal checkout (besok -> lusa checkout 04:00 UTC = 12:00 WITA lusa)
+    # Estimasi dihitung utk tanggal checkout = lusa (jam_selesai lusa 04:00 UTC)
+    siap = await estimasi_kamar_siap_pada_tanggal(room_id, property_id, lusa)
+    ok_lusa = siap is not None and siap.strftime("%H:%M") == "04:30" and siap.date().isoformat() == lusa
+    # Tanggal BUKAN checkout (besok, masih checkin) -> None (jangan janji kekosongan palsu)
+    siap_besok = await estimasi_kamar_siap_pada_tanggal(room_id, property_id, besok)
+    ok_besok = siap_besok is None
+
+    ok = ok_lusa and ok_besok
+    status = ("PASS" if ok else
+              f"FAIL - estimasi lusa={siap} (harusnya {lusa}T04:30:00+00:00 / 12:30 WITA), "
+              f"estimasi besok={siap_besok} (harusnya None - masih checkin, jangan janji kosong)")
+    return ("estimasi_siap_pada_tanggal_dayuse_pagi", status)
+
+
 async def main():
     unit_tests = [
         test_tanggal_wita_dini_hari_geser_ke_hari_berikutnya,
@@ -413,6 +514,10 @@ async def main():
         test_occupies_date_dayuse_pagi_blokir_malam_sebelumnya,
         test_occupies_date_dayuse_siang_tidak_blokir_malam_sebelumnya,
         test_occupies_date_menginap_hari_checkout_tidak_terisi,
+        test_booking_date_range_dayuse_pagi_blokir_malam_sebelumnya,
+        test_booking_date_range_dayuse_pagi_dengan_jam_checkin_hanya_hari_itu,
+        test_booking_date_range_dayuse_siang_hanya_hari_itu,
+        test_booking_date_range_menginap,
     ]
     skenario_list = [
         skenario_dashboard_ringkasan_sinkron,
@@ -420,6 +525,7 @@ async def main():
         skenario_checkout_sync_amount_due,
         skenario_checkout_payment_protection,
         skenario_checkin_dari_booking_day_use_bisa_ditumpuk_menginap,
+        skenario_estimasi_siap_pada_tanggal_dayuse_pagi,
     ]
 
     print("--- Unit test (murni, tanpa DB) ---")

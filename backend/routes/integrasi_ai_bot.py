@@ -168,38 +168,76 @@ async def ai_bot_ketersediaan(
         if kekurangan > 0 and diminta > 1:
             item["kamar_diminta"] = diminta
             item["kamar_kurang"] = kekurangan
+        # Estimasi "kapan kamar siap lagi" - dua sumber, dua kondisi:
+        # (A) HARI INI & kamar penuh utk jumlah diminta (perilaku lama, is_today): pakai
+        #     rekomendasi_slot_kosong yg berbasis "sekarang".
+        # (B) JAM_CHECKIN PAGI di tanggal APAPUN (2026-08-15, permintaan Agus - kasus kamar 9
+        #     tanggal 16: tamu minta Day Use pagi tapi kamar masih dipakai Menginap yang
+        #     checkout 12:00 WITA tanggal itu): estimasi dari booking yg checkout-nya JATUH
+        #     pada tanggal diminta (12:00 WITA + buffer 30 menit = siap ~12:30) - supaya AI
+        #     TIDAK bilang "penuh" melainkan menawarkan jam 12:30. Hanya relevan kalau tamu
+        #     sebut jam pagi (< 12:00 WITA = 04:00 UTC) & kamar utk jam itu kurang; kalau jam
+        #     siang/sore tidak perlu (kamar yg checkout 12:00 sudah bisa).
+        jam_pagi = False
+        if jam_checkin:
+            try:
+                jam_wita = int(jam_checkin.split(":")[0])
+                jam_pagi = jam_wita < 12
+            except (ValueError, IndexError):
+                jam_pagi = False
         if kekurangan > 0 and is_today:
             rekom = await rekomendasi_slot_kosong(t, property_id, jumlah=kekurangan)
-            if rekom:
-                item["estimasi_kosong_lagi"] = rekom["siap_pakai"].isoformat()
-                item["estimasi_kamar_nomor"] = rekom["room_nomor"]
-                # Jam checkout MENTAH, terpisah dari "siap_pakai" (2026-08-02, permintaan
-                # Agus - contoh nyata: "saat ini full kk, tersedia lagi 15.56 dan ready jam
-                # 16.30 apa kk mau?"). `siap_pakai` SUDAH termasuk buffer housekeeping
-                # (BUFFER_HOUSEKEEPING_MENIT, lihat estimasi_kamar_siap) - dulu itu SATU-
-                # SATUNYA angka yang dikasih ke AI, jadi AI tidak bisa membedakan "kapan tamu
-                # lama checkout" vs "kapan benar-benar siap dipakai tamu baru setelah
-                # dibersihkan". Sekarang keduanya dikirim terpisah supaya AI bisa jujur & lebih
-                # jelas ke tamu ("checkout jam X, siap dipakai lagi ~jam Y setelah
-                # dibersihkan") - dihitung mundur dari siap_pakai (bukan hitung ulang terpisah)
-                # supaya tetap 1 sumber kebenaran (estimasi_kamar_siap), tidak ada risiko dua
-                # angka saling menyimpang.
-                item["estimasi_checkout_asli"] = (
-                    rekom["siap_pakai"] - timedelta(minutes=BUFFER_HOUSEKEEPING_MENIT)
-                ).isoformat()
-                # Durasi Day Use utk kandidat ini mungkin lebih pendek dari 6 jam standar
-                # kalau ada tamu Menginap check-in tak lama setelah kamar ini siap
-                # (2026-08-01) - AI wajib sampaikan ini, jangan janjikan durasi penuh.
-                if rekom.get("dipersingkat"):
-                    item["estimasi_durasi_dipersingkat"] = True
-                    item["estimasi_selesai_max"] = rekom["usulan_selesai"].isoformat()
-                # Kandidat kamar/tipe lain yang juga akan siap hari ini (2026-08-01,
-                # permintaan Agus - tawarkan pilihan seperti CS manusia, bukan cuma 1 opsi).
-                if rekom.get("alternatif"):
-                    item["estimasi_alternatif"] = [
-                        {"room_nomor": a["room_nomor"], "siap_pakai": a["siap_pakai"].isoformat()}
-                        for a in rekom["alternatif"]
-                    ]
+        elif kekurangan > 0 and jam_pagi:
+            # Cari kandidat kamar tipe ini yg checkout-nya jatuh pada tanggal diminta -
+            # kumpulkan estimasi dari SEMUA kamar, ambil yg paling cepat siap.
+            from scheduling_engine import estimasi_kamar_siap_pada_tanggal
+            kandidat_estimasi = []
+            kamar_tipe = await db.rooms.find(scoped({"tipe": t}, property_id), {"_id": 0, "id": 1, "nomor": 1}).to_list(200)
+            for kr in kamar_tipe:
+                siap = await estimasi_kamar_siap_pada_tanggal(kr["id"], property_id, tanggal)
+                if siap:
+                    kandidat_estimasi.append({"room_nomor": kr["nomor"], "siap_pakai": siap})
+            if kandidat_estimasi:
+                kandidat_estimasi.sort(key=lambda x: x["siap_pakai"])
+                rekom = {
+                    "room_nomor": kandidat_estimasi[0]["room_nomor"],
+                    "siap_pakai": kandidat_estimasi[0]["siap_pakai"],
+                    "alternatif": kandidat_estimasi[1:],
+                }
+            else:
+                rekom = None
+        else:
+            rekom = None
+        if rekom:
+            item["estimasi_kosong_lagi"] = rekom["siap_pakai"].isoformat()
+            item["estimasi_kamar_nomor"] = rekom["room_nomor"]
+            # Jam checkout MENTAH, terpisah dari "siap_pakai" (2026-08-02, permintaan
+            # Agus - contoh nyata: "saat ini full kk, tersedia lagi 15.56 dan ready jam
+            # 16.30 apa kk mau?"). `siap_pakai` SUDAH termasuk buffer housekeeping
+            # (BUFFER_HOUSEKEEPING_MENIT, lihat estimasi_kamar_siap) - dulu itu SATU-
+            # SATUNYA angka yang dikasih ke AI, jadi AI tidak bisa membedakan "kapan tamu
+            # lama checkout" vs "kapan benar-benar siap dipakai tamu baru setelah
+            # dibersihkan". Sekarang keduanya dikirim terpisah supaya AI bisa jujur & lebih
+            # jelas ke tamu ("checkout jam X, siap dipakai lagi ~jam Y setelah
+            # dibersihkan") - dihitung mundur dari siap_pakai (bukan hitung ulang terpisah)
+            # supaya tetap 1 sumber kebenaran (estimasi_kamar_siap), tidak ada risiko dua
+            # angka saling menyimpang.
+            item["estimasi_checkout_asli"] = (
+                rekom["siap_pakai"] - timedelta(minutes=BUFFER_HOUSEKEEPING_MENIT)
+            ).isoformat()
+            # Durasi Day Use utk kandidat ini mungkin lebih pendek dari 6 jam standar
+            # kalau ada tamu Menginap check-in tak lama setelah kamar ini siap
+            # (2026-08-01) - AI wajib sampaikan ini, jangan janjikan durasi penuh.
+            if rekom.get("dipersingkat"):
+                item["estimasi_durasi_dipersingkat"] = True
+                item["estimasi_selesai_max"] = rekom["usulan_selesai"].isoformat()
+            # Kandidat kamar/tipe lain yang juga akan siap hari ini (2026-08-01,
+            # permintaan Agus - tawarkan pilihan seperti CS manusia, bukan cuma 1 opsi).
+            if rekom.get("alternatif"):
+                item["estimasi_alternatif"] = [
+                    {"room_nomor": a["room_nomor"], "siap_pakai": a["siap_pakai"].isoformat()}
+                    for a in rekom["alternatif"]
+                ]
         out.append(item)
     return {"tanggal": tanggal, "ketersediaan": out}
 

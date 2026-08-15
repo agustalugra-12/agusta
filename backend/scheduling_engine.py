@@ -85,6 +85,57 @@ async def estimasi_kamar_siap(room_id: str, property_id: str) -> Optional[dateti
     return min(kandidat_siap)
 
 
+async def estimasi_kamar_siap_pada_tanggal(room_id: str, property_id: str, tanggal: str) -> Optional[datetime]:
+    """Estimasi kapan kamar SIAP DIPAKAI pada tanggal spesifik (masa depan, bukan cuma hari
+    ini) — dipakai AI chat ketika tamu minta Day Use PAGI di tanggal yang belum hari ini,
+    tapi kamar masih ditempati tamu Menginap yang checkout 12:00 WITA tanggal itu juga.
+
+    (2026-08-15, permintaan Agus - kasus nyata kamar 9 tanggal 16 Aug): tamu tanya "ada
+    kamar day use pagi tanggal 16?" - kamar 9 masih dipakai Bowo leksono (Menginap, checkout
+    16/08 12:00 WITA). `estimasi_kamar_siap` LAMA cuma menghitung "hari ini" (bandingkan
+    checkout dengan `now`), jadi utk tanggal masa depan SELALU None - AI jawab "penuh" tanpa
+    menawarkan jam 12:30 (checkout 12:00 + buffer housekeeping 30 menit), padahal tamu malam
+    sebelumnya memang checkout jam 12:00 WITA standar. Fungsi ini menghitung dari booking
+    Menginap/Day Use yang checkout-nya JATUH PADA `tanggal` tersebut (bukan hanya `now`).
+
+    HANYA mengembalikan estimasi untuk penghalang yang checkout-nya PASTI di `tanggal`:
+    - Menginap checked_in yang `jam_selesai` tanggalnya == `tanggal` (checkout 12:00 WITA)
+    - Day Use yang `jam_selesai` tanggalnya == `tanggal`
+    None kalau tidak ada penghalang yang selesai di tanggal itu (kamar kosong hari itu, atau
+    penghalangnya Menginap multi-malam yang checkout tanggal lain - jangan janji kekosongan
+    palsu, konsisten dgn prinsip estimasi_kamar_siap)."""
+    from datetime import date as date_cls
+    try:
+        target_date = date_cls.fromisoformat(tanggal)
+    except ValueError:
+        return None
+
+    kandidat_siap = []
+
+    # Menginap yang checkout-nya jatuh PADA tanggal target (status checked_in = sudah tiba,
+    # belum checkout). Checkout standar = 12:00 WITA (jam_selesai), + buffer housekeeping.
+    menginap_checkout_tanggal = await db.bookings.find_one(scoped({
+        "room_id": room_id, "tipe": "menginap", "status": "checked_in",
+    }, property_id), sort=[("jam_selesai", 1)])
+    if menginap_checkout_tanggal and menginap_checkout_tanggal.get("jam_selesai"):
+        checkout_dt = datetime.fromisoformat(menginap_checkout_tanggal["jam_selesai"])
+        if checkout_dt.astimezone(WITA).date() == target_date:
+            kandidat_siap.append(checkout_dt + timedelta(minutes=BUFFER_HOUSEKEEPING_MENIT))
+
+    # Day Use yang selesai PADA tanggal target.
+    day_use_checkout_tanggal = await db.bookings.find_one(scoped({
+        "room_id": room_id, "tipe": "day_use", "status": {"$in": BOOKING_TERKONFIRMASI_STATUS},
+    }, property_id), sort=[("jam_selesai", 1)])
+    if day_use_checkout_tanggal and day_use_checkout_tanggal.get("jam_selesai"):
+        du_end = datetime.fromisoformat(day_use_checkout_tanggal["jam_selesai"])
+        if du_end.astimezone(WITA).date() == target_date:
+            kandidat_siap.append(du_end + timedelta(minutes=BUFFER_HOUSEKEEPING_MENIT))
+
+    if not kandidat_siap:
+        return None
+    return min(kandidat_siap)
+
+
 async def rekomendasi_slot_kosong(tipe_kamar: str, property_id: str, jumlah: int = 1) -> Optional[Dict[str, Any]]:
     """Kalau semua kamar tipe ini penuh SEKARANG, cari kandidat kamar paling cepat siap +
     slot Day Use yang tidak bentrok booking lain yang sudah terkonfirmasi. Dipakai AI
