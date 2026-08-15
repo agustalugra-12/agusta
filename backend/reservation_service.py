@@ -107,13 +107,38 @@ async def check_room_available(room_id: str, mulai: datetime, selesai: datetime,
     }, property_id))
     if checkin_aktif and checkin_aktif.get("jam_checkin"):
         ci_mulai = datetime.fromisoformat(checkin_aktif["jam_checkin"])
-        ci_estimasi_selesai = ci_mulai + timedelta(hours=6)
+        # (2026-08-15, kasus nyata RedDoorz I Komang Budiana - kamar 17 "bentrok" padahal
+        # tidak): checkin yang DITURUNKAN dari booking Day Use (create_checkin via
+        # checkin_from_booking, ditandai field `from_booking_id`) SUDAH punya jadwal selesai
+        # PASTI di `bookings.jam_selesai` (mis. Oka Mahendra: booking selesai 17:00 WITA,
+        # tapi estimasi 6 jam dari jam_checkin 11:37 WITA ngasih 17:37 WITA - salah 37
+        # menit). SEBELUMNYA checkin apapun (termasuk dari booking) selalu diestimasi
+        # konservatif +6 jam dari jam_checkin, jadi kamar Day Use yang sebenarnya sudah
+        # bebas di jam_selesai booking tetap diblokir 37+ menit lebih lama - OTA RedDoorz
+        # (dan sumber lain) menolak menginap malam di kamar itu walaupun Day Use-nya sudah
+        # selesai jauh sebelumnya (lihat kasus MAIA MARTINS/geser jam di otomasi_email.py).
+        # Estimasi +6 jam itu HANYA tepat utk walk-in MURNI (tanpa booking, `from_booking_id`
+        # kosong - belum ada jadwal pasti). Kalau ada booking asal, baca batas presisinya:
+        # pakai `jam_selesai` booking itu (bukan estimasi) supaya kamar Day Use yang sudah
+        # selesai terjadwal TIDAK diblokir berlebihan.
+        ci_estimasi_selesai = None
+        if checkin_aktif.get("from_booking_id"):
+            bk_asal = await db.bookings.find_one(scoped({
+                "id": checkin_aktif["from_booking_id"],
+                "jam_selesai": {"$ne": None},
+            }, property_id))
+            if bk_asal and bk_asal.get("jam_selesai"):
+                ci_estimasi_selesai = datetime.fromisoformat(bk_asal["jam_selesai"])
+        if ci_estimasi_selesai is None:
+            ci_estimasi_selesai = ci_mulai + timedelta(hours=6)
         if ci_mulai < selesai and mulai < ci_estimasi_selesai:
+            label_selesai = (f"sampai {ci_estimasi_selesai.astimezone(WITA).strftime('%H:%M')} WITA"
+                             if checkin_aktif.get("from_booking_id") else
+                             f"perkiraan selesai {ci_estimasi_selesai.astimezone(WITA).strftime('%H:%M')} WITA")
             raise HTTPException(
                 400,
                 f"Kamar sedang dipakai tamu walk-in {checkin_aktif.get('nama_tamu', '-')} "
-                f"(check-in {ci_mulai.astimezone(WITA).strftime('%H:%M')} WITA, perkiraan selesai "
-                f"{ci_estimasi_selesai.astimezone(WITA).strftime('%H:%M')} WITA)"
+                f"(check-in {ci_mulai.astimezone(WITA).strftime('%H:%M')} WITA, {label_selesai})"
             )
     return True
 
