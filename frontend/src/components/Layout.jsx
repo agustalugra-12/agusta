@@ -37,7 +37,12 @@ const navSections = [
   ]},
   { label: "Keuangan", items: [
     { to: "/pembayaran", label: "Pembayaran", icon: CreditCard },
-    { to: "/pengeluaran", label: "Pengeluaran", icon: Wallet, ownerOnly: true },
+    // Pengeluaran (2026-08-16, permintaan Agus - "tampilkan di resepsionis"): dibuka utk
+    // resepsionis, TAPI tetap terbatas - bisa lihat & catat pengeluaran propertinya sendiri,
+    // hapus tetap owner-only (diperkuat backend require_owner di DELETE /expenses/{eid}).
+    // Scope per-properti sudah otomatis: resepsionis terkunci ke property_id akunnya sendiri
+    // (get_active_property), owner tetap bisa pilih properti lewat switcher.
+    { to: "/pengeluaran", label: "Pengeluaran", icon: Wallet },
     { to: "/payroll", label: "Payroll", icon: BadgeDollarSign, ownerOnly: true },
     { to: "/rekening", label: "Cash & Rekening", icon: Landmark, ownerOnly: true },
     { to: "/laporan", label: "Laporan", icon: BarChart3 },
