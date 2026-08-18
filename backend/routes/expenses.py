@@ -32,11 +32,26 @@ async def create_expense(body: ExpenseCreate, user: dict = Depends(get_current_u
 async def list_expenses(from_date: Optional[str] = None, to_date: Optional[str] = None,
                         user: dict = Depends(get_current_user),
                         property_id: str = Depends(get_active_property)):
+    # Bug nyata ditemukan Agus (2026-08-18) - "Laporan Pengeluaran" tanggal 18 Agustus
+    # tampil KOSONG padahal 2 pengeluaran asli ada hari itu, sementara tab "Ringkasan"
+    # (laporan_analitik.py, sudah pakai wita_date_range_to_utc) benar menampilkannya.
+    # Root cause: from_date/to_date dari frontend selalu "YYYY-MM-DD" polos (date picker),
+    # TAPI expenses.tanggal HAMPIR SELALU timestamp UTC PENUH (create_expense's
+    # `body.tanggal or now_iso()` - form web Pengeluaran.jsx TIDAK PUNYA input tanggal
+    # sama sekali, Telegram bot & payroll auto-post jg selalu now_iso()) - perbandingan
+    # STRING MENTAH "2026-08-18T05:24:55+00:00" <= "2026-08-18" itu FALSE (string lebih
+    # panjang yg diawali string pembanding dianggap "lebih besar" scr leksikografis) -
+    # SEMUA pengeluaran hari itu gagal lolos filter $lte, bukan cuma kasus tepi. Fix:
+    # konversi from_date/to_date (dimaksud tanggal WITA, sama asumsi dgn seluruh laporan
+    # lain di app ini) ke rentang UTC yg presisi via wita_date_range_to_utc - pola SAMA
+    # persis yg sudah dipakai reports.py/laporan_analitik.py, cuma belum pernah diterapkan
+    # di endpoint ini.
     q: Dict[str, Any] = {}
     if from_date or to_date:
+        start_utc, end_utc = wita_date_range_to_utc(from_date or "1970-01-01", to_date or "2999-12-31")
         rng: Dict[str, Any] = {}
-        if from_date: rng["$gte"] = from_date
-        if to_date: rng["$lte"] = to_date
+        if from_date: rng["$gte"] = start_utc
+        if to_date: rng["$lte"] = end_utc
         q["tanggal"] = rng
     items = await db.expenses.find(scoped(q, property_id), {"_id": 0}).sort("tanggal", -1).to_list(1000)
     return items

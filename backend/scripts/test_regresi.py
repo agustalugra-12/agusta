@@ -506,6 +506,44 @@ async def skenario_estimasi_siap_pada_tanggal_dayuse_pagi() -> tuple:
     return ("estimasi_siap_pada_tanggal_dayuse_pagi", status)
 
 
+async def skenario_laporan_pengeluaran_tanggal_penuh_timestamp() -> tuple:
+    """Bug nyata 2026-08-18 (laporan Agus - "di tanggal 18 ada pengeluaran tapi tidak ada
+    [di Laporan Pengeluaran], tapi di laporan Ringkasan ada"). Root cause: expenses.tanggal
+    HAMPIR SELALU timestamp UTC PENUH (create_expense's `body.tanggal or now_iso()` - form
+    web Pengeluaran.jsx TIDAK PUNYA input tanggal sama sekali, Telegram bot & payroll juga
+    selalu now_iso()), TAPI list_expenses (routes/expenses.py) dulu bandingkan STRING
+    MENTAH from_date/to_date ("YYYY-MM-DD" polos dari date picker) langsung ke field itu -
+    "2026-08-18T05:24:55+00:00" <= "2026-08-18" itu FALSE scr leksikografis (string lebih
+    panjang yg diawali string pembanding dianggap "lebih besar"), jadi SEMUA pengeluaran
+    hari itu gagal lolos filter $lte, bukan cuma kasus tepi. Fix: pakai
+    wita_date_range_to_utc (pola sama dgn reports.py/laporan_analitik.py).
+
+    Regresi kalau expense dgn tanggal timestamp UTC penuh TIDAK muncul saat difilter
+    from_date=to_date=tanggal WITA hari itu."""
+    from core import db, now_iso
+    from routes.expenses import list_expenses
+
+    property_id = _property_id_test()
+    owner = {"id": "test", "nama": "Test Regresi", "role": "owner"}
+    tanggal_penuh = now_iso()  # persis pola create_expense: body.tanggal or now_iso()
+    tanggal_wita_hari_ini = (datetime.now(timezone.utc) + timedelta(hours=8)).strftime("%Y-%m-%d")
+
+    await db.expenses.insert_one({
+        "id": str(uuid.uuid4()), "tanggal": tanggal_penuh, "kategori": "Belanja Operasional",
+        "deskripsi": "Test Regresi Laporan Pengeluaran", "nominal": 25000, "foto_url": "",
+        "user": "Test Regresi", "user_id": "test", "created_at": tanggal_penuh,
+        "property_id": property_id,
+    })
+
+    hasil = await list_expenses(from_date=tanggal_wita_hari_ini, to_date=tanggal_wita_hari_ini,
+                                 user=owner, property_id=property_id)
+    ok = len(hasil) == 1 and hasil[0]["tanggal"] == tanggal_penuh
+    status = ("PASS" if ok else
+              f"FAIL - hasil filter from_date=to_date={tanggal_wita_hari_ini!r}: {len(hasil)} item "
+              f"(harusnya 1, expense dgn tanggal={tanggal_penuh!r} harus lolos)")
+    return ("laporan_pengeluaran_tanggal_penuh_timestamp", status)
+
+
 async def main():
     unit_tests = [
         test_tanggal_wita_dini_hari_geser_ke_hari_berikutnya,
@@ -526,6 +564,7 @@ async def main():
         skenario_checkout_payment_protection,
         skenario_checkin_dari_booking_day_use_bisa_ditumpuk_menginap,
         skenario_estimasi_siap_pada_tanggal_dayuse_pagi,
+        skenario_laporan_pengeluaran_tanggal_penuh_timestamp,
     ]
 
     print("--- Unit test (murni, tanpa DB) ---")
