@@ -267,11 +267,30 @@ async def _coba_auto_approve_day_use(doc: Dict[str, Any]) -> None:
             }})
             await log_availability_change(room["id"], room["tipe"], 0, "booking_auto_approve_ai", doc["property_id"], booking_id=booking["id"])
 
+            # Klarifikasi nominal DP (2026-08-18, bug nyata ditemukan Agus - tamu "Isyaa
+            # Melyana": pesan ini SEBELUMNYA cuma tampilkan "Total" [harga penuh booking],
+            # TIDAK PERNAH bilang berapa yang harus dibayar SEKARANG kalau metodenya DP
+            # 50% - tamu buka QRIS-nya, lihat nominal jauh lebih kecil dari "Total" [DP +
+            # biaya gateway Tripay, mis. Rp52.611 dari Total Rp103.000], bingung & curiga
+            # nominalnya salah, protes ke AI - guard hallucination lain (lihat
+            # _klaim_sukses_tanpa_bukti di ai-chat-bot) lalu SALAH menganggap balasan AI yg
+            # menjelaskan ulang sebagai klaim palsu, booking akhirnya expired/cancelled
+            # gara-gara tamu keburu tidak percaya & tidak jadi bayar. `trx["amount"]` =
+            # dp_min BERSIH (diverifikasi langsung ke tripay.py: `amount = dp_min_group`
+            # utk payment_option="dp50", TANPA biaya gateway - biaya customer Tripay
+            # ditambahkan Tripay sendiri belakangan di halaman checkout-nya, tidak
+            # tercermin di field ini) - beda dari `booking["total"]` (harga penuh booking).
+            _dp_note = (
+                f"\nBayar sekarang (DP 50%): Rp{int(trx.get('amount') or 0):,}".replace(",", ".") +
+                f"\nSisa Rp{int(booking['total']) - int(trx.get('amount') or 0):,}".replace(",", ".") +
+                " dibayar saat check-in."
+                if doc["payment_option_diminta"] == "dp50" else ""
+            )
             pesan = (
                 f"Halo {doc['nama_tamu']}, booking Day Use Anda *otomatis dikonfirmasi* berdasarkan "
                 f"ketersediaan kamar saat ini!\n\n"
                 f"Kamar: {room['nomor']} ({room['tipe']})\n"
-                f"Total: Rp{int(booking['total']):,}".replace(",", ".") + "\n"
+                f"Total: Rp{int(booking['total']):,}".replace(",", ".") + _dp_note + "\n"
                 f"Silakan selesaikan pembayaran melalui link berikut:\n{trx.get('checkout_url')}"
             )
             # Kirim SAAT ITU JUGA (same-turn dgn pesan tamu), selalu dalam jendela 24 jam -
