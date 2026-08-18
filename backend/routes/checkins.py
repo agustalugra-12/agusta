@@ -187,9 +187,15 @@ async def list_checkins(
     if status:
         q["status"] = status
     if from_date or to_date:
+        # Bug nyata (2026-08-18, sama akar masalah dgn Laporan Pengeluaran - lihat
+        # catatan lengkap di routes/expenses.py) - checkins.jam_checkin SELALU
+        # timestamp UTC penuh, perbandingan string mentah thd from_date/to_date
+        # "YYYY-MM-DD" leksikografis SELALU gagal utk hari yg dimaksud. Pakai
+        # wita_date_range_to_utc (pola sama reports.py/laporan_analitik.py).
+        start_utc, end_utc = wita_date_range_to_utc(from_date or "1970-01-01", to_date or "2999-12-31")
         rng: Dict[str, Any] = {}
-        if from_date: rng["$gte"] = from_date
-        if to_date: rng["$lte"] = to_date
+        if from_date: rng["$gte"] = start_utc
+        if to_date: rng["$lte"] = end_utc
         q["jam_checkin"] = rng
     items = await db.checkins.find(scoped(q, property_id), {"_id": 0}).sort("jam_checkin", -1).to_list(1000)
     return items

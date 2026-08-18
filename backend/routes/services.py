@@ -37,9 +37,17 @@ async def list_services(from_date: Optional[str] = None, to_date: Optional[str] 
                         property_id: str = Depends(get_active_property)):
     q: Dict[str, Any] = {}
     if from_date or to_date:
+        # Bug nyata (2026-08-18, sama akar masalah dgn Laporan Pengeluaran - lihat
+        # catatan lengkap di routes/expenses.py) - services.tanggal SELALU timestamp
+        # UTC penuh. Fix SEBELUMNYA di sini (`to_date + "T23:59:59"`) cuma tambal
+        # SEBAGIAN (to_date doang, tanpa offset WITA eksplisit - naive concat beruntung
+        # sering "cukup" krn selisih WITA/UTC 8 jam, TAPI from_date masih raw string
+        # mentah, tetap salah). Pakai wita_date_range_to_utc penuh (pola sama
+        # reports.py/laporan_analitik.py) - benar utk KEDUA batas, bukan tambal 1 sisi.
+        start_utc, end_utc = wita_date_range_to_utc(from_date or "1970-01-01", to_date or "2999-12-31")
         rng: Dict[str, Any] = {}
-        if from_date: rng["$gte"] = from_date
-        if to_date: rng["$lte"] = to_date + "T23:59:59"
+        if from_date: rng["$gte"] = start_utc
+        if to_date: rng["$lte"] = end_utc
         q["tanggal"] = rng
     items = await db.services.find(scoped(q, property_id), {"_id": 0}).sort("tanggal", -1).to_list(2000)
     return items

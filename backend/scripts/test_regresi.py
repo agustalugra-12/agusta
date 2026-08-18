@@ -544,6 +544,113 @@ async def skenario_laporan_pengeluaran_tanggal_penuh_timestamp() -> tuple:
     return ("laporan_pengeluaran_tanggal_penuh_timestamp", status)
 
 
+async def skenario_rekening_transaksi_tanggal_penuh_timestamp() -> tuple:
+    """Bug nyata 2026-08-18 - SAMA AKAR MASALAH dgn Laporan Pengeluaran, ditemukan lewat
+    audit lanjutan atas permintaan Agus ("cek juga laporan lainnya"). rekening_transaksi.
+    tanggal SELALU timestamp UTC penuh (auto_posting), list_transaksi dulu bandingkan
+    string mentah - 13 transaksi nyata tanggal 18 Agustus terkonfirmasi 0 lolos filter
+    SEBELUM fix, 13 lolos SESUDAH fix (diverifikasi manual sblm nulis skenario ini)."""
+    from core import db, now_iso
+    from routes.rekening import list_transaksi
+
+    property_id = _property_id_test()
+    owner = {"id": "test", "nama": "Test Regresi", "role": "owner"}
+    tanggal_penuh = now_iso()
+    tanggal_wita_hari_ini = (datetime.now(timezone.utc) + timedelta(hours=8)).strftime("%Y-%m-%d")
+
+    await db.rekening_transaksi.insert_one({
+        "id": str(uuid.uuid4()), "rekening_id": str(uuid.uuid4()), "jenis": "pemasukan",
+        "kategori": "Test Regresi", "deskripsi": "Test Regresi Rekening", "nominal": 50000,
+        "tanggal": tanggal_penuh, "created_at": tanggal_penuh, "property_id": property_id,
+    })
+
+    hasil = await list_transaksi(rekening_id=None, jenis=None, from_date=tanggal_wita_hari_ini,
+                                  to_date=tanggal_wita_hari_ini, user=owner, property_id=property_id)
+    ok = len(hasil) == 1 and hasil[0]["tanggal"] == tanggal_penuh
+    status = "PASS" if ok else f"FAIL - hasil filter: {len(hasil)} item (harusnya 1)"
+    return ("rekening_transaksi_tanggal_penuh_timestamp", status)
+
+
+async def skenario_checkins_list_jam_checkin_penuh_timestamp() -> tuple:
+    """Bug nyata 2026-08-18 - SAMA AKAR MASALAH dgn Laporan Pengeluaran. checkins.
+    jam_checkin SELALU timestamp UTC penuh, list_checkins dulu bandingkan string mentah -
+    9 checkin nyata tanggal 18 Agustus terkonfirmasi 0 lolos filter SEBELUM fix, 9 lolos
+    SESUDAH fix (diverifikasi manual sblm nulis skenario ini)."""
+    from core import db, now_iso
+    from routes.checkins import list_checkins
+
+    property_id = _property_id_test()
+    owner = {"id": "test", "nama": "Test Regresi", "role": "owner"}
+    tanggal_penuh = now_iso()
+    tanggal_wita_hari_ini = (datetime.now(timezone.utc) + timedelta(hours=8)).strftime("%Y-%m-%d")
+
+    await db.checkins.insert_one({
+        "id": str(uuid.uuid4()), "nama_tamu": "Test Regresi Checkins", "no_hp": _wa_unik(),
+        "tipe": "day_use", "status": "aktif", "jam_checkin": tanggal_penuh,
+        "jam_checkout": None, "pembayaran": [], "created_at": tanggal_penuh,
+        "property_id": property_id,
+    })
+
+    hasil = await list_checkins(status=None, from_date=tanggal_wita_hari_ini,
+                                 to_date=tanggal_wita_hari_ini, user=owner, property_id=property_id)
+    ok = len(hasil) == 1 and hasil[0]["jam_checkin"] == tanggal_penuh
+    status = "PASS" if ok else f"FAIL - hasil filter: {len(hasil)} item (harusnya 1)"
+    return ("checkins_list_jam_checkin_penuh_timestamp", status)
+
+
+async def skenario_kasir_list_timestamp_penuh_timestamp() -> tuple:
+    """Bug nyata 2026-08-18 - SAMA AKAR MASALAH dgn Laporan Pengeluaran. kasir.timestamp
+    SELALU timestamp UTC penuh, list_kasir dulu bandingkan string mentah - 2 transaksi
+    kasir nyata tanggal 17 Agustus terkonfirmasi 0 lolos filter SEBELUM fix, 2 lolos
+    SESUDAH fix (diverifikasi manual sblm nulis skenario ini)."""
+    from core import db, now_iso
+    from routes.kasir import list_kasir
+
+    property_id = _property_id_test()
+    owner = {"id": "test", "nama": "Test Regresi", "role": "owner"}
+    tanggal_penuh = now_iso()
+    tanggal_wita_hari_ini = (datetime.now(timezone.utc) + timedelta(hours=8)).strftime("%Y-%m-%d")
+
+    await db.kasir.insert_one({
+        "id": str(uuid.uuid4()), "trx_no": f"TEST-{uuid.uuid4().hex[:6].upper()}",
+        "items": [], "total": 20000, "metode_bayar": "tunai",
+        "timestamp": tanggal_penuh, "created_at": tanggal_penuh, "property_id": property_id,
+    })
+
+    hasil = await list_kasir(from_date=tanggal_wita_hari_ini, to_date=tanggal_wita_hari_ini,
+                              user=owner, property_id=property_id)
+    ok = len(hasil) == 1 and hasil[0]["timestamp"] == tanggal_penuh
+    status = "PASS" if ok else f"FAIL - hasil filter: {len(hasil)} item (harusnya 1)"
+    return ("kasir_list_timestamp_penuh_timestamp", status)
+
+
+async def skenario_services_list_tanggal_penuh_timestamp() -> tuple:
+    """Bug nyata 2026-08-18 - SAMA AKAR MASALAH dgn Laporan Pengeluaran. services.tanggal
+    SELALU timestamp UTC penuh. Fix SEBELUMNYA di endpoint ini (`to_date + "T23:59:59"`)
+    cuma tambal to_date tanpa offset WITA eksplisit, from_date tetap raw - 2 layanan nyata
+    tanggal 15 Juli terkonfirmasi 0 lolos filter SEBELUM fix penuh ini, 2 lolos SESUDAH
+    (diverifikasi manual sblm nulis skenario ini)."""
+    from core import db, now_iso
+    from routes.services import list_services
+
+    property_id = _property_id_test()
+    owner = {"id": "test", "nama": "Test Regresi", "role": "owner"}
+    tanggal_penuh = now_iso()
+    tanggal_wita_hari_ini = (datetime.now(timezone.utc) + timedelta(hours=8)).strftime("%Y-%m-%d")
+
+    await db.services.insert_one({
+        "id": str(uuid.uuid4()), "kode": f"TEST-{uuid.uuid4().hex[:6].upper()}",
+        "kategori": "Laundry", "deskripsi": "Test Regresi Services", "nominal": 15000,
+        "tanggal": tanggal_penuh, "created_at": tanggal_penuh, "property_id": property_id,
+    })
+
+    hasil = await list_services(from_date=tanggal_wita_hari_ini, to_date=tanggal_wita_hari_ini,
+                                 user=owner, property_id=property_id)
+    ok = len(hasil) == 1 and hasil[0]["tanggal"] == tanggal_penuh
+    status = "PASS" if ok else f"FAIL - hasil filter: {len(hasil)} item (harusnya 1)"
+    return ("services_list_tanggal_penuh_timestamp", status)
+
+
 async def main():
     unit_tests = [
         test_tanggal_wita_dini_hari_geser_ke_hari_berikutnya,
@@ -565,6 +672,10 @@ async def main():
         skenario_checkin_dari_booking_day_use_bisa_ditumpuk_menginap,
         skenario_estimasi_siap_pada_tanggal_dayuse_pagi,
         skenario_laporan_pengeluaran_tanggal_penuh_timestamp,
+        skenario_rekening_transaksi_tanggal_penuh_timestamp,
+        skenario_checkins_list_jam_checkin_penuh_timestamp,
+        skenario_kasir_list_timestamp_penuh_timestamp,
+        skenario_services_list_tanggal_penuh_timestamp,
     ]
 
     print("--- Unit test (murni, tanpa DB) ---")
@@ -589,7 +700,12 @@ async def main():
     # maupun gagal.
     from core import db
     prop_pattern = {"$regex": f"^{TEST_PROPERTY_PREFIX}"}
-    for coll in ["rooms", "bookings", "checkins", "guests", "issues", "housekeeping_log", "incidents"]:
+    # expenses/rekening_transaksi/kasir/services ditambahkan 2026-08-18 (celah nyata
+    # ditemukan - skenario tanggal-penuh-timestamp baru insert ke 4 koleksi ini tapi
+    # cleanup lama tidak menghapusnya sama sekali, data test bocor permanen ke DB
+    # produksi di bawah property_id palsu).
+    for coll in ["rooms", "bookings", "checkins", "guests", "issues", "housekeeping_log", "incidents",
+                 "expenses", "rekening_transaksi", "kasir", "services"]:
         r = await db.get_collection(coll).delete_many({"property_id": prop_pattern})
         if r.deleted_count:
             print(f"cleanup: {r.deleted_count} dokumen {coll} test dihapus")
