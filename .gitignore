@@ -82,6 +82,9 @@ agenthub/agents/youtube/db
 # Build caches
 .cache/
 
+# graphify (2026-08-19) - graph.json/graph.html regenerated lokal, tidak perlu di-commit
+graphify-out/
+
 memory/test_credentials.md
 
 # Mobile development

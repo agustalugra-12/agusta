@@ -1,0 +1,15 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "plugin": [
+    ".opencode/plugins/graphify.js",
+    "superpowers@git+https://github.com/obra/superpowers.git",
+    "@dietrichgebert/ponytail"
+  ],
+  "mcp": {
+    "graphify": {
+      "type": "local",
+      "command": ["/root/.local/bin/graphify-mcp", "/root/agusta/graphify-out/graph.json"],
+      "enabled": true
+    }
+  }
+}
