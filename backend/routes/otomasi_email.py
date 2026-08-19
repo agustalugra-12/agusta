@@ -970,11 +970,29 @@ async def proses_modifikasi_otomatis(log_id: str, data: dict, sumber: str, subje
                           f'pembatalan, nama tamu diperbarui otomatis.',
             }})
             return
-        # Check-in & check-out baru sama persis DAN nama tamu juga sama persis dengan yang
-        # lama -> dianggap pembatalan terselubung (keputusan bisnis user), diproses sama
-        # seperti jenis="pembatalan" (batalkan_reservasi_otomatis sudah menangani seluruh
-        # grup kamar).
-        await batalkan_reservasi_otomatis(log_id, {**data, "jenis": "modifikasi (tanggal tidak berubah)"}, sumber, subjek)
+        # Bug KEDUA nyata ditemukan Agus 2026-08-19 (tamu "Ayu Santika", no. OTA
+        # 444267135972444) - email modifikasi RedDoorz datang dgn tanggal & nama SAMA
+        # PERSIS (lolos guard "DarmaDarma Guest" di atas), tapi ini BUKAN pembatalan
+        # terselubung sama sekali - tamunya genuine checkin hari itu, RedDoorz
+        # sekadar reconfirm reservasi yang sudah benar. Auto-cancel di sini membatalkan
+        # booking aktif tamu yang sungguhan datang, TANPA ada yang tahu sampai staf
+        # kebetulan cek - 2 bug nyata dari heuristik "tanggal+nama sama = batal" yang
+        # SAMA dalam waktu 10 hari (09 & 19 Agustus) membuktikan sinyal ini genuinely
+        # tidak cukup dipercaya utk auto-cancel tanpa mata manusia, walau kelihatan
+        # "jelas" secara data. Fix: jangan pernah auto-cancel dari kasus ini lagi -
+        # alihkan ke tinjauan staf (_modifikasi_menunggu_review, pola sama dgn
+        # skenario ambigu lain di fungsi ini) - staf yang baca isi email asli & putuskan
+        # reschedule/batalkan lewat endpoint /otomasi-email/modifikasi/{id}/... yang
+        # sudah ada. Auto-cancel dari email OTA sekarang HANYA terjadi dari jenis="pembatalan"
+        # eksplisit (batalkan_reservasi_otomatis, sinyal tidak ambigu langsung dari OTA).
+        await _modifikasi_menunggu_review(
+            bookings, log_id, no_reservasi,
+            "Tanggal & nama tamu di email modifikasi ini SAMA PERSIS dengan yang tersimpan - "
+            "bisa jadi pembatalan terselubung (RedDoorz), TAPI bisa juga cuma reconfirm reservasi "
+            "yang sudah benar (kasus nyata Ayu Santika 2026-08-19: bukan pembatalan). Cek isi "
+            "email RedDoorz asli - kalau benar tidak ada perubahan/tamu batal, klik Batalkan; "
+            "kalau tamunya genuine akan datang, klik Reschedule dgn tanggal yang sama (menandai selesai ditinjau).",
+        )
         return
 
     # Check-in atau check-out berbeda -> reschedule otomatis. Dicek dulu SEMUA kamar dalam grup
