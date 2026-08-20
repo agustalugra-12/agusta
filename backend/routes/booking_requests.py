@@ -837,14 +837,22 @@ def _hitung_status_efektif(raw_status: str, bks: list) -> str:
 
 async def _proses_kamar_dan_kirim_link(req: dict, room_ids: list, payment_option: str, method: str,
                                         user: dict, property_id: str, pesan_pembuka: str,
-                                        log_action: str, log_desc: str) -> dict:
+                                        log_action: str, log_desc: str,
+                                        jam_checkin_override: Optional[str] = None) -> dict:
     """Inti pembuatan booking sungguhan + transaksi Tripay + kirim link WA - dipakai
     approve_booking_request (permintaan baru, status waiting_approval) DAN
     resend_payment_link (link lama sudah kadaluarsa, status TETAP waiting_payment) supaya
     tidak ada 2 jalur pembayaran paralel yang beda logika (diekstrak 2026-08-04 dari
     approve_booking_request yang sebelumnya berdiri sendiri). `pesan_pembuka` beda kalimat
     di pesan WA supaya tamu tidak bingung antara "permintaan disetujui" vs "ini link baru
-    menggantikan link lama yang sudah mati"."""
+    menggantikan link lama yang sudah mati".
+
+    `jam_checkin_override` (2026-08-20, bug nyata kasus Vica Ekarina Novitasari - kamar
+    dgn Day Use yang harusnya bisa ditumpuk Menginap tidak pernah kelihatan tersedia utk
+    staf, krn tipe menginap di sini SELALU hardcode checkin 14:00 - beda dari
+    _coba_auto_approve_menginap yang SUDAH benar menghormati jam_checkin custom). Kalau
+    diisi staf (BookingRequestApprove.jam_checkin), dipakai gantikan
+    req.get("jam_checkin")/"14:00" default - pola persis sama dgn _coba_auto_approve_menginap."""
     if len(room_ids) != req.get("jumlah_kamar", 1):
         raise HTTPException(400, f"Pilih tepat {req.get('jumlah_kamar', 1)} kamar sesuai permintaan")
 
@@ -853,7 +861,8 @@ async def _proses_kamar_dan_kirim_link(req: dict, room_ids: list, payment_option
         if not req.get("tanggal_checkout"):
             raise HTTPException(400, "Permintaan ini tidak punya tanggal_checkout — tidak bisa diproses sebagai menginap")
         try:
-            ci = datetime.fromisoformat(f"{req['tanggal_checkin']}T14:00:00+08:00")
+            jam_ci = jam_checkin_override or req.get("jam_checkin") or "14:00"
+            ci = datetime.fromisoformat(f"{req['tanggal_checkin']}T{jam_ci}:00+08:00")
             co = datetime.fromisoformat(f"{req['tanggal_checkout']}T12:00:00+08:00")
         except Exception:
             raise HTTPException(400, "Tanggal check-in/checkout pada permintaan tidak valid")
@@ -1059,7 +1068,7 @@ async def approve_booking_request(rid: str, body: BookingRequestApprove, user: d
         return await _proses_kamar_dan_kirim_link(
             req, room_ids, body.payment_option, body.method, user, property_id,
             pesan_pembuka=pesan_pembuka, log_action="approve_booking_request",
-            log_desc="Setujui permintaan booking",
+            log_desc="Setujui permintaan booking", jam_checkin_override=body.jam_checkin,
         )
 
 
@@ -1104,7 +1113,7 @@ async def resend_payment_link(rid: str, body: BookingRequestApprove, user: dict 
         return await _proses_kamar_dan_kirim_link(
             req, room_ids, body.payment_option, body.method, user, property_id,
             pesan_pembuka=pesan_pembuka, log_action="resend_payment_link",
-            log_desc="Kirim ulang link pembayaran (link lama kadaluarsa)",
+            log_desc="Kirim ulang link pembayaran (link lama kadaluarsa)", jam_checkin_override=body.jam_checkin,
         )
 
 

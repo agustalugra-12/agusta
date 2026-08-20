@@ -1274,6 +1274,12 @@ class BookingRequestApprove(BaseModel):
     room_ids: List[str]  # wajib sejumlah booking_request.jumlah_kamar
     payment_option: str = "dp50"  # dp50 | full
     method: str  # kode channel Tripay (mis. QRIS/BRIVA), dari GET /payments/tripay/channels
+    # (2026-08-20, bug nyata kasus tamu Vica Ekarina Novitasari - kamar dgn Day Use yang
+    # HARUSNYA bisa ditumpuk Menginap tidak pernah muncul di dialog Setujui staf, krn jam
+    # checkin selalu diasumsikan 14:00 tanpa cara staf override) - opsional, "HH:MM" WITA.
+    # Kalau diisi, dipakai SEBAGAI GANTI req.jam_checkin/"14:00" default utk tipe menginap
+    # (pola sama dgn jam_checkin custom yang sudah ada di _coba_auto_approve_menginap).
+    jam_checkin: Optional[str] = None
 
 class BookingRequestReject(BaseModel):
     alasan: Optional[str] = ""

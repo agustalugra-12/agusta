@@ -216,17 +216,28 @@ async def public_availability(tanggal: str, tipe: Optional[str] = None, checkout
     # sudah berupa rentang TANGGAL (bukan cuma pre-filter kasar), jadi hari check-out booking
     # lain TIDAK dihitung menempati (lihat _booking_date_range).
     q_range_start, q_range_end = d_start.date(), d_end.date()
-    # (2026-08-02) Kalau jam_checkin diisi DAN hari ini termasuk dalam rentang - lewatkan HARI
-    # INI dari cek tanggal kasar ini, serahkan sepenuhnya ke filter presisi jam di bawah
-    # (check_room_available). SEBAB: cek tanggal kasar di atas tidak tahu soal jam - booking
-    # Day Use APAPUN jamnya hari ini (mis. jam 09:00-13:00) akan membuat HARI INI dianggap
-    # "menempati" scr keseluruhan (lihat _booking_date_range utk booking checkin/checkout di
-    # hari yang sama), jadi kamar itu ikut ter-exclude di sini WALAU sudah kosong jauh
-    # sebelum jam_checkin yang diminta tamu - filter presisi di bawah jadi percuma karena
-    # kamarnya sudah lebih dulu tersingkir di sini. Malam-malam SETELAH hari ini (night 2
-    # dst utk Menginap) tetap pakai cek tanggal kasar seperti biasa (jam tidak relevan lagi
-    # utk tanggal masa depan).
-    if jam_checkin and is_today:
+    # (2026-08-02, diperbaiki lagi 2026-08-20) Kalau jam_checkin diisi - lewatkan HARI
+    # CHECK-IN yang diminta (d_start, bukan cuma "hari ini" wall-clock) dari cek tanggal
+    # kasar ini, serahkan sepenuhnya ke filter presisi jam di bawah (check_room_available).
+    # SEBAB: cek tanggal kasar di atas tidak tahu soal jam - booking Day Use APAPUN jamnya
+    # di hari check-in (mis. jam 09:00-13:00) akan membuat hari itu dianggap "menempati"
+    # scr keseluruhan (lihat _booking_date_range utk booking checkin/checkout di hari yang
+    # sama), jadi kamar itu ikut ter-exclude di sini WALAU sudah kosong jauh sebelum
+    # jam_checkin yang diminta - filter presisi di bawah jadi percuma karena kamarnya
+    # sudah lebih dulu tersingkir di sini.
+    #
+    # Bug nyata 2026-08-20 (kasus tamu Vica Ekarina Novitasari, tanggal_checkin 3 hari ke
+    # depan): sebelumnya syarat ini digerbang `and is_today`, jadi cuma berlaku kalau
+    # d_start KEBETULAN "hari ini" secara wall-clock. Untuk tanggal MASA DEPAN yang sama
+    # persis butuh presisi jam (mis. kamar 9 punya Day Use jam 11:00-17:00 WITA di tanggal
+    # check-in yang diminta, staf isi jam_checkin 18:00 - harusnya bebas), gerbang is_today
+    # membuatnya tetap ke-coarse-filter keluar SEBELUM sempat dicek presisi - staf tidak
+    # pernah bisa lihat kamar itu sbg opsi APAPUN jam yang diisi. `is_today` di sini tidak
+    # relevan sama sekali - jam_checkin selalu berarti "hari check-in butuh presisi jam",
+    # bukan cuma kalau harinya kebetulan hari ini. Malam-malam SETELAH hari check-in (night
+    # 2 dst utk Menginap) tetap pakai cek tanggal kasar seperti biasa (jam tidak relevan
+    # lagi di sana).
+    if jam_checkin:
         q_range_start = q_range_start + timedelta(days=1)
     out = []
     for r in rooms:

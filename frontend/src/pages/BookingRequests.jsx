@@ -77,6 +77,15 @@ export function SetujuiDialog({ req, onOpenChange, onApproved, mode = "approve" 
   const [hasil, setHasil] = useState(null);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
+  // Jam check-in kustom untuk tipe menginap (2026-08-20, bug nyata kasus tamu Vica Ekarina
+  // Novitasari) - dulu kamar dgn Day Use pagi/siang yang HARUSNYA bisa ditumpuk Menginap
+  // sore/malam hari yang sama tidak pernah kelihatan tersedia di grid kamar di bawah, krn
+  // query /public/availability selalu dipanggil tanpa jam_checkin utk tipe menginap (default
+  // backend jadi konservatif, anggap sepanjang hari terpakai). Staf sekarang bisa isi jam
+  // check-in sungguhan & muat ulang grid kamar dgn jam itu - juga dikirim ke backend supaya
+  // booking yang dibuat pakai jam yang sama (lihat jam_checkin_override di backend).
+  const [jamCheckin, setJamCheckin] = useState("14:00");
+  const [loadingRooms, setLoadingRooms] = useState(false);
   // Cek silang RedDoorz (2026-07-24, temuan evaluasi UX): sebelumnya cuma teks hint pasif
   // yang gampang terlewat saat staf buru-buru - dijadikan checkbox WAJIB (hanya untuk
   // Menginap, RedDoorz tidak pernah dipakai Day Use) supaya benar-benar jadi langkah
@@ -104,8 +113,11 @@ export function SetujuiDialog({ req, onOpenChange, onApproved, mode = "approve" 
     // kadaluarsa -> VA yang 24 jam, lihat catatan resend_payment_link di backend),
     // auto-lock ke metode LAMA yang sudah gagal/kadaluarsa kontraproduktif di sini.
     setMethodManualOverride(mode === "resend" || !req.metode_pembayaran_diminta);
+    const jc = (req.tipe === "menginap" && req.jam_checkin) || "14:00";
+    setJamCheckin(jc);
     const params = { tanggal: req.tanggal_checkin, tipe: req.room_tipe || undefined };
     if (req.tipe === "menginap" && req.tanggal_checkout) params.checkout = req.tanggal_checkout;
+    if (req.tipe === "menginap") params.jam_checkin = jc;
     Promise.all([
       api.get("/public/availability", { params }),
       api.get("/payments/tripay/channels"),
@@ -139,6 +151,26 @@ export function SetujuiDialog({ req, onOpenChange, onApproved, mode = "approve" 
     });
   };
 
+  // Muat ulang grid kamar dgn jam check-in terbaru (2026-08-20, lihat catatan jamCheckin di
+  // atas) - dipanggil manual lewat tombol, bukan auto on-change, supaya staf yg masih
+  // mengetik jam tidak memicu request berkali-kali.
+  const muatUlangKamar = async () => {
+    if (!jamCheckin) return;
+    setLoadingRooms(true);
+    setError("");
+    setSelected([]);
+    try {
+      const params = { tanggal: req.tanggal_checkin, tipe: req.room_tipe || undefined, jam_checkin: jamCheckin };
+      if (req.tanggal_checkout) params.checkout = req.tanggal_checkout;
+      const { data } = await api.get("/public/availability", { params });
+      setRooms(data.rooms || []);
+    } catch (e) {
+      setError(e?.response?.data?.detail || "Gagal memuat ulang ketersediaan kamar");
+    } finally {
+      setLoadingRooms(false);
+    }
+  };
+
   const setujui = async () => {
     if (selected.length !== butuh || !method) return;
     if (req.tipe === "menginap" && propertiButuhReddoorz && !redDoorzChecked) return;
@@ -146,9 +178,9 @@ export function SetujuiDialog({ req, onOpenChange, onApproved, mode = "approve" 
     setError("");
     try {
       const endpoint = mode === "resend" ? "resend-link" : "approve";
-      const { data } = await api.post(`/booking-requests/${req.id}/${endpoint}`, {
-        room_ids: selected, payment_option: opsi, method,
-      });
+      const body = { room_ids: selected, payment_option: opsi, method };
+      if (req.tipe === "menginap" && jamCheckin) body.jam_checkin = jamCheckin;
+      const { data } = await api.post(`/booking-requests/${req.id}/${endpoint}`, body);
       setHasil(data);
       onApproved(); // refresh daftar di belakang layar — dialog tetap terbuka menampilkan link bayar
     } catch (e) {
@@ -188,6 +220,25 @@ export function SetujuiDialog({ req, onOpenChange, onApproved, mode = "approve" 
               )}
               {req.catatan && <div className="italic text-slate-500">"{req.catatan}"</div>}
             </div>
+
+            {!loading && req.tipe === "menginap" && (
+              <div>
+                <Label>Jam Check-in</Label>
+                <div className="flex items-center gap-2 mt-1.5">
+                  <input
+                    type="time" value={jamCheckin} onChange={(e) => setJamCheckin(e.target.value)}
+                    className="h-10 rounded-md border border-slate-300 px-3 bg-white"
+                  />
+                  <Button type="button" variant="outline" size="sm" onClick={muatUlangKamar} disabled={loadingRooms || !jamCheckin}>
+                    {loadingRooms ? "Memuat…" : "Cek Ulang Kamar"}
+                  </Button>
+                </div>
+                <p className="text-xs text-slate-500 mt-1">
+                  Kalau tamu check-in setelah jam tertentu, ubah di sini lalu "Cek Ulang Kamar" — kamar yang dipakai Day Use
+                  sebelum jam itu di hari yang sama bisa ikut muncul tersedia.
+                </p>
+              </div>
+            )}
 
             {loading ? (
               <p className="text-slate-400 text-xs">Memuat ketersediaan kamar…</p>
