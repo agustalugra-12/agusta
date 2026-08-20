@@ -553,9 +553,23 @@ export default function Dashboard() {
     // lolos filter di bawah krn cuma checked_out+day_use yang dikecualikan, jadinya kamar
     // yang sebenarnya bebas dianggap "Booked" biru [warna occupied] gara2 booking yang
     // sebenarnya TIDAK PERNAH terjadi).
+    // Kamar ditumpuk Day Use pagi/siang -> Menginap malam hari yang sama (2026-08-20, bug
+    // nyata kasus tamu Vica Ekarina Novitasari - lihat jam_checkin_override di backend):
+    // 1 kotak grid cuma bisa nampilin SATU booking, dan sort murni jam_mulai selalu
+    // memenangkan Day Use (mulai lebih pagi) drpd Menginap yang check-in belakangan -
+    // Menginap-nya jadi TIDAK PERNAH kelihatan sama sekali di kotak tanggal itu, walau
+    // sudah lunas & terjadwal. Utk kolom BUKAN hari ini (isColToday false, tidak ada
+    // urgensi "apa yang terjadi berikutnya SEKARANG"), Menginap didahulukan drpd Day Use
+    // krn Menginap yang lintas-hari itu "reservasi utama" yang perlu tetap kelihatan staf
+    // (Day Use di kotak yang sama sudah otomatis hilang lagi begitu kolomnya lewat, bukan
+    // sesuatu yang perlu terus dipantau). Kolom HARI INI tetap urutan jam murni (staf
+    // perlu tahu apa yang SUNGGUHAN terjadi berikutnya, bukan yang "lebih penting").
     const upcomingBk = belumAdaTamuAktif ? bookingsForCol
       .filter(b => b.room_id === r.id && b.status !== "cancelled" && !(b.status === "checked_out" && b.tipe === "day_use"))
-      .sort((a, c) => a.jam_mulai.localeCompare(c.jam_mulai))[0] : null;
+      .sort((a, c) => {
+        if (!isColToday && a.tipe !== c.tipe) return a.tipe === "menginap" ? -1 : 1;
+        return a.jam_mulai.localeCompare(c.jam_mulai);
+      })[0] : null;
     // Marun utk booking MENGINAP yang SUDAH di-checkout (2026-08-02, permintaan Agus -
     // kolom tanggal lain di grid sebelumnya nunjukin biru/menginap terus walau tamunya
     // sudah benar2 checkout, karena bookingOccupiesDateOnly cuma cek rentang tanggal,
@@ -574,9 +588,23 @@ export default function Dashboard() {
       : null;
     // Kamar yang MENUMPUK Day Use + Menginap di hari yang sama - cuma relevan utk
     // kolom hari ini (real-time, jam sungguhan), sama seperti sebelumnya.
-    const laterTodayBk = (isColToday && !belumAdaTamuAktif) ? bookingsForCol
-      .filter(b => b.room_id === r.id && new Date(b.jam_mulai) > new Date())
-      .sort((a, c) => a.jam_mulai.localeCompare(c.jam_mulai))[0] : null;
+    // (2026-08-15, kasus Indah Inda - kamar 6 ada Day Use Agung 11:00-17:00 + Menginap
+    // Indah 17:30 di hari yang sama): `laterTodayBk` sebelumnya HANYA dihitung kalau
+    // kamar SEKARANG terisi tamu (!belumAdaTamuAktif) - kalau kamar masih KOSONG dgn
+    // 2+ booking hari ini, kartu cuma tampil `upcomingBk` (yang paling awal), booking
+    // berikutnya (tamu menginap yang nunggu giliran day use selesai) HILANG dari
+    // dashboard. Sekarang kalau kamar kosong, tampilkan juga booking kedua (yang
+    // persis setelah upcomingBk) sbg badge "booking lain hari ini".
+    const laterTodayBk = isColToday ? (() => {
+      const sortedToday = bookingsForCol
+        .filter(b => b.room_id === r.id && b.status !== "cancelled" && !(b.status === "checked_out" && b.tipe === "day_use"))
+        .sort((a, c) => a.jam_mulai.localeCompare(c.jam_mulai));
+      if (belumAdaTamuAktif) {
+        const idx = sortedToday.findIndex(b => b.id === upcomingBk?.id);
+        return idx >= 0 ? sortedToday[idx + 1] || null : null;
+      }
+      return sortedToday.filter(b => new Date(b.jam_mulai) > new Date())[0] || null;
+    })() : null;
     const laterColor = laterTodayBk ? (laterTodayBk.tipe === "menginap" ? "#3B82F6" : DAY_USE_BOOKING_COLOR) : null;
     const laterLabel = laterTodayBk
       ? `${laterTodayBk.tipe === "menginap" ? "Menginap" : "Day Use"} ${new Date(laterTodayBk.jam_mulai).toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit" })}`
