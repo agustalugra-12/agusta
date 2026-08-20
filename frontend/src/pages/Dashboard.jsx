@@ -553,23 +553,9 @@ export default function Dashboard() {
     // lolos filter di bawah krn cuma checked_out+day_use yang dikecualikan, jadinya kamar
     // yang sebenarnya bebas dianggap "Booked" biru [warna occupied] gara2 booking yang
     // sebenarnya TIDAK PERNAH terjadi).
-    // Kamar ditumpuk Day Use pagi/siang -> Menginap malam hari yang sama (2026-08-20, bug
-    // nyata kasus tamu Vica Ekarina Novitasari - lihat jam_checkin_override di backend):
-    // 1 kotak grid cuma bisa nampilin SATU booking, dan sort murni jam_mulai selalu
-    // memenangkan Day Use (mulai lebih pagi) drpd Menginap yang check-in belakangan -
-    // Menginap-nya jadi TIDAK PERNAH kelihatan sama sekali di kotak tanggal itu, walau
-    // sudah lunas & terjadwal. Utk kolom BUKAN hari ini (isColToday false, tidak ada
-    // urgensi "apa yang terjadi berikutnya SEKARANG"), Menginap didahulukan drpd Day Use
-    // krn Menginap yang lintas-hari itu "reservasi utama" yang perlu tetap kelihatan staf
-    // (Day Use di kotak yang sama sudah otomatis hilang lagi begitu kolomnya lewat, bukan
-    // sesuatu yang perlu terus dipantau). Kolom HARI INI tetap urutan jam murni (staf
-    // perlu tahu apa yang SUNGGUHAN terjadi berikutnya, bukan yang "lebih penting").
     const upcomingBk = belumAdaTamuAktif ? bookingsForCol
       .filter(b => b.room_id === r.id && b.status !== "cancelled" && !(b.status === "checked_out" && b.tipe === "day_use"))
-      .sort((a, c) => {
-        if (!isColToday && a.tipe !== c.tipe) return a.tipe === "menginap" ? -1 : 1;
-        return a.jam_mulai.localeCompare(c.jam_mulai);
-      })[0] : null;
+      .sort((a, c) => a.jam_mulai.localeCompare(c.jam_mulai))[0] : null;
     // Marun utk booking MENGINAP yang SUDAH di-checkout (2026-08-02, permintaan Agus -
     // kolom tanggal lain di grid sebelumnya nunjukin biru/menginap terus walau tamunya
     // sudah benar2 checkout, karena bookingOccupiesDateOnly cuma cek rentang tanggal,
@@ -595,17 +581,34 @@ export default function Dashboard() {
     // berikutnya (tamu menginap yang nunggu giliran day use selesai) HILANG dari
     // dashboard. Sekarang kalau kamar kosong, tampilkan juga booking kedua (yang
     // persis setelah upcomingBk) sbg badge "booking lain hari ini".
-    const laterTodayBk = isColToday ? (() => {
-      const sortedToday = bookingsForCol
+    //
+    // Diperluas ke SEMUA kolom, bukan cuma hari ini (2026-08-20, bug nyata kasus tamu
+    // Vica Ekarina Novitasari - kamar 9 Day Use pagi + Menginap Vica malam hari yang
+    // sama di tanggal 23 Agustus, 3 hari ke depan): sebelumnya gerbang `isColToday`
+    // bikin badge biru ini cuma muncul di kolom HARI INI - kalau numpuknya di kolom
+    // MASA DEPAN, booking kedua itu diam-diam hilang total dari dashboard sampai
+    // tanggalnya benar2 jadi "hari ini". `upcomingBk` (kartu utama, warna Day Use)
+    // SENGAJA TETAP seperti biasa (bukan ditukar ke Menginap) - permintaan eksplisit
+    // Agus: Day Use tetap tampil normal, tamu Menginap yang numpuk muncul lewat pop-up
+    // biru ini, bukan menggantikan Day Use di kartu utama. Cabang `!belumAdaTamuAktif`
+    // di bawah (kamar SEDANG terisi tamu aktif) tetap murni relevan utk hari ini saja -
+    // kolom masa depan effStatus selalu "kosong" (lihat definisi effStatus di atas),
+    // jadi otomatis lewat cabang `belumAdaTamuAktif` tanpa perlu gerbang tambahan.
+    const laterTodayBk = (() => {
+      const sortedForCol = bookingsForCol
         .filter(b => b.room_id === r.id && b.status !== "cancelled" && !(b.status === "checked_out" && b.tipe === "day_use"))
         .sort((a, c) => a.jam_mulai.localeCompare(c.jam_mulai));
       if (belumAdaTamuAktif) {
-        const idx = sortedToday.findIndex(b => b.id === upcomingBk?.id);
-        return idx >= 0 ? sortedToday[idx + 1] || null : null;
+        const idx = sortedForCol.findIndex(b => b.id === upcomingBk?.id);
+        return idx >= 0 ? sortedForCol[idx + 1] || null : null;
       }
-      return sortedToday.filter(b => new Date(b.jam_mulai) > new Date())[0] || null;
-    })() : null;
+      return isColToday ? (sortedForCol.filter(b => new Date(b.jam_mulai) > new Date())[0] || null) : null;
+    })();
     const laterColor = laterTodayBk ? (laterTodayBk.tipe === "menginap" ? "#3B82F6" : DAY_USE_BOOKING_COLOR) : null;
+    // Label tanpa "hari ini" (2026-08-20) - badge ini sekarang juga muncul di kolom
+    // masa depan, "hari ini" akan salah/membingungkan di kolom itu. Jam tetap
+    // ditampilkan (cukup jelas tanpa perlu embel2 tanggal - kartu utama sendiri sudah
+    // ada di kolom tanggal yang benar).
     const laterLabel = laterTodayBk
       ? `${laterTodayBk.tipe === "menginap" ? "Menginap" : "Day Use"} ${new Date(laterTodayBk.jam_mulai).toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit" })}`
       : null;
@@ -649,7 +652,7 @@ export default function Dashboard() {
         {laterTodayBk && (
           <div
             data-testid={`room-later-${suffix}`}
-            title={`Ada booking lain hari ini: ${laterLabel} — ${laterTodayBk.nama_tamu}`}
+            title={`Ada booking lain di kamar ini: ${laterLabel} — ${laterTodayBk.nama_tamu}`}
             className="absolute top-7 left-1 right-1 flex items-center justify-center gap-1.5 text-white font-extrabold text-[13px] px-2 py-1.5 rounded-lg shadow-lg z-10 border-2 border-white animate-pulse"
             style={{ background: laterColor }}
           >
@@ -1330,12 +1333,10 @@ export default function Dashboard() {
               <span className="w-3 h-3 rounded-sm" style={{ background: "#3B82F6" }} />
               <span className="text-slate-600">Booked Menginap ({bookingsOnDate.length})</span>
             </div>
-            {isToday && (
-              <div className="flex items-center gap-1.5" title="Titik kecil di pojok kiri-atas kamar menandakan sudah ada booking lain (Day Use/Menginap) yang mengantre di kamar yang sama hari ini">
-                <span className="w-2 h-2 rounded-full bg-slate-400" />
-                <span className="text-slate-600">Titik = ada booking lain menyusul hari ini di kamar sama</span>
-              </div>
-            )}
+            <div className="flex items-center gap-1.5" title="Badge biru/coklat berkedip di kartu kamar menandakan sudah ada booking lain (Day Use/Menginap) yang mengantre di kamar yang sama pada tanggal itu">
+              <span className="w-2 h-2 rounded-full bg-slate-400" />
+              <span className="text-slate-600">Badge berkedip = ada booking lain menyusul di kamar sama</span>
+            </div>
           </div>
           {/* Daftar Kamar - N tanggal horizontal (2026-08-02, revisi permintaan Agus: SEBELUMNYA
               sempat dibuat sbg tabel/grid terpisah yang memanjang ke BAWAH - itu salah paham,
