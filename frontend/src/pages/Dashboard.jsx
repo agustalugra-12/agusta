@@ -455,7 +455,7 @@ export default function Dashboard() {
   // Collect sisa pelunasan dialog state
   const [collectDialog, setCollectDialog] = useState(null); // { booking, sisa, nominal, metode }
 
-  const handleRoomClick = (room, upcomingBk, laterTodayBk, isColToday) => {
+  const handleRoomClick = (room, upcomingBk, laterBookings, isColToday) => {
     // Kasus kamar Menginap check-in & checkout SELESAI di hari yang SAMA (2026-08-04,
     // bug nyata ditemukan Agus - kamar 15: tamu checkout pagi lebih awal dari tanggal
     // checkout resmi, kamar sudah dibersihkan/kosong lagi, TAPI booking checked_out-nya
@@ -484,11 +484,12 @@ export default function Dashboard() {
     if (room.status === "day_use") {
       const ci = active.find((x) => x.room_id === room.id);
       if (ci) {
-        // buka action dialog untuk pilih: checkout atau move room. _laterTodayBk (2026-07-28,
+        // buka action dialog untuk pilih: checkout atau move room. _laterBookings (2026-07-28,
         // permintaan user - kamar yang menumpuk Day Use+Menginap hari yang sama cuma kelihatan
-        // 1 warna di grid) diteruskan ke sini supaya dialog-nya juga tampilkan booking lain yang
-        // sudah mengantre hari ini di kamar yang sama, bukan cuma titik warna di grid.
-        setActionRoom({ ...room, _checkin: ci, _laterTodayBk: laterTodayBk });
+        // 1 warna di grid; diperluas jadi array penuh 2026-08-20 supaya 3+ booking numpuk
+        // tidak ada yang hilang) diteruskan ke sini supaya dialog-nya juga tampilkan SEMUA
+        // booking lain yang sudah mengantre di kamar yang sama, bukan cuma titik warna di grid.
+        setActionRoom({ ...room, _checkin: ci, _laterBookings: laterBookings });
         setStatusForm({ status: room.status, nama_tamu: ci.nama_tamu, catatan: ci.catatan || "" });
       } else { toast.error("Data check-in tidak ditemukan"); }
       return;
@@ -498,7 +499,7 @@ export default function Dashboard() {
       openQuickBook([room]);
       return;
     }
-    setActionRoom({ ...room, _laterTodayBk: laterTodayBk });
+    setActionRoom({ ...room, _laterBookings: laterBookings });
     setStatusForm({ status: room.status, nama_tamu: room.info?.nama_tamu || "", catatan: room.info?.catatan || "" });
     setHkPetugas(user?.nama || "");
   };
@@ -594,16 +595,27 @@ export default function Dashboard() {
     // di bawah (kamar SEDANG terisi tamu aktif) tetap murni relevan utk hari ini saja -
     // kolom masa depan effStatus selalu "kosong" (lihat definisi effStatus di atas),
     // jadi otomatis lewat cabang `belumAdaTamuAktif` tanpa perlu gerbang tambahan.
-    const laterTodayBk = (() => {
+    // Bug lanjutan (2026-08-20, Agus eksplisit minta "jangan sampai kejadian lagi"): versi
+    // sebelumnya cuma nampung SATU booking tambahan (`laterTodayBk` tunggal) - kalau numpuk
+    // 3+ booking di kamar/hari yang sama (mis. 2x Day Use pagi+siang + Menginap malam),
+    // booking KETIGA akan hilang lagi dgn cara yang PERSIS SAMA (silently dropped, badge
+    // cuma tampung 1). `laterBookings` sekarang array SEMUA booking setelah upcomingBk,
+    // bukan cuma yang pertama - badge utama tetap tampilkan yang paling dekat waktunya,
+    // TAPI tooltip & dialog aksi sekarang selalu sebut SEMUANYA (lihat laterLabel/dialog di
+    // bawah), jadi tidak ada lagi booking yang bisa "hilang total tanpa jejak" dari staf
+    // walau visualnya cuma 1 badge yang kelihatan di kartu (keterbatasan ruang kartu kecil).
+    const laterBookings = (() => {
       const sortedForCol = bookingsForCol
         .filter(b => b.room_id === r.id && b.status !== "cancelled" && !(b.status === "checked_out" && b.tipe === "day_use"))
         .sort((a, c) => a.jam_mulai.localeCompare(c.jam_mulai));
       if (belumAdaTamuAktif) {
         const idx = sortedForCol.findIndex(b => b.id === upcomingBk?.id);
-        return idx >= 0 ? sortedForCol[idx + 1] || null : null;
+        return idx >= 0 ? sortedForCol.slice(idx + 1) : [];
       }
-      return isColToday ? (sortedForCol.filter(b => new Date(b.jam_mulai) > new Date())[0] || null) : null;
+      return isColToday ? sortedForCol.filter(b => new Date(b.jam_mulai) > new Date()) : [];
     })();
+    const laterTodayBk = laterBookings[0] || null;
+    const laterExtraCount = Math.max(0, laterBookings.length - 1);
     const laterColor = laterTodayBk ? (laterTodayBk.tipe === "menginap" ? "#3B82F6" : DAY_USE_BOOKING_COLOR) : null;
     // Label tanpa "hari ini" (2026-08-20) - badge ini sekarang juga muncul di kolom
     // masa depan, "hari ini" akan salah/membingungkan di kolom itu. Jam tetap
@@ -611,6 +623,12 @@ export default function Dashboard() {
     // ada di kolom tanggal yang benar).
     const laterLabel = laterTodayBk
       ? `${laterTodayBk.tipe === "menginap" ? "Menginap" : "Day Use"} ${new Date(laterTodayBk.jam_mulai).toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit" })}`
+      : null;
+    // Tooltip sebutkan SEMUA booking tambahan (bukan cuma yang badge-nya tampil) - jaring
+    // pengaman terakhir supaya staf tetap bisa lihat booking ke-3/ke-4 dst walau UI kartu
+    // kecil cuma sanggup nampilin 1 baris badge.
+    const laterTooltip = laterBookings.length > 0
+      ? `Ada booking lain di kamar ini:\n${laterBookings.map(b => `${b.tipe === "menginap" ? "Menginap" : "Day Use"} ${new Date(b.jam_mulai).toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit" })} — ${b.nama_tamu}`).join("\n")}`
       : null;
     const selectable = isColToday && multiSelectMode && effStatus === "kosong" && !upcomingBk;
     const isSelected = selectable && selectedIds.includes(r.id);
@@ -620,9 +638,9 @@ export default function Dashboard() {
     return (
       <div
         data-testid={`room-${suffix}`}
-        onClick={() => handleRoomClick(r, upcomingBk, laterTodayBk, isColToday)}
+        onClick={() => handleRoomClick(r, upcomingBk, laterBookings, isColToday)}
         role="button" tabIndex={0}
-        onKeyDown={(e) => { if (e.key === "Enter") handleRoomClick(r, upcomingBk, laterTodayBk, isColToday); }}
+        onKeyDown={(e) => { if (e.key === "Enter") handleRoomClick(r, upcomingBk, laterBookings, isColToday); }}
         className={`room-card relative rounded-xl text-white p-4 aspect-square flex flex-col justify-between text-left overflow-hidden cursor-pointer ${isSelected ? "ring-4 ring-blue-500 ring-offset-2" : ""} ${selectable && !isSelected ? "ring-2 ring-dashed ring-white/60" : ""}`}
         style={{ background: bg }}
       >
@@ -652,12 +670,17 @@ export default function Dashboard() {
         {laterTodayBk && (
           <div
             data-testid={`room-later-${suffix}`}
-            title={`Ada booking lain di kamar ini: ${laterLabel} — ${laterTodayBk.nama_tamu}`}
+            title={laterTooltip}
             className="absolute top-7 left-1 right-1 flex items-center justify-center gap-1.5 text-white font-extrabold text-[13px] px-2 py-1.5 rounded-lg shadow-lg z-10 border-2 border-white animate-pulse"
             style={{ background: laterColor }}
           >
             <span className="text-base leading-none">{laterTodayBk.tipe === "menginap" ? "🌙" : "☀️"}</span>
             <span className="whitespace-nowrap">{laterLabel}</span>
+            {/* +N (2026-08-20) - jaring pengaman biar 3+ booking numpuk tidak diam2 hilang
+                kayak bug sebelumnya, minimal ADA tanda visual + tooltip sebut semuanya. */}
+            {laterExtraCount > 0 && (
+              <span className="bg-white/30 rounded-full px-1.5 text-[11px]">+{laterExtraCount}</span>
+            )}
           </div>
         )}
         {upcomingBk && (
@@ -1517,16 +1540,21 @@ export default function Dashboard() {
               <span className="w-3 h-3 rounded-sm" style={{ background: statusColor(actionRoom?.status) }} />
               <span className="font-medium">{statusLabel(actionRoom?.status)}</span>
             </div>
-            {actionRoom?._laterTodayBk && (
+            {actionRoom?._laterBookings?.length > 0 && (
               <div className="rounded-lg bg-amber-50 border border-amber-200 p-2.5 flex items-start gap-2">
-                <span className="w-2.5 h-2.5 rounded-full mt-1 shrink-0" style={{ background: actionRoom._laterTodayBk.tipe === "menginap" ? "#3B82F6" : DAY_USE_BOOKING_COLOR }} />
-                <div>
+                <span className="w-2.5 h-2.5 rounded-full mt-1 shrink-0" style={{ background: actionRoom._laterBookings[0].tipe === "menginap" ? "#3B82F6" : DAY_USE_BOOKING_COLOR }} />
+                <div className="space-y-1.5">
                   <p className="font-medium text-amber-900">
-                    Kamar ini juga sudah ada booking {actionRoom._laterTodayBk.tipe === "menginap" ? "Menginap" : "Day Use"} lain hari ini
+                    Kamar ini juga sudah ada {actionRoom._laterBookings.length > 1 ? `${actionRoom._laterBookings.length} booking lain` : "booking lain"} yang mengantre
                   </p>
-                  <p className="text-amber-800">
-                    {actionRoom._laterTodayBk.nama_tamu} — mulai {new Date(actionRoom._laterTodayBk.jam_mulai).toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit" })}
-                  </p>
+                  {/* 2026-08-20 - tampilkan SEMUA (dulu cuma booking pertama), supaya kalau
+                      numpuk 3+ (mis. 2x Day Use + 1 Menginap) tidak ada yang hilang lagi dari
+                      staf, sama persis akar masalah kasus Vica Ekarina Novitasari. */}
+                  {actionRoom._laterBookings.map((b) => (
+                    <p key={b.id} className="text-amber-800">
+                      {b.tipe === "menginap" ? "Menginap" : "Day Use"} — {b.nama_tamu} — mulai {new Date(b.jam_mulai).toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit" })}
+                    </p>
+                  ))}
                 </div>
               </div>
             )}
