@@ -65,7 +65,7 @@ function badgeInfo(it) {
 // komponen yang sama daripada duplikasi UI, lihat resend_payment_link di backend utk kenapa
 // endpointnya beda (link lama sudah mati, ini booking+transaksi baru sepenuhnya).
 export function SetujuiDialog({ req, onOpenChange, onApproved, mode = "approve" }) {
-  const { properties } = useAuth();
+  const { properties, user } = useAuth();
   const [rooms, setRooms] = useState([]);
   const [channels, setChannels] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -77,6 +77,11 @@ export function SetujuiDialog({ req, onOpenChange, onApproved, mode = "approve" 
   const [hasil, setHasil] = useState(null);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
+  // (2026-08-21, Harmoni-only, owner-only) - override tumpuk Day Use + Menginap di kamar
+  // sama. Backend validasi role owner + properti Harmoni; tiap pemakaian tercatat audit log.
+  const [izinkanTumpuk, setIzinkanTumpuk] = useState(false);
+  const isOwner = user?.role === "owner";
+  const isHarmoni = req?.property_id === "53825f44-d3c9-4fbb-b3fc-4bf16e476ea5";
   // Jam check-in kustom untuk tipe menginap (2026-08-20, bug nyata kasus tamu Vica Ekarina
   // Novitasari) - dulu kamar dgn Day Use pagi/siang yang HARUSNYA bisa ditumpuk Menginap
   // sore/malam hari yang sama tidak pernah kelihatan tersedia di grid kamar di bawah, krn
@@ -178,7 +183,7 @@ export function SetujuiDialog({ req, onOpenChange, onApproved, mode = "approve" 
     setError("");
     try {
       const endpoint = mode === "resend" ? "resend-link" : "approve";
-      const body = { room_ids: selected, payment_option: opsi, method };
+      const body = { room_ids: selected, payment_option: opsi, method, izinkan_tumpuk: izinkanTumpuk };
       if (req.tipe === "menginap" && jamCheckin) body.jam_checkin = jamCheckin;
       const { data } = await api.post(`/booking-requests/${req.id}/${endpoint}`, body);
       setHasil(data);
@@ -311,6 +316,18 @@ export function SetujuiDialog({ req, onOpenChange, onApproved, mode = "approve" 
                   className="mt-0.5"
                 />
                 <span>Saya sudah cek silang manual ke PMS RedDoorz — kamar ini tidak bentrok di sana. <span className="text-slate-500">(Sistem ini hanya tahu data PMS Pelangi sendiri, tidak bisa cek RedDoorz otomatis.)</span></span>
+              </label>
+            )}
+            {/* (2026-08-21, Harmoni-only, owner-only) - override tumpuk Day Use + Menginap.
+                Backend menolak kalau bukan owner / bukan Harmoni; tercatat di audit log. */}
+            {isOwner && isHarmoni && (
+              <label className="flex items-start gap-2 p-2.5 rounded-lg border-2 border-orange-300 bg-orange-50 text-xs cursor-pointer">
+                <input
+                  type="checkbox" data-testid="approve-izinkan-tumpuk" checked={izinkanTumpuk}
+                  onChange={(e) => setIzinkanTumpuk(e.target.checked)}
+                  className="mt-0.5"
+                />
+                <span><b>Izinkan tumpuk booking</b> (khusus Harmoni) — bolehkan Day Use &amp; Menginap overlap di kamar yang sama. Centang hanya kalau memang disengaja; setiap pemakaian tercatat di log audit.</span>
               </label>
             )}
             {error && <p className="text-red-600 text-xs">{error}</p>}

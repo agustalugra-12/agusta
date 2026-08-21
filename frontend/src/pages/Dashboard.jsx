@@ -90,6 +90,9 @@ const emptyQuickForm = (tarif, defaultTipe) => ({
   // tetap dibiarkan apa adanya, staf check-in manual nanti pas tamu yang baru benar2 datang
   // (tombol "Check-in Tamu" yang sudah ada di dialog detail booking).
   jam_checkin_menginap: "",
+  // (2026-08-21, Harmoni-only) - owner boleh sengaja tumpuk Day Use + Menginap di kamar
+  // sama. Backend validasi: role owner + properti Harmoni, selain itu ditolak/diabaikan.
+  izinkanTumpuk: false,
 });
 
 export default function Dashboard() {
@@ -229,7 +232,7 @@ export default function Dashboard() {
             room_ids: roomIds, tipe: "day_use", nama_tamu: quickForm.nama_tamu, no_hp: quickForm.no_hp,
             no_identitas: quickForm.no_identitas, kendaraan: quickForm.kendaraan,
             jumlah_tamu: Number(quickForm.jumlah_tamu) || 1, catatan: quickForm.catatan,
-            jam_mulai: jamIso, tarif_override: harga,
+            jam_mulai: jamIso, tarif_override: harga, izinkan_tumpuk: !!quickForm.izinkanTumpuk,
             pembayaran: [{ metode: quickForm.metode_bayar, jumlah: totalPerKamar }],
           });
           const bks = isGroup ? data.bookings : [data];
@@ -288,6 +291,7 @@ export default function Dashboard() {
           no_identitas: quickForm.no_identitas, kendaraan: quickForm.kendaraan,
           jumlah_tamu: Number(quickForm.jumlah_tamu) || 1, catatan: quickForm.catatan,
           jam_mulai: start.toISOString(), jam_selesai: end.toISOString(), tarif_override: harga,
+          izinkan_tumpuk: !!quickForm.izinkanTumpuk,
           pembayaran: [{ metode: quickForm.metode_bayar, jumlah: totalPerKamarMenginap }],
         });
         const bks = isGroup ? data.bookings : [data];
@@ -1503,6 +1507,17 @@ export default function Dashboard() {
                 <option value="edc">EDC/Kartu</option>
               </select>
             </div>
+            {/* (2026-08-21, Harmoni-only, owner-only) - override tumpuk Day Use + Menginap.
+                Backend menolak kalau bukan owner / bukan Harmoni; tiap pemakaian tercatat
+                di audit log "OVERRIDE tumpuk". */}
+            {isOwner && (
+              <div className="col-span-2 flex items-start gap-2 rounded-lg border border-amber-300 bg-amber-50 p-3">
+                <input id="q-izinkan-tumpuk" data-testid="q-izinkan-tumpuk" type="checkbox" checked={!!quickForm.izinkanTumpuk} onChange={(e) => setQuickForm(f => ({ ...f, izinkanTumpuk: e.target.checked }))} className="mt-0.5" />
+                <label htmlFor="q-izinkan-tumpuk" className="text-xs text-amber-800">
+                  <b>Izinkan tumpuk booking</b> (khusus Harmoni) — bolehkan Day Use &amp; Menginap overlap di kamar yang sama. Centang hanya kalau memang disengaja; setiap pemakaian tercatat di log audit.
+                </label>
+              </div>
+            )}
             <div data-testid="q-est-summary" className="col-span-2 rounded-lg bg-blue-50 border border-blue-200 p-3 text-sm space-y-1">
               <div className="flex justify-between"><span className="text-slate-600">Subtotal{quickForm.tipe === "menginap" ? ` (${quickEst.nights} malam)` : ""}{quickBookRooms.length > 1 ? " / kamar" : ""}</span><b>{fmtRp(quickEst.subtotal)}</b></div>
               <div className="flex justify-between"><span className="text-slate-600">Service Fee (3%){quickBookRooms.length > 1 ? " / kamar" : ""}</span><b>{fmtRp(quickEst.service_fee)}</b></div>
