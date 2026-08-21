@@ -1,6 +1,6 @@
 import asyncio
 from core import *
-from reservation_service import check_room_available, room_locks
+from reservation_service import check_room_available, room_locks, HARMONI_PROPERTY_ID
 from email_service import generate_voucher_pdf, send_voucher_email, kirim_voucher_wa, get_property_branding
 from routes.ketersediaan import _occupies_date
 
@@ -33,6 +33,15 @@ async def create_booking(body: BookingCreate, user: dict = Depends(get_current_u
     if body.tarif_override is not None and body.tarif_override <= 0:
         raise HTTPException(400, "Harga custom harus lebih dari 0")
 
+    # Override tumpuk (2026-08-21, Harmoni-only) - HANYA owner, HANYA Harmoni. Selain itu
+    # diabaikan/ditolak supaya staf tidak bisa menumpuk booking tanpa sadar.
+    izinkan_tumpuk = bool(body.izinkan_tumpuk)
+    if izinkan_tumpuk:
+        if user.get("role") != "owner":
+            raise HTTPException(403, "Izinkan tumpuk hanya bisa dipakai Owner")
+        if property_id != HARMONI_PROPERTY_ID:
+            raise HTTPException(400, "Izinkan tumpuk baru aktif untuk properti Harmoni saja")
+
     # Cek semua kamar dulu SEBELUM membuat satupun dokumen — all-or-nothing untuk grup,
     # supaya tidak ada kamar yang setengah jalan ter-booking kalau salah satu ternyata bentrok
     # (beda dari alur email OTA otomatis yang partial-fulfillment-nya wajar karena async/tanpa
@@ -46,7 +55,7 @@ async def create_booking(body: BookingCreate, user: dict = Depends(get_current_u
             r = await db.rooms.find_one(scoped({"id": rid}, property_id))
             if not r:
                 raise HTTPException(404, f"Kamar tidak ditemukan (id {rid})")
-            await check_room_available(rid, start, end, property_id)
+            await check_room_available(rid, start, end, property_id, izinkan_tumpuk=izinkan_tumpuk)
             rooms.append(r)
 
         # Harmoni tidak menyediakan sarapan sama sekali (2026-07-31, permintaan user) - paksa
@@ -115,6 +124,11 @@ async def create_booking(body: BookingCreate, user: dict = Depends(get_current_u
             await db.bookings.insert_one(doc)
             await log_availability_change(r["id"], r["tipe"], -1, "booking_dibuat", property_id, booking_id=doc["id"])
             await upsert_guest(body.nama_tamu, body.no_hp, body.no_identitas, body.kendaraan, property_id, count_kunjungan=False)
+            if izinkan_tumpuk:
+                # Jejak audit WAJIB tiap override - kamar bisa terisi 2 tamu beda dlm
+                # rentang yang sama, owner harus bisa telusuri siapa/bila memutuskan itu.
+                await log_activity(user, "create_booking_override_tumpuk",
+                                   f"OVERRIDE tumpuk: booking {body.tipe} kamar {r['nomor']} untuk {body.nama_tamu} (overlap disengaja, Harmoni-only)", entity=r["nomor"])
             await log_activity(user, "create_booking", f"Booking {body.tipe} kamar {r['nomor']} untuk {body.nama_tamu}", entity=r["nomor"])
             doc.pop("_id", None)
             created.append(doc)

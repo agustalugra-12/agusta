@@ -27,7 +27,7 @@ RedDoorz), penyaringan booking Menginap dari Calendar/Dashboard/Housekeeping/Lap
 email konfirmasi RedDoorz diterima, dan mematikan/redirect tombol Book Now publik.
 """
 from core import *
-from reservation_service import create_reservation
+from reservation_service import create_reservation, HARMONI_PROPERTY_ID
 import asyncio
 from collections import defaultdict
 from contextlib import asynccontextmanager
@@ -838,7 +838,8 @@ def _hitung_status_efektif(raw_status: str, bks: list) -> str:
 async def _proses_kamar_dan_kirim_link(req: dict, room_ids: list, payment_option: str, method: str,
                                         user: dict, property_id: str, pesan_pembuka: str,
                                         log_action: str, log_desc: str,
-                                        jam_checkin_override: Optional[str] = None) -> dict:
+                                        jam_checkin_override: Optional[str] = None,
+                                        izinkan_tumpuk: bool = False) -> dict:
     """Inti pembuatan booking sungguhan + transaksi Tripay + kirim link WA - dipakai
     approve_booking_request (permintaan baru, status waiting_approval) DAN
     resend_payment_link (link lama sudah kadaluarsa, status TETAP waiting_payment) supaya
@@ -906,7 +907,12 @@ async def _proses_kamar_dan_kirim_link(req: dict, room_ids: list, payment_option
                 "catatan": req.get("catatan") or "", "created_by": user["nama"],
                 "tipe": tipe, "dengan_sarapan": dengan_sarapan_req,
             }
-            booking = await create_reservation(data, property_id, source="whatsapp_request", harga_override=harga_override)
+            booking = await create_reservation(data, property_id, source="whatsapp_request", harga_override=harga_override, izinkan_tumpuk=izinkan_tumpuk)
+            if izinkan_tumpuk:
+                # Jejak audit WAJIB tiap override (Harmoni-only, owner-only - divalidasi
+                # pemanggil). Kamar bisa terisi 2 tamu beda dlm rentang yang sama.
+                await log_activity(user, "approve_override_tumpuk",
+                                   f"OVERRIDE tumpuk: {log_desc} {req['kode']} ({req['nama_tamu']}) kamar room_id {room_id} (overlap disengaja, Harmoni-only)")
             sync_status = "waiting_reddoorz_input" if (tipe == "menginap" and await property_butuh_reddoorz(property_id)) else "not_required"
             await db.bookings.update_one({"id": booking["id"]}, {"$set": {"sync_status": sync_status}})
             booking["sync_status"] = sync_status
@@ -1065,10 +1071,17 @@ async def approve_booking_request(rid: str, body: BookingRequestApprove, user: d
             raise HTTPException(400, "payment_option harus 'dp50' atau 'full'")
         room_ids = list(dict.fromkeys(body.room_ids or []))
         pesan_pembuka = f"Halo {req['nama_tamu']}, permintaan booking Anda kami *setujui*!"
+        # Override tumpuk (2026-08-21, Harmoni-only) - HANYA owner; selain itu ditolak.
+        if body.izinkan_tumpuk:
+            if user.get("role") != "owner":
+                raise HTTPException(403, "Izinkan tumpuk hanya bisa dipakai Owner")
+            if property_id != HARMONI_PROPERTY_ID:
+                raise HTTPException(400, "Izinkan tumpuk baru aktif untuk properti Harmoni saja")
         return await _proses_kamar_dan_kirim_link(
             req, room_ids, body.payment_option, body.method, user, property_id,
             pesan_pembuka=pesan_pembuka, log_action="approve_booking_request",
             log_desc="Setujui permintaan booking", jam_checkin_override=body.jam_checkin,
+            izinkan_tumpuk=body.izinkan_tumpuk,
         )
 
 
@@ -1110,10 +1123,17 @@ async def resend_payment_link(rid: str, body: BookingRequestApprove, user: dict 
             f"Halo {req['nama_tamu']}, link pembayaran sebelumnya sudah *kadaluarsa*. "
             f"Berikut link pembayaran *baru* untuk booking Anda:"
         )
+        # Override tumpuk (2026-08-21, Harmoni-only) - HANYA owner; selain itu ditolak.
+        if body.izinkan_tumpuk:
+            if user.get("role") != "owner":
+                raise HTTPException(403, "Izinkan tumpuk hanya bisa dipakai Owner")
+            if property_id != HARMONI_PROPERTY_ID:
+                raise HTTPException(400, "Izinkan tumpuk baru aktif untuk properti Harmoni saja")
         return await _proses_kamar_dan_kirim_link(
             req, room_ids, body.payment_option, body.method, user, property_id,
             pesan_pembuka=pesan_pembuka, log_action="resend_payment_link",
             log_desc="Kirim ulang link pembayaran (link lama kadaluarsa)", jam_checkin_override=body.jam_checkin,
+            izinkan_tumpuk=body.izinkan_tumpuk,
         )
 
 

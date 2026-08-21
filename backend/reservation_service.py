@@ -51,12 +51,28 @@ async def room_locks(*room_ids: str):
             lock.release()
 
 
+# Override tumpuk Day Use <-> Menginap (2026-08-21, permintaan Agus - "coba untuk
+# Harmoni saja dulu") - HANYA properti Harmoni yang boleh tumpang-tindih booking
+# (satu kamar dipakai 2 tamu beda di hari yang sama, mis. Day Use siang lalu Menginap
+# malam, atau sebaliknya) lewat param izinkan_tumpuk yang cuma bisa dipicu OWNER secara
+# sadar. Pelangi Homestay TETAP terlarang (pakai default, overlap selalu ditolak) -
+# beda dari fix 2026-07-28 yg melarang tumpuk di semua properti.
+HARMONI_PROPERTY_ID = "53825f44-d3c9-4fbb-b3fc-4bf16e476ea5"
+
 async def check_room_available(room_id: str, mulai: datetime, selesai: datetime,
-                                property_id: str, exclude_booking_id: Optional[str] = None) -> bool:
+                                property_id: str, exclude_booking_id: Optional[str] = None,
+                                izinkan_tumpuk: bool = False) -> bool:
     """Raise HTTPException(400) jika kamar sudah dibooking pada rentang [mulai, selesai).
     Booking yang dianggap konflik: status aktif/booking_pending/booking_paid/checked_in.
     exclude_booking_id dipakai saat reschedule (update_booking) agar booking itu
     sendiri tidak dianggap konflik dengan dirinya sendiri.
+
+    izinkan_tumpuk (HANYA berlaku utk Harmoni) - lewati PENGECEKAN overlap sama sekali
+    supaya owner bisa sengaja menumpuk booking (Day Use + Menginap di kamar sama). Tetap
+    aman: (1) cuma efektif kalau property_id == HARMONI_PROPERTY_ID, (2) pemanggil wajib
+    sudah verifikasi user = owner & mencatat audit log di tingkat endpoint (lihat
+    create_booking / _proses_kamar_dan_kirim_link). Maintenance tetap diblokir (lihat
+    create_reservation).
 
     property_id (2026-07-24, multi-properti) WAJIB - room_id sendiri sudah unik global
     (uuid) jadi secara teknis query tanpa property_id tetap benar, tapi disertakan
@@ -83,6 +99,12 @@ async def check_room_available(room_id: str, mulai: datetime, selesai: datetime,
     }, property_id)
     if exclude_booking_id:
         query["id"] = {"$ne": exclude_booking_id}
+    # Override tumpuk: Harmoni + param True -> jangan cek overlap booking sama sekali
+    # (owner sadar menumpuk). Walk-in checkin di bawah juga dilewati (ponytail: kalau
+    # kelak butuh bedakan, pecah jadi 2 pengecekan). Pelangi/punya property_id lain:
+    # izinkan_tumpuk diabaikan, perilaku lama tetap berlaku.
+    if izinkan_tumpuk and property_id == HARMONI_PROPERTY_ID:
+        return True
     overlap = await db.bookings.find_one(query)
     if overlap:
         raise HTTPException(400, f"Kamar sudah dibooking pada rentang ini ({overlap.get('kode')})")
@@ -145,7 +167,8 @@ async def check_room_available(room_id: str, mulai: datetime, selesai: datetime,
 
 async def create_reservation(data: Dict[str, Any], property_id: str, source: str = "public",
                               harga_override: Optional[Dict[str, Any]] = None,
-                              diskon_ai_persen: int = 0) -> Dict[str, Any]:
+                              diskon_ai_persen: int = 0,
+                              izinkan_tumpuk: bool = False) -> Dict[str, Any]:
     """Buat reservasi/booking baru. Dipakai oleh public_create_booking (source="online");
     disiapkan agar sumber lain (mis. OTA) bisa memakai alur yang sama lewat harga_override.
 
@@ -257,7 +280,7 @@ async def create_reservation(data: Dict[str, Any], property_id: str, source: str
     # 2 request nyaris bersamaan tidak bisa sama-sama lolos cek lalu sama-sama menulis
     # (race condition anti-double-booking, lihat catatan di kepala file).
     async with room_locks(data["room_id"]):
-        await check_room_available(data["room_id"], mulai, selesai, property_id)
+        await check_room_available(data["room_id"], mulai, selesai, property_id, izinkan_tumpuk=izinkan_tumpuk)
         await db.bookings.insert_one(doc)
     await log_availability_change(r["id"], r["tipe"], -1, "booking_dibuat", property_id, booking_id=doc["id"])
     await upsert_guest(data["nama_tamu"], data["no_hp"], data["no_identitas"], data["kendaraan"],

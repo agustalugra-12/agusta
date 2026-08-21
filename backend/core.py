@@ -1036,6 +1036,10 @@ class BookingCreate(BaseModel):
     # Quick Book (Dashboard.jsx), bukan di sini, supaya endpoint generik ini tidak
     # menghalangi pemakaian lain yang sah tanpa pembayaran langsung.
     pembayaran: List[Dict[str, Any]] = []
+    # (2026-08-21, Harmoni-only) - owner boleh sengaja menumpuk booking (Day Use + Menginap
+    # di kamar sama). Diabaikan utk properti selain Harmoni & wajib role owner (dicek di
+    # routes/bookings.py). Default False = perilaku lama (overlap selalu ditolak).
+    izinkan_tumpuk: bool = False
 
 class BookingUpdate(BaseModel):
     nama_tamu: Optional[str] = None
@@ -1280,6 +1284,10 @@ class BookingRequestApprove(BaseModel):
     # Kalau diisi, dipakai SEBAGAI GANTI req.jam_checkin/"14:00" default utk tipe menginap
     # (pola sama dgn jam_checkin custom yang sudah ada di _coba_auto_approve_menginap).
     jam_checkin: Optional[str] = None
+    # (2026-08-21, Harmoni-only) - owner boleh sengaja menumpuk booking (Day Use + Menginap
+    # di kamar sama). Diabaikan utk properti selain Harmoni & wajib role owner (dicek di
+    # routes/booking_requests.py). Default False = perilaku lama.
+    izinkan_tumpuk: bool = False
 
 class BookingRequestReject(BaseModel):
     alasan: Optional[str] = ""
