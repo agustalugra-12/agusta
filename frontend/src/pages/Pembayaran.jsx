@@ -51,8 +51,21 @@ function BuatTagihanDialog({ open, onOpenChange, onCreated }) {
       api.get("/payments/tripay/channels"),
     ])
       .then(([bRes, cRes]) => {
-        setBookings(bRes.data);
-        setBookingId(bRes.data[0]?.id || "");
+        // Filter booking "cancelled" (2026-08-21, bug nyata dilaporkan Agus - kasus tamu
+        // Rabih Ananda) - /payments/bookings-status?status_bayar=belum_bayar tidak
+        // membedakan status booking sama sekali, cuma lihat payment_status (lihat
+        // status_bayar_booking di core.py) - booking yang SUDAH dibatalkan (mis. link
+        // Tripay kedaluwarsa lalu ditandai manual "deny") tetap dianggap "belum_bayar"
+        // krn payment_status-nya "failed"/"expired", jadi tetap muncul di dropdown ini.
+        // Padahal POST /payments/tripay/create-transaction SELALU menolak booking yang
+        // sudah cancelled ("Booking tidak dapat dibayar") - staf pilih booking itu di
+        // dropdown, tekan "Buat Tagihan", selalu gagal, tanpa petunjuk kenapa. Endpoint
+        // backend TIDAK diubah (dipakai juga oleh laporan Status Bayar umum, di situ
+        // "cancelled tapi pernah tercatat belum bayar" tetap info yang valid ditampilkan)
+        // - filter cuma di sini, titik spesifik "pilih booking utk DIBUATKAN tagihan baru".
+        const bookableOnly = bRes.data.filter((b) => b.status !== "cancelled");
+        setBookings(bookableOnly);
+        setBookingId(bookableOnly[0]?.id || "");
         setChannels(cRes.data);
         setMethod(cRes.data[0]?.code || "");
       })
