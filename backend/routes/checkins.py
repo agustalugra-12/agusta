@@ -162,14 +162,25 @@ async def create_checkin(body: CheckinCreate, user: dict = Depends(get_current_u
             await db.checkins.insert_one(doc)
             await db.rooms.update_one({"id": r["id"]}, {"$set": {"status": "day_use", "info": {"checkin_id": doc["id"], "nama_tamu": body.nama_tamu}}})
             await log_activity(user, "checkin", f"Check-in {body.nama_tamu} ke kamar {r['nomor']}", entity=r["nomor"])
-            # Audit log for CHECK_IN (2026-08-23, permintaan Agus - audit trail lengkap)
+            # Audit log for CHECK_IN (2026-08-23, permintaan Agus - audit trail lengkap).
+            # BUG NYATA ditemukan 2026-08-25 (laporan Agus - "tamu day use... tidak bisa
+            # padahal room kosong"): baris ini refer ke `body.tipe`, field yang TIDAK PERNAH
+            # ada di CheckinCreate (lihat core.py) & TIDAK PERNAH dikirim frontend
+            # (Dashboard.jsx submitQuickBook) - AttributeError SETIAP KALI endpoint ini
+            # dipanggil, sejak commit ini (dikonfirmasi lewat journalctl: 500 Internal Server
+            # Error berulang di /api/checkins, terakhir hari ini 15:45). Endpoint INI
+            # (POST /api/checkins) cuma dipakai utk Day Use walk-in - satu-satunya caller di
+            # frontend (Dashboard.jsx quick book Day Use "hari ini"); walk-in/booking Menginap
+            # lewat jalur BEDA (routes/bookings.py checkin_from_booking) yang tidak tersentuh
+            # bug ini. Hardcode "(Day Use)" sesuai kenyataan endpoint ini, bukan tebak ulang
+            # `tipe` yang memang tidak ada sumbernya di sini.
             await db.audit_log.insert_one({
                 "id": str(uuid.uuid4()),
                 "user_id": user.get("id"),
                 "username": user.get("username"),
                 "action": "CHECK_IN",
                 "entity": r["nomor"],
-                "detail": f"Check-in {body.nama_tamu} ke kamar {r['nomor']} (Day Use)" if body.tipe == "day_use" else f"Check-in {body.nama_tamu} ke kamar {r['nomor']} (Menginap)",
+                "detail": f"Check-in {body.nama_tamu} ke kamar {r['nomor']} (Day Use)",
                 "timestamp": now_iso(),
             })
             doc.pop("_id", None)
