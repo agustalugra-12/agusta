@@ -515,6 +515,42 @@ async def skenario_analitik_saluran_cancelled_dan_walkin_tidak_dobel() -> tuple:
     return ("analitik_saluran_cancelled_dan_walkin_tidak_dobel", status)
 
 
+async def skenario_telegram_laporan_harian_cancelled_tidak_dihitung() -> tuple:
+    """Bug KEENAM ditemukan sambil audit lanjutan (2026-08-25) - _pendapatan_kamar_per_tipe_
+    hari_ini (telegram_bot.py, sumber Laporan Harian Telegram ke owner jam 23:00 WITA) SAMA
+    SEKALI tidak cek `status` di 2 query booking-nya (day_use belum checkin + menginap) -
+    booking cancelled yang lupa reset payment_status ikut kehitung sbg pendapatan hari ini
+    di laporan yang dikirim LANGSUNG ke Agus tiap malam."""
+    from core import db, now_iso
+    from routes.telegram_bot import _pendapatan_kamar_per_tipe_hari_ini
+
+    property_id = _property_id_test()
+    room_id = await _bikin_kamar_test(db, property_id, "T8")
+    today_iso = now_iso()
+
+    await db.bookings.insert_one({
+        "id": str(uuid.uuid4()), "kode": f"TEST-TG-{uuid.uuid4().hex[:6].upper()}", "property_id": property_id, "room_id": room_id, "room_nomor": "T8",
+        "room_tipe": "Standard", "tipe": "menginap", "nama_tamu": "Test Regresi Telegram Aktif",
+        "no_hp": _wa_unik(), "jam_mulai": today_iso, "jam_selesai": today_iso,
+        "status": "aktif", "source": "online", "payment_status": "paid",
+        "subtotal": 150000, "service_fee": 4500, "total": 154500, "amount_due": 154500,
+        "paid_at": today_iso, "created_at": today_iso,
+    })
+    await db.bookings.insert_one({
+        "id": str(uuid.uuid4()), "kode": f"TEST-TC-{uuid.uuid4().hex[:6].upper()}", "property_id": property_id, "room_id": room_id, "room_nomor": "T8",
+        "room_tipe": "Standard", "tipe": "menginap", "nama_tamu": "Test Regresi Telegram Cancelled",
+        "no_hp": _wa_unik(), "jam_mulai": today_iso, "jam_selesai": today_iso,
+        "status": "cancelled", "source": "ota", "payment_status": "paid",
+        "subtotal": 300000, "service_fee": 9000, "total": 309000, "amount_due": 309000,
+        "paid_at": today_iso, "created_at": today_iso, "cancelled_at": today_iso,
+    })
+
+    hasil = await _pendapatan_kamar_per_tipe_hari_ini(property_id)
+    ok = hasil["menginap_total"] == 154500 and hasil["menginap_kamar"] == 1
+    status = "PASS" if ok else f"FAIL - hasil={hasil}, expected menginap_total=154500 menginap_kamar=1"
+    return ("telegram_laporan_harian_cancelled_tidak_dihitung", status)
+
+
 async def skenario_checkout_sync_amount_due() -> tuple:
     """Bug asli (2026-08-09, tamu Harmoni 'I Kadek Adi'): sisa pembayaran cash yang
     dikumpulkan SAAT CHECKOUT tidak pernah disinkronkan balik ke bookings.amount_due -
@@ -912,6 +948,7 @@ async def main():
         skenario_arus_kas_walkin_menginap_tidak_hilang,
         skenario_kas_metode_bayar_walkin_menginap_tidak_hilang,
         skenario_analitik_saluran_cancelled_dan_walkin_tidak_dobel,
+        skenario_telegram_laporan_harian_cancelled_tidak_dihitung,
         skenario_checkout_sync_amount_due,
         skenario_checkout_payment_protection,
         skenario_checkin_dari_booking_day_use_bisa_ditumpuk_menginap,

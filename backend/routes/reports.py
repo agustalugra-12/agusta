@@ -22,8 +22,12 @@ async def booking_widgets(user: dict = Depends(get_current_user), property_id: s
     pending_count = await db.bookings.count_documents(scoped({"status": "booking_pending"}, property_id))
     paid_count = await db.bookings.count_documents(scoped({"status": "booking_paid"}, property_id))
     # Pendapatan online = sum total dari booking_paid bulan ini
+    # "status" != cancelled ditambahkan (2026-08-25, sama fix dgn laporan_analitik.py/
+    # _hitung_pendapatan_harian hari ini) - 7 booking cancelled yang lupa reset
+    # payment_status sebelumnya ikut kehitung sbg pendapatan online asli.
     online_paid = await db.bookings.find(scoped({
         "source": {"$in": ONLINE_BOOKING_SOURCES}, "payment_status": "paid",
+        "status": {"$ne": "cancelled"},
         "paid_at": {"$gte": month_start_iso},
     }, property_id), {"_id": 0, "total": 1, "amount_due": 1}).to_list(1000)
     pendapatan_online = sum(int(b.get("amount_due") or b.get("total", 0)) for b in online_paid)

@@ -617,15 +617,20 @@ async def _pendapatan_kamar_per_tipe_hari_ini(property_id: str) -> Dict[str, int
     dayuse_total = sum(c.get("total", 0) for c in co_today)
     dayuse_kamar = len(co_today)
 
+    # "status" != cancelled ditambahkan pada kedua query di bawah (2026-08-25, sama fix dgn
+    # _hitung_pendapatan_harian/laporan_analitik.py hari ini) - booking cancelled yang lupa
+    # reset payment_status sebelumnya bisa ikut masuk laporan harian Telegram ke owner.
     dayuse_bk_belum_checkin = await db.bookings.find(scoped({
-        "tipe": "day_use", "payment_status": "paid", "paid_at": {"$gte": today_iso},
+        "tipe": "day_use", "payment_status": "paid", "status": {"$ne": "cancelled"},
+        "paid_at": {"$gte": today_iso},
         "checkin_id": {"$exists": False},
     }, property_id), {"_id": 0, "total": 1}).to_list(200)
     dayuse_total += sum(int(b.get("total") or 0) for b in dayuse_bk_belum_checkin)
     dayuse_kamar += len(dayuse_bk_belum_checkin)
 
     menginap_bk = await db.bookings.find(scoped({
-        "tipe": "menginap", "payment_status": "paid", "paid_at": {"$gte": today_iso},
+        "tipe": "menginap", "payment_status": "paid", "status": {"$ne": "cancelled"},
+        "paid_at": {"$gte": today_iso},
     }, property_id), {"_id": 0, "total": 1}).to_list(200)
     menginap_total = sum(int(b.get("total") or 0) for b in menginap_bk)
     menginap_kamar = len(menginap_bk)
