@@ -13,7 +13,12 @@ SALURAN_KEYS = ["ota", "website", "whatsapp"]
 # klik approve terakhir, bukan saluran akuisisi yang beda (2026-08-09, root cause sama
 # dgn bug "Dashboard/Ringkasan/Laporan Kamar beda-beda" - booking whatsapp_auto
 # sebelumnya tidak match key apa pun di sini, hilang total dari Analitik Saluran).
-SOURCE_TO_SALURAN = {"online": "website", "ota": "ota", "whatsapp": "whatsapp", "whatsapp_auto": "whatsapp"}
+# whatsapp_request (2026-08-25, sama insiden dgn whatsapp_auto di atas - lihat
+# ONLINE_BOOKING_SOURCES/core.py) - nilai source ASLI yang dipakai approve_booking_request/
+# otomasi_email utk booking dari permintaan WhatsApp, "whatsapp" polos ternyata tidak
+# pernah jadi nilai source apa pun (cek db.bookings.distinct("source")) - tanpa entri ini,
+# 30 booking asli (Rp5.444.050 sejak 1 Agustus) hilang dari Analitik Saluran juga.
+SOURCE_TO_SALURAN = {"online": "website", "ota": "ota", "whatsapp": "whatsapp", "whatsapp_auto": "whatsapp", "whatsapp_request": "whatsapp"}
 
 
 @api.get("/laporan-analitik/pendapatan")

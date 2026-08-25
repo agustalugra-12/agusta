@@ -154,16 +154,18 @@ async def report_service_revenue(from_date: str = Query(...), to_date: str = Que
             "petugas": c.get("petugas_checkout") or c.get("petugas_checkin"),
         })
 
-    # 2) service_fee 3% dari bookings online/OTA/WhatsApp yang sudah lunas (2026-08-09,
-    # sama fix dgn report_summary/report_daily/report_rooms - filter sebelumnya literal
-    # "online" saja, tidak mencakup "ota"/"whatsapp"/"whatsapp_auto" [source booking
-    # auto-approve AI], jadi service fee dari booking2 itu hilang dari laporan ini.
+    # 2) service_fee 3% dari bookings SEMUA saluran (Menginap) yang sudah lunas
+    # (2026-08-09, sama fix dgn report_summary/report_daily/report_rooms - filter
+    # sebelumnya literal "online" saja, tidak mencakup "ota"/"whatsapp"/"whatsapp_auto").
+    # MENGINAP_REVENUE_SOURCES (2026-08-25, lihat catatan lengkap di core.py) - bukan
+    # ONLINE_BOOKING_SOURCES lagi, supaya booking Menginap walk_in (Quick Book staf) juga
+    # ikut terhitung, bukan cuma saluran online.
     # checkin_id exists=False jg disertakan - booking day_use yang sudah check-in
     # service fee-nya SUDAH terhitung via checkin_items di atas, jangan dobel di sini.
     bk = await db.bookings.find(
         scoped({
             "jam_mulai": {"$gte": start, "$lte": end},
-            "source": {"$in": ONLINE_BOOKING_SOURCES},
+            "source": {"$in": MENGINAP_REVENUE_SOURCES},
             "payment_status": "paid",
             "checkin_id": {"$exists": False},
         }, property_id),
@@ -445,8 +447,12 @@ async def _hitung_pendapatan_harian(from_date: str, to_date: str, property_id: s
     # DATANG tanggal 7, bukan yg pulang tanggal 7 - insiden nyata tamu Day Use lewat
     # tengah malam ikut ke laporan tanggal yang salah).
     ci = await db.checkins.find(scoped({"jam_checkin": {"$gte": start, "$lte": end}, "status": "selesai"}, property_id), {"_id": 0}).to_list(5000)
+    # MENGINAP_REVENUE_SOURCES, bukan ONLINE_BOOKING_SOURCES (2026-08-25, laporan Agus
+    # "hasil pendapatan berbeda" - lihat catatan lengkap di core.py) - booking Menginap
+    # walk_in (Quick Book staf) tidak pernah bikin dokumen checkins (beda dari day_use),
+    # jadi HARUS masuk lewat query ini juga, bukan cuma saluran online/OTA/WhatsApp.
     bk = await db.bookings.find(scoped({
-        "source": {"$in": ONLINE_BOOKING_SOURCES},
+        "source": {"$in": MENGINAP_REVENUE_SOURCES},
         "payment_status": "paid",
         "jam_mulai": {"$lte": end},
         "jam_selesai": {"$gte": start},
@@ -685,8 +691,10 @@ async def report_rooms(from_date: str = Query(...), to_date: str = Query(...),
         scoped({"jam_checkin": {"$gte": start, "$lte": end}, "status": "selesai"}, property_id),
         {"_id": 0}
     ).to_list(5000)
+    # MENGINAP_REVENUE_SOURCES, bukan ONLINE_BOOKING_SOURCES (2026-08-25, sama fix dgn
+    # _hitung_pendapatan_harian - lihat catatan lengkap di core.py).
     bk = await db.bookings.find(scoped({
-        "source": {"$in": ONLINE_BOOKING_SOURCES},
+        "source": {"$in": MENGINAP_REVENUE_SOURCES},
         "payment_status": "paid",
         "jam_mulai": {"$gte": start, "$lte": end},
         "ota_harga_dikonfirmasi": {"$ne": False},

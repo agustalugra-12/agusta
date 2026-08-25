@@ -275,6 +275,63 @@ async def skenario_whatsapp_auto_tidak_hilang_dan_tidak_dobel() -> tuple:
     return ("whatsapp_auto_tidak_hilang_dan_tidak_dobel", status)
 
 
+async def skenario_whatsapp_request_dan_walkin_menginap_tidak_hilang() -> tuple:
+    """Bug asli (2026-08-25, laporan Agus - "hasil pendapatan berbeda", ditemukan lewat
+    audit data asli): SAMA PERSIS insiden whatsapp_auto 2026-08-09, tapi 2 sumber baru
+    yang lolos dari fix waktu itu.
+
+    (A) source="whatsapp_request" (nilai ASLI dipakai approve_booking_request/
+    otomasi_email, "whatsapp" polos di ONLINE_BOOKING_SOURCES ternyata tidak pernah jadi
+    nilai apa pun) - 30 booking asli (Rp5.444.050 sejak 1 Agustus) hilang dari semua
+    laporan.
+
+    (B) source="walk_in" tipe menginap (booking Quick Book staf) - checkin_from_booking
+    tidak pernah bikin dokumen checkins utk tipe menginap (beda dari day_use), dan
+    ONLINE_BOOKING_SOURCES sengaja TIDAK memuat walk_in (perlu tetap exclude di widget
+    online-vs-walkin) - 16 booking asli (Rp2.863.850 sejak 2 Agustus) hilang total, tidak
+    ada query manapun yang pernah menghitungnya. Fix: MENGINAP_REVENUE_SOURCES terpisah
+    (ONLINE_BOOKING_SOURCES + walk_in) dipakai KHUSUS di 3 titik total-pendapatan-
+    menginap (bukan di widget perbandingan saluran)."""
+    from core import db, now_iso
+    from routes.reports import report_daily
+
+    property_id = _property_id_test()
+    room_id = await _bikin_kamar_test(db, property_id, "T3")
+    today_wita = datetime.now(timezone.utc).astimezone(timezone(timedelta(hours=8))).date()
+    today_iso = today_wita.isoformat()
+    besok_iso = (today_wita + timedelta(days=1)).isoformat()
+
+    # Booking A: menginap, whatsapp_request, belum check-in (tidak py checkin_id)
+    await db.bookings.insert_one({
+        "id": str(uuid.uuid4()), "kode": f"TEST-WR-{uuid.uuid4().hex[:6].upper()}", "property_id": property_id, "room_id": room_id, "room_nomor": "T3",
+        "room_tipe": "Standard", "tipe": "menginap", "nama_tamu": "Test Regresi WhatsApp Request Menginap",
+        "no_hp": _wa_unik(), "jam_mulai": f"{today_iso}T06:00:00+00:00", "jam_selesai": f"{besok_iso}T04:00:00+00:00",
+        "status": "aktif", "source": "whatsapp_request", "payment_status": "paid",
+        "subtotal": 150000, "service_fee": 4500, "total": 154500, "amount_due": 154500,
+        "paid_at": now_iso(), "created_at": now_iso(),
+    })
+
+    # Booking B: menginap, walk_in (Quick Book staf), sudah checked_in - TIDAK PERNAH py
+    # checkin_id/dokumen checkins (beda dari day_use), harus kehitung dari booking ini saja.
+    await db.bookings.insert_one({
+        "id": str(uuid.uuid4()), "kode": f"TEST-WI-{uuid.uuid4().hex[:6].upper()}", "property_id": property_id, "room_id": room_id, "room_nomor": "T3",
+        "room_tipe": "Standard", "tipe": "menginap", "nama_tamu": "Test Regresi Walk-in Menginap",
+        "no_hp": _wa_unik(), "jam_mulai": f"{today_iso}T06:00:00+00:00", "jam_selesai": f"{besok_iso}T04:00:00+00:00",
+        "status": "checked_in", "source": "walk_in", "payment_status": "paid",
+        "subtotal": 100000, "service_fee": 3000, "total": 103000, "amount_due": 103000,
+        "paid_at": now_iso(), "created_at": now_iso(),
+    })
+
+    owner = {"id": "test", "nama": "Test Regresi"}
+    daily = await report_daily(from_date=today_iso, to_date=besok_iso, user=owner, property_id=property_id)
+    total_kamar = sum(r["kamar"] for r in daily)
+    # A (154500) + B (103000) = 257500. Kalau bug lama balik (salah satu/keduanya hilang
+    # lagi): 0, 154500, atau 103000 saja.
+    ok = total_kamar == 257500
+    status = "PASS" if ok else f"FAIL - total_kamar={total_kamar}, expected=257500 (154500 whatsapp_request + 103000 walk_in menginap)"
+    return ("whatsapp_request_dan_walkin_menginap_tidak_hilang", status)
+
+
 async def skenario_checkout_sync_amount_due() -> tuple:
     """Bug asli (2026-08-09, tamu Harmoni 'I Kadek Adi'): sisa pembayaran cash yang
     dikumpulkan SAAT CHECKOUT tidak pernah disinkronkan balik ke bookings.amount_due -
@@ -667,6 +724,7 @@ async def main():
     skenario_list = [
         skenario_dashboard_ringkasan_sinkron,
         skenario_whatsapp_auto_tidak_hilang_dan_tidak_dobel,
+        skenario_whatsapp_request_dan_walkin_menginap_tidak_hilang,
         skenario_checkout_sync_amount_due,
         skenario_checkout_payment_protection,
         skenario_checkin_dari_booking_day_use_bisa_ditumpuk_menginap,

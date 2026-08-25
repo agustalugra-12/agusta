@@ -101,7 +101,33 @@ BREAKFAST_PRICE = 25000  # per malam, opsional, hanya berlaku untuk tipe mengina
 # (paid, belum/sudah check-in) hilang dari 3 laporan berbeda tanpa ada yang sadar.
 # SATU sumber kebenaran di sini - titik BARU manapun yang butuh filter serupa WAJIB
 # pakai konstanta ini, jangan menulis literal list baru lagi.
-ONLINE_BOOKING_SOURCES = ["ota", "online", "whatsapp", "whatsapp_auto"]
+#
+# BUG SAMA TERULANG (2026-08-25, laporan Agus - "hasil pendapatan berbeda", ditemukan
+# lewat audit data asli): approve_booking_request (routes/booking_requests.py) & auto-
+# cancel/reschedule OTA (routes/otomasi_email.py) SUDAH LAMA memakai source=
+# "whatsapp_request" (bukan "whatsapp_auto" atau "whatsapp" polos - dicek db.bookings.
+# distinct("source") = [null, online, ota, walk_in, whatsapp_auto, whatsapp_request] -
+# "whatsapp" polos TERNYATA TIDAK PERNAH jadi nilai asli apa pun, cuma warisan konstanta
+# lama). Akibatnya PERSIS sama dgn insiden whatsapp_auto: 30 booking asli (paid) sejak
+# 1 Agustus, total Rp5.444.050, hilang diam-diam dari SEMUA laporan yang pakai konstanta
+# ini. "whatsapp" dipertahankan (bukan dihapus) - tidak ada ruginya kalau ada data lama
+# yang kebetulan masih pakai literal itu, "whatsapp_request" yang benar-benar ditambahkan.
+ONLINE_BOOKING_SOURCES = ["ota", "online", "whatsapp", "whatsapp_auto", "whatsapp_request"]
+
+# Sumber booking Menginap yang DIAKUI pendapatannya di _hitung_pendapatan_harian/
+# report_rooms/report_service_revenue (2026-08-25, temuan TERPISAH dari fix di atas,
+# audit sama) - booking Menginap yang dibuat STAF via Quick Book (routes/bookings.py
+# create_booking, source="walk_in") TIDAK PERNAH masuk hitungan sama sekali: bukan
+# "online" (sengaja dikecualikan dari ONLINE_BOOKING_SOURCES - itu utk widget
+# perbandingan online-vs-walkin di booking_widgets, MEMANG harus tetap exclude walk_in)
+# DAN checkin_from_booking utk tipe "menginap" TIDAK PERNAH bikin dokumen db.checkins
+# (beda dari day_use) - jadi tidak ada query manapun yang pernah menghitungnya. 16
+# booking asli (checked_out, lunas) sejak 2 Agustus, total Rp2.863.850, hilang total dari
+# Dashboard/Ringkasan/Laporan Kamar. Konstanta TERPISAH (bukan ditambahkan ke
+# ONLINE_BOOKING_SOURCES) supaya widget online-vs-walkin di booking_widgets tidak ikut
+# rusak - dipakai KHUSUS di 3 titik yang menghitung TOTAL pendapatan Menginap apa pun
+# salurannya (bukan yang membandingkan saluran).
+MENGINAP_REVENUE_SOURCES = ONLINE_BOOKING_SOURCES + ["walk_in"]
 
 # ---- Rate limiting (2026-07-21, audit keamanan — login staf/owner & endpoint publik
 # booking sebelumnya tidak ada penghalang percobaan berulang sama sekali) ----
