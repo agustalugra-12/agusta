@@ -411,14 +411,23 @@ async def checkout(checkin_id: str, body: CheckoutIn, user: dict = Depends(get_c
     # sekali tanpa error apa pun - dikembalikan sebelum sempat ter-deploy.)
     from routes.rekening import auto_posting
     await auto_posting("pemasukan", total_bayar_baru, "Check-out Day Use", f"Kamar {c['room_nomor']} - {c['nama_tamu']}", property_id)
-    # Audit log for CHECK_OUT (2026-08-23, permintaan Agus - audit trail lengkap)
+    # Audit log for CHECK_OUT (2026-08-23, permintaan Agus - audit trail lengkap).
+    # BUG NYATA ditemukan 2026-08-25 (sama akar dgn fix CHECK_IN di create_checkin di atas):
+    # `c.get("tipe")` TIDAK PERNAH "day_use" krn dokumen db.checkins TIDAK PUNYA field "tipe"
+    # sama sekali (lihat doc yang di-insert di create_checkin/checkin_from_booking) - baris
+    # ini SELALU jatuh ke cabang else, mencatat SETIAP checkout Day Use sebagai "(Menginap)"
+    # di audit trail (tidak crash, cuma salah label - beda dari bug create_checkin yang
+    # crash). endpoint checkout() ini KHUSUS Day Use (checkin_from_booking utk tipe
+    # "menginap" tidak pernah bikin dokumen db.checkins, checkout Menginap lewat update
+    # status kamar manual terpisah, lihat routes/rooms.py) - hardcode "(Day Use)" sesuai
+    # kenyataannya, bukan tebak field yang tidak ada sumbernya.
     await db.audit_log.insert_one({
         "id": str(uuid.uuid4()),
         "user_id": user.get("id"),
         "username": user.get("username"),
         "action": "CHECK_OUT",
         "entity": c["room_nomor"],
-        "detail": f"Check-out {c['nama_tamu']} kamar {c['room_nomor']} (Day Use)" if c.get("tipe") == "day_use" else f"Check-out {c['nama_tamu']} kamar {c['room_nomor']} (Menginap)",
+        "detail": f"Check-out {c['nama_tamu']} kamar {c['room_nomor']} (Day Use)",
         "timestamp": now_iso(),
     })
     res = {**c, **updates}
