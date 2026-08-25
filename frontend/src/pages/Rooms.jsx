@@ -8,6 +8,7 @@ import { Label } from "@/components/ui/label";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { useAuth } from "@/context/AuthContext";
 import { Plus, Pencil, Trash2, Upload, Star, Loader2, X } from "lucide-react";
+import { RefreshCw } from "lucide-react";
 
 export default function Rooms() {
   const { user } = useAuth();
@@ -83,7 +84,12 @@ export default function Rooms() {
           <p className="text-xs uppercase tracking-[0.25em] text-slate-500">Manajemen Kamar</p>
           <h1 className="text-3xl sm:text-4xl font-extrabold">{rooms.length} Kamar</h1>
         </div>
-        {isOwner && <Button data-testid="add-room" onClick={openNew} className="bg-blue-700 hover:bg-blue-800"><Plus className="w-4 h-4 mr-2" /> Tambah Kamar</Button>}
+        {isOwner && (
+              <>
+                <Button data-testid="refresh-rooms" onClick={load} className="bg-slate-700 hover:bg-slate-800"><RefreshCw className="w-4 h-4 mr-2" /> Refresh</Button>
+                <Button data-testid="add-room" onClick={openNew} className="bg-blue-700 hover:bg-blue-800"><Plus className="w-4 h-4 mr-2" /> Tambah Kamar</Button>
+              </>
+            )}
       </div>
 
       <Card className="border-slate-200">

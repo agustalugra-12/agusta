@@ -162,6 +162,16 @@ async def create_checkin(body: CheckinCreate, user: dict = Depends(get_current_u
             await db.checkins.insert_one(doc)
             await db.rooms.update_one({"id": r["id"]}, {"$set": {"status": "day_use", "info": {"checkin_id": doc["id"], "nama_tamu": body.nama_tamu}}})
             await log_activity(user, "checkin", f"Check-in {body.nama_tamu} ke kamar {r['nomor']}", entity=r["nomor"])
+            # Audit log for CHECK_IN (2026-08-23, permintaan Agus - audit trail lengkap)
+            await db.audit_log.insert_one({
+                "id": str(uuid.uuid4()),
+                "user_id": user.get("id"),
+                "username": user.get("username"),
+                "action": "CHECK_IN",
+                "entity": r["nomor"],
+                "detail": f"Check-in {body.nama_tamu} ke kamar {r['nomor']} (Day Use)" if body.tipe == "day_use" else f"Check-in {body.nama_tamu} ke kamar {r['nomor']} (Menginap)",
+                "timestamp": now_iso(),
+            })
             doc.pop("_id", None)
             created.append(doc)
     except HTTPException:
@@ -353,6 +363,12 @@ async def checkout(checkin_id: str, body: CheckoutIn, user: dict = Depends(get_c
         # spy tidak pernah lebih besar dari tagihan asli walau ada overtime yang
         # dibayar terpisah dari DP awal.
         await db.bookings.update_one({"id": c["from_booking_id"]}, {"$set": {
+            "durasi_jam": calc["durasi_jam"],
+            "overtime_jam": calc["overtime_jam"],
+            "biaya_tambahan": calc["biaya_tambahan"],
+            "subtotal": calc["subtotal"],
+            "service_fee": calc["service_fee"],
+            "total": calc["total"],
             "status": "checked_out", "checked_out_at": now.isoformat(), "checked_out_by": user["nama"],
             "amount_due": min(sum(int(p.get("jumlah", 0)) for p in pembayaran_final), calc["total"]),
         }})
@@ -379,8 +395,21 @@ async def checkout(checkin_id: str, body: CheckoutIn, user: dict = Depends(get_c
     # operasional default, best-effort. Kalau booking ini sebelumnya sudah dibayar online
     # via Tripay, itu SUDAH terposting terpisah di webhook Tripay - `total_bayar` di sini
     # cuma yang dikumpulkan fisik di titik checkout, tidak dobel hitung.
+    # (2026-08-25, bug nyata ditemukan - panggilan ini SEMPAT terhapus tanpa sengaja saat
+    # audit log CHECK_OUT ditambahkan, checkout jadi berhenti posting ke buku kas sama
+    # sekali tanpa error apa pun - dikembalikan sebelum sempat ter-deploy.)
     from routes.rekening import auto_posting
     await auto_posting("pemasukan", total_bayar_baru, "Check-out Day Use", f"Kamar {c['room_nomor']} - {c['nama_tamu']}", property_id)
+    # Audit log for CHECK_OUT (2026-08-23, permintaan Agus - audit trail lengkap)
+    await db.audit_log.insert_one({
+        "id": str(uuid.uuid4()),
+        "user_id": user.get("id"),
+        "username": user.get("username"),
+        "action": "CHECK_OUT",
+        "entity": c["room_nomor"],
+        "detail": f"Check-out {c['nama_tamu']} kamar {c['room_nomor']} (Day Use)" if c.get("tipe") == "day_use" else f"Check-out {c['nama_tamu']} kamar {c['room_nomor']} (Menginap)",
+        "timestamp": now_iso(),
+    })
     res = {**c, **updates}
     res.pop("_id", None)
     return res
