@@ -114,20 +114,20 @@ BREAKFAST_PRICE = 25000  # per malam, opsional, hanya berlaku untuk tipe mengina
 # yang kebetulan masih pakai literal itu, "whatsapp_request" yang benar-benar ditambahkan.
 ONLINE_BOOKING_SOURCES = ["ota", "online", "whatsapp", "whatsapp_auto", "whatsapp_request"]
 
-# Sumber booking Menginap yang DIAKUI pendapatannya di _hitung_pendapatan_harian/
-# report_rooms/report_service_revenue (2026-08-25, temuan TERPISAH dari fix di atas,
-# audit sama) - booking Menginap yang dibuat STAF via Quick Book (routes/bookings.py
-# create_booking, source="walk_in") TIDAK PERNAH masuk hitungan sama sekali: bukan
-# "online" (sengaja dikecualikan dari ONLINE_BOOKING_SOURCES - itu utk widget
-# perbandingan online-vs-walkin di booking_widgets, MEMANG harus tetap exclude walk_in)
-# DAN checkin_from_booking utk tipe "menginap" TIDAK PERNAH bikin dokumen db.checkins
-# (beda dari day_use) - jadi tidak ada query manapun yang pernah menghitungnya. 16
-# booking asli (checked_out, lunas) sejak 2 Agustus, total Rp2.863.850, hilang total dari
-# Dashboard/Ringkasan/Laporan Kamar. Konstanta TERPISAH (bukan ditambahkan ke
-# ONLINE_BOOKING_SOURCES) supaya widget online-vs-walkin di booking_widgets tidak ikut
-# rusak - dipakai KHUSUS di 3 titik yang menghitung TOTAL pendapatan Menginap apa pun
-# salurannya (bukan yang membandingkan saluran).
-MENGINAP_REVENUE_SOURCES = ONLINE_BOOKING_SOURCES + ["walk_in"]
+# Revisi LEBIH DALAM (2026-08-25, permintaan Agus langsung setelah fix di atas - "dalami
+# akar masalahnya, agar semua aman") - awalnya ditambal dgn konstanta MENGINAP_REVENUE_
+# SOURCES terpisah (ONLINE_BOOKING_SOURCES + "walk_in") persis di titik ini, TAPI itu
+# CUMA menunda kelas bug yang SAMA (allowlist source) kambuh KETIGA kalinya kelak kalau
+# muncul channel/rename source baru lagi (sudah 2x: whatsapp_auto 2026-08-09, whatsapp_
+# request+walk_in 2026-08-25). Akar masalah SEBENARNYA: filter "source" di 3 titik
+# _hitung_pendapatan_harian/report_rooms/report_service_revenue (routes/reports.py) TIDAK
+# PERNAH benar2 diperlukan utk tujuan "hitung SEMUA pendapatan Menginap yang sah" - anti
+# double-count sudah dijamin penuh oleh "checkin_id belum ada" (booking yg sudah
+# dikonversi ke checkins day_use otomatis exclude). Filter source DIHAPUS TOTAL dari 3
+# titik itu (bukan ditambal lagi) - constant ini jadi TIDAK DIPAKAI, sengaja tidak
+# dihapus baris ini biar histori investigasi tetap terbaca kalau ada yg audit ulang nanti.
+# ONLINE_BOOKING_SOURCES (di atas) TETAP DIPAKAI apa adanya - itu utk widget yang MEMANG
+# soal perbandingan saluran (online-vs-walkin, Analitik Saluran), bukan total pendapatan.
 
 # ---- Rate limiting (2026-07-21, audit keamanan — login staf/owner & endpoint publik
 # booking sebelumnya tidak ada penghalang percobaan berulang sama sekali) ----

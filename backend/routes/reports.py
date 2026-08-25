@@ -157,16 +157,15 @@ async def report_service_revenue(from_date: str = Query(...), to_date: str = Que
     # 2) service_fee 3% dari bookings SEMUA saluran (Menginap) yang sudah lunas
     # (2026-08-09, sama fix dgn report_summary/report_daily/report_rooms - filter
     # sebelumnya literal "online" saja, tidak mencakup "ota"/"whatsapp"/"whatsapp_auto").
-    # MENGINAP_REVENUE_SOURCES (2026-08-25, lihat catatan lengkap di core.py) - bukan
-    # ONLINE_BOOKING_SOURCES lagi, supaya booking Menginap walk_in (Quick Book staf) juga
-    # ikut terhitung, bukan cuma saluran online.
+    # TIDAK filter "source" + TAMBAH "status" != cancelled (2026-08-25, revisi lebih
+    # dalam - lihat catatan lengkap di core.py & _hitung_pendapatan_harian).
     # checkin_id exists=False jg disertakan - booking day_use yang sudah check-in
     # service fee-nya SUDAH terhitung via checkin_items di atas, jangan dobel di sini.
     bk = await db.bookings.find(
         scoped({
             "jam_mulai": {"$gte": start, "$lte": end},
-            "source": {"$in": MENGINAP_REVENUE_SOURCES},
             "payment_status": "paid",
+            "status": {"$ne": "cancelled"},
             "checkin_id": {"$exists": False},
         }, property_id),
         {"_id": 0}
@@ -447,13 +446,31 @@ async def _hitung_pendapatan_harian(from_date: str, to_date: str, property_id: s
     # DATANG tanggal 7, bukan yg pulang tanggal 7 - insiden nyata tamu Day Use lewat
     # tengah malam ikut ke laporan tanggal yang salah).
     ci = await db.checkins.find(scoped({"jam_checkin": {"$gte": start, "$lte": end}, "status": "selesai"}, property_id), {"_id": 0}).to_list(5000)
-    # MENGINAP_REVENUE_SOURCES, bukan ONLINE_BOOKING_SOURCES (2026-08-25, laporan Agus
-    # "hasil pendapatan berbeda" - lihat catatan lengkap di core.py) - booking Menginap
-    # walk_in (Quick Book staf) tidak pernah bikin dokumen checkins (beda dari day_use),
-    # jadi HARUS masuk lewat query ini juga, bukan cuma saluran online/OTA/WhatsApp.
+    # TIDAK filter "source" lagi (2026-08-25, revisi lebih dalam dari fix MENGINAP_REVENUE_
+    # SOURCES sebelumnya hari ini - permintaan Agus "dalami akar masalahnya, agar semua
+    # aman") - allowlist source ("ota"/"online"/"whatsapp"/dst) TERBUKTI 2x kebobolan
+    # (whatsapp_auto 2026-08-09, whatsapp_request+walk_in 2026-08-25) tiap kali ada
+    # channel/rename source BARU yang lupa didaftarkan - kelas bug yang SAMA akan terulang
+    # lagi kalau suatu saat muncul channel baru (mis. Instagram DM, OTA lain). Query ini
+    # SUDAH punya jaminan anti-double-count yang benar (checkin_id belum ada = belum
+    # dikonversi ke checkins), jadi filter source itu sendiri TIDAK PERNAH benar2
+    # diperlukan utk tujuan "hitung SEMUA pendapatan Menginap yang sah" - dihapus total,
+    # bukan ditambal lagi.
+    #
+    # "status" != cancelled DITAMBAHKAN (bug KEDUA ditemukan sambil audit sama, arah
+    # SEBALIKNYA - KELEBIHAN hitung): 7 booking (Rp1.003.000) berstatus "cancelled" TAPI
+    # payment_status masih "paid" ditemukan nyata di DB - beberapa jalur cancel yang
+    # BEDA (cancel_with_fee sudah benar reset ke refunded/forfeited, tapi auto-cancel OTA
+    # di otomasi_email.py & beberapa koreksi manual/dedup RedDoorz TIDAK PERNAH menyentuh
+    # payment_status sama sekali) - query lama disini TIDAK PERNAH cek `status`, jadi
+    # booking yang sudah dibatalkan tapi kebetulan masih payment_status=paid dari sebelum
+    # dibatalkan tetap ikut terhitung sbg pendapatan asli. Drpd kejar-kejaran memperbaiki
+    # SETIAP jalur cancel (rapuh, gampang ada yg kelewat lagi) - filter di SISI BACA ini
+    # (satu titik, dipakai semua laporan) yang ditutup, jaminan yang lebih kuat drpd
+    # bergantung semua jalur tulis selalu ingat reset payment_status.
     bk = await db.bookings.find(scoped({
-        "source": {"$in": MENGINAP_REVENUE_SOURCES},
         "payment_status": "paid",
+        "status": {"$ne": "cancelled"},
         "jam_mulai": {"$lte": end},
         "jam_selesai": {"$gte": start},
         "ota_harga_dikonfirmasi": {"$ne": False},
@@ -691,11 +708,11 @@ async def report_rooms(from_date: str = Query(...), to_date: str = Query(...),
         scoped({"jam_checkin": {"$gte": start, "$lte": end}, "status": "selesai"}, property_id),
         {"_id": 0}
     ).to_list(5000)
-    # MENGINAP_REVENUE_SOURCES, bukan ONLINE_BOOKING_SOURCES (2026-08-25, sama fix dgn
-    # _hitung_pendapatan_harian - lihat catatan lengkap di core.py).
+    # TIDAK filter "source" + TAMBAH "status" != cancelled (2026-08-25, sama fix dgn
+    # _hitung_pendapatan_harian - lihat catatan lengkap di core.py & docstring atas).
     bk = await db.bookings.find(scoped({
-        "source": {"$in": MENGINAP_REVENUE_SOURCES},
         "payment_status": "paid",
+        "status": {"$ne": "cancelled"},
         "jam_mulai": {"$gte": start, "$lte": end},
         "ota_harga_dikonfirmasi": {"$ne": False},
         "checkin_id": {"$exists": False},

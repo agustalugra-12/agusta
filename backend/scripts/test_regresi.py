@@ -332,6 +332,60 @@ async def skenario_whatsapp_request_dan_walkin_menginap_tidak_hilang() -> tuple:
     return ("whatsapp_request_dan_walkin_menginap_tidak_hilang", status)
 
 
+async def skenario_booking_cancelled_masih_paid_tidak_dihitung() -> tuple:
+    """Bug KEDUA ditemukan sambil audit fix whatsapp_request/walk_in di atas (2026-08-25,
+    permintaan Agus "dalami akar masalahnya, agar semua aman") - arah SEBALIKNYA
+    (KELEBIHAN hitung, bukan hilang). 7 booking asli (Rp1.003.000) ditemukan berstatus
+    "cancelled" tapi payment_status masih "paid" - beberapa jalur cancel yang beda
+    (auto-cancel OTA di otomasi_email.py, koreksi manual/dedup RedDoorz) tidak pernah
+    reset payment_status (beda dari cancel_with_fee yang sudah benar set ke refunded/
+    forfeited). Query _hitung_pendapatan_harian/report_rooms/report_service_revenue
+    SEBELUM ini tidak pernah cek `status` sama sekali - booking cancelled yg kebetulan
+    masih payment_status=paid ikut terhitung sbg pendapatan asli.
+
+    Fix root-cause: filter source dihapus TOTAL dari 3 titik itu (allowlist rapuh,
+    2x kebobolan - lihat skenario whatsapp_request di atas), diganti "status" != cancelled
+    yang sekarang WAJIB ada. Skenario ini: 1 booking menginap "aktif" (harus kehitung) +
+    1 booking menginap "cancelled" tapi payment_status="paid" (harus DIABAIKAN)."""
+    from core import db, now_iso
+    from routes.reports import report_daily
+
+    property_id = _property_id_test()
+    room_id = await _bikin_kamar_test(db, property_id, "T4")
+    today_wita = datetime.now(timezone.utc).astimezone(timezone(timedelta(hours=8))).date()
+    today_iso = today_wita.isoformat()
+    besok_iso = (today_wita + timedelta(days=1)).isoformat()
+
+    # Booking A: menginap, aktif, paid - HARUS kehitung.
+    await db.bookings.insert_one({
+        "id": str(uuid.uuid4()), "kode": f"TEST-CA-{uuid.uuid4().hex[:6].upper()}", "property_id": property_id, "room_id": room_id, "room_nomor": "T4",
+        "room_tipe": "Standard", "tipe": "menginap", "nama_tamu": "Test Regresi Aktif Paid",
+        "no_hp": _wa_unik(), "jam_mulai": f"{today_iso}T06:00:00+00:00", "jam_selesai": f"{besok_iso}T04:00:00+00:00",
+        "status": "aktif", "source": "online", "payment_status": "paid",
+        "subtotal": 150000, "service_fee": 4500, "total": 154500, "amount_due": 154500,
+        "paid_at": now_iso(), "created_at": now_iso(),
+    })
+
+    # Booking B: menginap, CANCELLED tapi payment_status masih "paid" (jalur cancel yang
+    # lupa reset, mis. auto-cancel OTA) - HARUS DIABAIKAN, tidak boleh ikut kehitung.
+    await db.bookings.insert_one({
+        "id": str(uuid.uuid4()), "kode": f"TEST-CB-{uuid.uuid4().hex[:6].upper()}", "property_id": property_id, "room_id": room_id, "room_nomor": "T4",
+        "room_tipe": "Standard", "tipe": "menginap", "nama_tamu": "Test Regresi Cancelled Masih Paid",
+        "no_hp": _wa_unik(), "jam_mulai": f"{today_iso}T06:00:00+00:00", "jam_selesai": f"{besok_iso}T04:00:00+00:00",
+        "status": "cancelled", "source": "ota", "payment_status": "paid",
+        "subtotal": 300000, "service_fee": 9000, "total": 309000, "amount_due": 309000,
+        "paid_at": now_iso(), "created_at": now_iso(), "cancelled_at": now_iso(), "cancelled_by": "ai_email_parser",
+    })
+
+    owner = {"id": "test", "nama": "Test Regresi"}
+    daily = await report_daily(from_date=today_iso, to_date=besok_iso, user=owner, property_id=property_id)
+    total_kamar = sum(r["kamar"] for r in daily)
+    # A (154500) saja. Kalau bug lama balik (cancelled masih ikut kehitung): 154500+309000=463500.
+    ok = total_kamar == 154500
+    status = "PASS" if ok else f"FAIL - total_kamar={total_kamar}, expected=154500 (cancelled booking Rp309000 HARUS diabaikan)"
+    return ("booking_cancelled_masih_paid_tidak_dihitung", status)
+
+
 async def skenario_checkout_sync_amount_due() -> tuple:
     """Bug asli (2026-08-09, tamu Harmoni 'I Kadek Adi'): sisa pembayaran cash yang
     dikumpulkan SAAT CHECKOUT tidak pernah disinkronkan balik ke bookings.amount_due -
@@ -725,6 +779,7 @@ async def main():
         skenario_dashboard_ringkasan_sinkron,
         skenario_whatsapp_auto_tidak_hilang_dan_tidak_dobel,
         skenario_whatsapp_request_dan_walkin_menginap_tidak_hilang,
+        skenario_booking_cancelled_masih_paid_tidak_dihitung,
         skenario_checkout_sync_amount_due,
         skenario_checkout_payment_protection,
         skenario_checkin_dari_booking_day_use_bisa_ditumpuk_menginap,
