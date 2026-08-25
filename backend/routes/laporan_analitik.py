@@ -29,10 +29,23 @@ async def laporan_pendapatan(from_date: str = Query(...), to_date: str = Query(.
     diakui per MALAM inap (accrual/matching principle) — booking yang nginap lintas bulan
     kebagi proporsional ke tiap bulan sesuai malam yang benar-benar terpakai, bukan numpuk
     semua di tanggal paid_at. Konsisten dengan /reports/daily. Tidak termasuk pendapatan
-    walk-in (sudah ada di /reports/daily)."""
+    walk-in (sudah ada di /reports/daily).
+
+    2 bug ditemukan 2026-08-25 (audit lanjutan, "cek juga laporan lain" - sama insiden
+    dgn fix pendapatan kamar/Arus Kas/Kas per Metode Bayar hari ini):
+    1. Query TIDAK PERNAH cek `source` sama sekali - PADAHAL docstring di atas eksplisit
+       bilang "tidak termasuk walk-in" - 17 booking walk_in Menginap (Rp3.327.350) nyata
+       ikut kehitung di sini, DOBEL dgn /reports/daily yang sudah menghitungnya juga.
+       Ditambahkan filter source=ONLINE_BOOKING_SOURCES supaya benar2 online-only sesuai
+       niat docstring-nya.
+    2. Query TIDAK PERNAH cek `status` - 7 booking cancelled (Rp1.003.000) yang lupa
+       direset payment_status-nya (sama akar dgn fix _hitung_pendapatan_harian hari ini)
+       ikut kehitung sbg pendapatan asli. Ditambahkan status != cancelled."""
     start, end = wita_date_range_to_utc(from_date, to_date)
     bks = await db.bookings.find(scoped({
+        "source": {"$in": ONLINE_BOOKING_SOURCES},
         "payment_status": "paid",
+        "status": {"$ne": "cancelled"},
         "jam_mulai": {"$lte": end},
         "jam_selesai": {"$gte": start},
         "ota_harga_dikonfirmasi": {"$ne": False},
@@ -60,12 +73,17 @@ async def laporan_performa_saluran(channel: str = Query("Semua"),
                                     user: dict = Depends(get_current_user),
                                     property_id: str = Depends(get_active_property)):
     """Jumlah booking & pendapatan (paid) per saluran (ota/website/whatsapp), lifetime.
-    channel: 'Semua' atau salah satu key saluran untuk filter satu saja."""
+    channel: 'Semua' atau salah satu key saluran untuk filter satu saja.
+
+    "status" != cancelled ditambahkan (2026-08-25, sama fix dgn laporan_pendapatan di atas)
+    - 7 booking cancelled yang masih payment_status=paid sebelumnya ikut kehitung sbg
+    performa saluran asli."""
     keys = SALURAN_KEYS if channel == "Semua" else [channel]
     sources = [src for src, key in SOURCE_TO_SALURAN.items() if key in keys]
     bks = await db.bookings.find(scoped({
         "source": {"$in": sources},
         "payment_status": "paid",
+        "status": {"$ne": "cancelled"},
         "ota_harga_dikonfirmasi": {"$ne": False},
     }, property_id), {"_id": 0, "source": 1, "total": 1}).to_list(10000)
     agg = {k: {"booking": 0, "pendapatan": 0} for k in keys}

@@ -457,6 +457,64 @@ async def skenario_kas_metode_bayar_walkin_menginap_tidak_hilang() -> tuple:
     return ("kas_metode_bayar_walkin_menginap_tidak_hilang", status)
 
 
+async def skenario_analitik_saluran_cancelled_dan_walkin_tidak_dobel() -> tuple:
+    """Bug KELIMA ditemukan sambil audit lanjutan (2026-08-25) - laporan_analitik.py
+    (Analitik Saluran) TIDAK PERNAH cek `status` sama sekali (booking cancelled yg lupa
+    reset payment_status ikut kehitung, sama akar dgn fix _hitung_pendapatan_harian) DAN
+    laporan_pendapatan TIDAK PERNAH cek `source` walau docstring-nya eksplisit bilang
+    "tidak termasuk walk-in" (17 booking walk_in Menginap dobel-hitung dgn /reports/daily).
+    Skenario: 1 booking online aktif (harus kehitung), 1 booking online cancelled-tapi-
+    paid (harus diabaikan), 1 booking walk_in menginap paid (harus diabaikan di
+    laporan_pendapatan krn bukan online - TAPI TETAP kehitung di performa_saluran kalau
+    channel-nya match... walk_in bukan bagian SALURAN_KEYS manapun jadi otomatis tidak
+    match, tidak perlu exclude eksplisit di situ)."""
+    from core import db, now_iso
+    from routes.laporan_analitik import laporan_pendapatan, laporan_performa_saluran
+
+    property_id = _property_id_test()
+    room_id = await _bikin_kamar_test(db, property_id, "T7")
+    today_wita = datetime.now(timezone.utc).astimezone(timezone(timedelta(hours=8))).date()
+    today_iso = today_wita.isoformat()
+    besok_iso = (today_wita + timedelta(days=1)).isoformat()
+
+    await db.bookings.insert_one({
+        "id": str(uuid.uuid4()), "kode": f"TEST-AN-{uuid.uuid4().hex[:6].upper()}", "property_id": property_id, "room_id": room_id, "room_nomor": "T7",
+        "room_tipe": "Standard", "tipe": "menginap", "nama_tamu": "Test Regresi Online Aktif",
+        "no_hp": _wa_unik(), "jam_mulai": f"{today_iso}T06:00:00+00:00", "jam_selesai": f"{besok_iso}T04:00:00+00:00",
+        "status": "aktif", "source": "online", "payment_status": "paid",
+        "subtotal": 150000, "service_fee": 4500, "total": 154500, "amount_due": 154500,
+        "paid_at": now_iso(), "created_at": now_iso(),
+    })
+    await db.bookings.insert_one({
+        "id": str(uuid.uuid4()), "kode": f"TEST-AC-{uuid.uuid4().hex[:6].upper()}", "property_id": property_id, "room_id": room_id, "room_nomor": "T7",
+        "room_tipe": "Standard", "tipe": "menginap", "nama_tamu": "Test Regresi Online Cancelled",
+        "no_hp": _wa_unik(), "jam_mulai": f"{today_iso}T06:00:00+00:00", "jam_selesai": f"{besok_iso}T04:00:00+00:00",
+        "status": "cancelled", "source": "ota", "payment_status": "paid",
+        "subtotal": 300000, "service_fee": 9000, "total": 309000, "amount_due": 309000,
+        "paid_at": now_iso(), "created_at": now_iso(), "cancelled_at": now_iso(),
+    })
+    await db.bookings.insert_one({
+        "id": str(uuid.uuid4()), "kode": f"TEST-AW-{uuid.uuid4().hex[:6].upper()}", "property_id": property_id, "room_id": room_id, "room_nomor": "T7",
+        "room_tipe": "Standard", "tipe": "menginap", "nama_tamu": "Test Regresi Walkin",
+        "no_hp": _wa_unik(), "jam_mulai": f"{today_iso}T06:00:00+00:00", "jam_selesai": f"{besok_iso}T04:00:00+00:00",
+        "status": "aktif", "source": "walk_in", "payment_status": "paid",
+        "subtotal": 500000, "service_fee": 15000, "total": 515000, "amount_due": 515000,
+        "paid_at": now_iso(), "created_at": now_iso(),
+    })
+
+    owner = {"id": "test", "nama": "Test Regresi"}
+    pendapatan = await laporan_pendapatan(from_date=today_iso, to_date=besok_iso, user=owner, property_id=property_id)
+    total_pendapatan = sum(r["pendapatan"] for r in pendapatan)
+    saluran = await laporan_performa_saluran(channel="Semua", user=owner, property_id=property_id)
+    total_saluran = sum(r["pendapatan"] for r in saluran)
+
+    # pendapatan: cuma booking online aktif (154500) - cancelled diabaikan, walk_in diabaikan (bukan online).
+    # saluran: sama (154500) - walk_in tidak match SALURAN_KEYS manapun, cancelled diabaikan.
+    ok = total_pendapatan == 154500 and total_saluran == 154500
+    status = "PASS" if ok else f"FAIL - laporan_pendapatan={total_pendapatan} (expected 154500), performa_saluran={total_saluran} (expected 154500)"
+    return ("analitik_saluran_cancelled_dan_walkin_tidak_dobel", status)
+
+
 async def skenario_checkout_sync_amount_due() -> tuple:
     """Bug asli (2026-08-09, tamu Harmoni 'I Kadek Adi'): sisa pembayaran cash yang
     dikumpulkan SAAT CHECKOUT tidak pernah disinkronkan balik ke bookings.amount_due -
@@ -853,6 +911,7 @@ async def main():
         skenario_booking_cancelled_masih_paid_tidak_dihitung,
         skenario_arus_kas_walkin_menginap_tidak_hilang,
         skenario_kas_metode_bayar_walkin_menginap_tidak_hilang,
+        skenario_analitik_saluran_cancelled_dan_walkin_tidak_dobel,
         skenario_checkout_sync_amount_due,
         skenario_checkout_payment_protection,
         skenario_checkin_dari_booking_day_use_bisa_ditumpuk_menginap,
