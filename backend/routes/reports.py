@@ -549,7 +549,15 @@ async def report_kas_metode_bayar(from_date: str = Query(...), to_date: str = Qu
     (walk-in) — supaya owner bisa cocokkan uang cash fisik yang harus ada di laci vs sistem.
     SENGAJA tidak termasuk booking online/OTA (Tripay) karena uangnya masuk ke rekening/payment
     gateway, tidak pernah melewati laci fisik — lihat /reports/daily untuk total pendapatan
-    kamar yang mencakup semua saluran."""
+    kamar yang mencakup semua saluran.
+
+    Booking Menginap WALK-IN (2026-08-25, laporan Agus - "Kas per Metode Bayar cuma 4jt-an
+    padahal Arus Kas 7jt-an", ditemukan lewat audit lanjutan - sama akar dgn fix Arus Kas
+    hari ini) - Quick Book staf ("bayar di depan semua") DILUNASI langsung tunai/QRIS/
+    transfer di TEMPAT, bukan lewat Tripay - persis definisi "uang fisik di laci" yang
+    laporan ini maksud, tapi TIDAK PERNAH dibaca sebelumnya (checkins.pembayaran cuma
+    Day Use, Menginap tidak pernah bikin dokumen checkins). Ditambahkan sbg sumber KETIGA,
+    guard sama persis dgn fix Arus Kas (checkin_id belum ada, status bukan cancelled)."""
     start, end = wita_date_range_to_utc(from_date, to_date)
     totals = {"tunai": 0, "qris": 0, "transfer": 0}
     ks = await db.kasir.find(scoped({"timestamp": {"$gte": start, "$lte": end}}, property_id), {"_id": 0, "pembayaran": 1}).to_list(5000)
@@ -557,7 +565,13 @@ async def report_kas_metode_bayar(from_date: str = Query(...), to_date: str = Qu
         scoped({"status": "selesai", "jam_checkout": {"$gte": start, "$lte": end}}, property_id),
         {"_id": 0, "pembayaran": 1},
     ).to_list(5000)
-    for row in ks + ci:
+    bk_cash = await db.bookings.find(scoped({
+        "pembayaran": {"$exists": True, "$ne": []},
+        "checkin_id": {"$exists": False},
+        "status": {"$ne": "cancelled"},
+        "created_at": {"$gte": start, "$lte": end},
+    }, property_id), {"_id": 0, "pembayaran": 1}).to_list(5000)
+    for row in ks + ci + bk_cash:
         for p in row.get("pembayaran") or []:
             m = p.get("metode")
             if m in totals:
