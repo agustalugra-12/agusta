@@ -386,6 +386,44 @@ async def skenario_booking_cancelled_masih_paid_tidak_dihitung() -> tuple:
     return ("booking_cancelled_masih_paid_tidak_dihitung", status)
 
 
+async def skenario_arus_kas_walkin_menginap_tidak_hilang() -> tuple:
+    """Bug KETIGA ditemukan sambil audit lanjutan (2026-08-25, laporan Agus "Arus Kas
+    beda dgn Dashboard" - ditemukan LANGSUNG sesudah fix pendapatan kamar hari ini bikin
+    Dashboard naik tapi Arus Kas TIDAK ikut naik utk booking yang sama). Booking Menginap
+    Quick Book staf (source=walk_in) simpan `pembayaran` LANGSUNG di dokumen booking
+    (bukan lewat payment_log/Tripay) - report_arus_kas SEBELUM ini cuma baca payment_log
+    (online) + checkins.pembayaran (Day Use, Menginap tidak pernah bikin checkins) - cash
+    booking walk_in Menginap (Rp2.260.850, 12 booking asli) tidak pernah muncul di Arus
+    Kas sama sekali. Fix: baca juga db.bookings.pembayaran (guard checkin_id belum ada,
+    sama pola dgn fix pendapatan kamar, cegah dobel kalau nanti dikonversi jadi day_use)."""
+    from core import db, now_iso
+    from routes.reports import report_arus_kas
+
+    property_id = _property_id_test()
+    room_id = await _bikin_kamar_test(db, property_id, "T5")
+    today_wita = datetime.now(timezone.utc).astimezone(timezone(timedelta(hours=8))).date()
+    today_iso = today_wita.isoformat()
+    besok_iso = (today_wita + timedelta(days=1)).isoformat()
+
+    # Booking walk_in menginap, cash langsung di pembayaran[] (bukan payment_log) - HARUS kehitung.
+    await db.bookings.insert_one({
+        "id": str(uuid.uuid4()), "kode": f"TEST-AK-{uuid.uuid4().hex[:6].upper()}", "property_id": property_id, "room_id": room_id, "room_nomor": "T5",
+        "room_tipe": "Standard", "tipe": "menginap", "nama_tamu": "Test Regresi Arus Kas Walkin",
+        "no_hp": _wa_unik(), "jam_mulai": f"{today_iso}T06:00:00+00:00", "jam_selesai": f"{besok_iso}T04:00:00+00:00",
+        "status": "aktif", "source": "walk_in", "payment_status": "paid",
+        "subtotal": 150000, "service_fee": 4500, "total": 154500, "amount_due": 154500,
+        "pembayaran": [{"metode": "tunai", "jumlah": 154500}],
+        "created_at": now_iso(),
+    })
+
+    owner = {"id": "test", "nama": "Test Regresi"}
+    arus = await report_arus_kas(from_date=today_iso, to_date=besok_iso, user=owner, property_id=property_id)
+    total_masuk = sum(r["total_uang_masuk"] for r in arus)
+    ok = total_masuk == 154500
+    status = "PASS" if ok else f"FAIL - total_uang_masuk={total_masuk}, expected=154500 (cash walk_in menginap Rp154500)"
+    return ("arus_kas_walkin_menginap_tidak_hilang", status)
+
+
 async def skenario_checkout_sync_amount_due() -> tuple:
     """Bug asli (2026-08-09, tamu Harmoni 'I Kadek Adi'): sisa pembayaran cash yang
     dikumpulkan SAAT CHECKOUT tidak pernah disinkronkan balik ke bookings.amount_due -
@@ -780,6 +818,7 @@ async def main():
         skenario_whatsapp_auto_tidak_hilang_dan_tidak_dobel,
         skenario_whatsapp_request_dan_walkin_menginap_tidak_hilang,
         skenario_booking_cancelled_masih_paid_tidak_dihitung,
+        skenario_arus_kas_walkin_menginap_tidak_hilang,
         skenario_checkout_sync_amount_due,
         skenario_checkout_payment_protection,
         skenario_checkin_dari_booking_day_use_bisa_ditumpuk_menginap,

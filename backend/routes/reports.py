@@ -602,9 +602,27 @@ async def report_arus_kas(from_date: str = Query(...), to_date: str = Query(...)
     Booking Menginap yang BELUM check-in/checkout (msh `booking_paid`) - DP-nya TETAP
     muncul di sini (via payment_log) begitu settlement, walau kamarnya belum terpakai
     sama sekali - itu memang inti bedanya dari /reports/daily (akrual nunggu jasa
-    terpakai, cash flow tidak nunggu apa-apa selain uang beneran diterima)."""
+    terpakai, cash flow tidak nunggu apa-apa selain uang beneran diterima).
+
+    4. Cash booking Menginap WALK-IN (2026-08-25, laporan Agus - "Arus Kas beda dgn
+       Dashboard", ditemukan lewat audit lanjutan setelah fix pendapatan kamar hari ini)
+       - booking Quick Book staf (source="walk_in") "bayar di depan semua" (2026-07-31)
+       menyimpan `pembayaran` LANGSUNG di dokumen `bookings` sendiri (bukan lewat Tripay/
+       payment_log SAMA SEKALI - itu jalur khusus gateway online). 3 sumber di atas TIDAK
+       ADA yang pernah baca field ini: bukan `payment_log` (bukan gateway), bukan
+       `checkins.pembayaran` (Menginap TIDAK PERNAH bikin dokumen checkins, beda dari
+       day_use - lihat catatan checkin_from_booking di routes/bookings.py). Akibatnya
+       Rp2.260.850 uang tunai asli (12 booking) sama sekali tidak pernah muncul di Arus
+       Kas - PERSIS efek yang sama dgn bug pendapatan kamar yang baru diperbaiki hari
+       ini, cuma di laporan yang beda. Dibucket per `created_at` (saat Quick Book
+       disubmit - itu momen uang FISIK diterima staf, konsisten dgn semangat cash-basis
+       laporan ini), bukan `paid_at` (kosong kalau baru DP/belum lunas penuh saat itu -
+       created_at selalu ada & selalu = momen pembayaran itu tercatat). `checkin_id`
+       belum ada (guard SAMA persis dgn fix pendapatan kamar) - kalau booking ini
+       kemudian di-checkin sbg day_use (checkin_id terisi), pembayarannya sudah
+       tercakup via `ci`/`kamar_tunai_langsung` di atas, jangan dobel di sini."""
     start, end = wita_date_range_to_utc(from_date, to_date)
-    logs, ci, ks = await asyncio.gather(
+    logs, ci, ks, bk_cash = await asyncio.gather(
         db.payment_log.find(scoped({
             "transaction_status": {"$in": ["settlement", "capture"]},
             "updated_at": {"$gte": start, "$lte": end},
@@ -613,6 +631,12 @@ async def report_arus_kas(from_date: str = Query(...), to_date: str = Query(...)
             "jam_checkout": {"$gte": start, "$lte": end}, "status": "selesai",
         }, property_id), {"_id": 0, "jam_checkout": 1, "pembayaran": 1, "from_booking_id": 1, "booking_paid": 1}).to_list(5000),
         db.kasir.find(scoped({"timestamp": {"$gte": start, "$lte": end}}, property_id), {"_id": 0, "timestamp": 1, "total": 1}).to_list(5000),
+        db.bookings.find(scoped({
+            "pembayaran": {"$exists": True, "$ne": []},
+            "checkin_id": {"$exists": False},
+            "status": {"$ne": "cancelled"},
+            "created_at": {"$gte": start, "$lte": end},
+        }, property_id), {"_id": 0, "created_at": 1, "pembayaran": 1}).to_list(5000),
     )
     by_day: Dict[str, Dict[str, int]] = {}
     bucket = tanggal_wita  # (2026-08-09) tanggal KALENDER WITA, bukan slice UTC mentah - lihat core.py
@@ -627,6 +651,10 @@ async def report_arus_kas(from_date: str = Query(...), to_date: str = Query(...)
         total_bayar = sum(int(p.get("jumlah", 0)) for p in c.get("pembayaran") or [])
         online_portion = int(c.get("booking_paid") or 0) if c.get("from_booking_id") else 0
         by_day[d]["kamar_tunai_langsung"] += max(0, total_bayar - online_portion)
+    for b in bk_cash:
+        d = bucket(b["created_at"])
+        by_day.setdefault(d, _init())
+        by_day[d]["kamar_tunai_langsung"] += sum(int(p.get("jumlah", 0)) for p in b.get("pembayaran") or [])
     for k in ks:
         d = bucket(k["timestamp"])
         by_day.setdefault(d, _init())
