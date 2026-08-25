@@ -1048,7 +1048,19 @@ async def fetch_gmail_emails(max_results: int = 20) -> int:
     dan simpan ke `email_logs`. Status Parsed_Success kalau AI berhasil ekstrak, Manual_Required
     kalau AI bilang bukan/gagal reservasi, Failed kalau ada error teknis. Mengembalikan jumlah
     email baru yang disimpan (skip yang sudah pernah diambil, dicek via gmail_message_id).
-    """
+
+    BUG NYATA ditemukan 2026-08-25 (laporan Agus - "3 tamu belum masuk hari ini", ditemukan
+    lewat audit langsung: 3 email RedDoorz Failed pagi ini krn OpenAI kehabisan kredit -
+    lihat insiden yang sama di sesi KontenPilot hari ini). Dedup lama HANYA cek "sudah
+    pernah ada log utk gmail_message_id ini" - begitu status="Failed" (kegagalan TEKNIS
+    sesaat: rate limit/kredit habis/API down, BUKAN keputusan AI ttg isi email), background
+    loop 60-detik TIDAK PERNAH mencoba lagi email itu SELAMANYA, walau penyebab kegagalan
+    (mis. kredit OpenAI) sudah lama pulih - beda dari Manual_Required (AI SUDAH menilai
+    kontennya, keputusan itu valid & tidak perlu diulang otomatis). 3 tamu asli (check-in
+    HARI ITU JUGA) nyaris tidak pernah masuk PMS sampai staf kebetulan sadar & lapor manual.
+    Fix: skip HANYA kalau log lama BUKAN "Failed" (Parsed_Success/Manual_Required tetap
+    idempotent, tidak diulang) - status="Failed" diproses ULANG, update doc lama di tempat
+    (bukan insert baru - 1 email = 1 log entry, konsisten)."""
     conn = await db.integrations.find_one({"provider": "gmail"})
     if not conn:
         raise HTTPException(400, "Gmail belum terhubung")
@@ -1062,8 +1074,9 @@ async def fetch_gmail_emails(max_results: int = 20) -> int:
 
         disimpan = 0
         for mid in message_ids:
-            if await db.email_logs.find_one({"gmail_message_id": mid}):
-                continue  # sudah pernah diambil sebelumnya
+            existing = await db.email_logs.find_one({"gmail_message_id": mid})
+            if existing and existing.get("status") != "Failed":
+                continue  # sudah pernah diambil & diproses tuntas (bukan cuma gagal teknis)
             detail_resp = await http.get(f"{GMAIL_MESSAGES_ENDPOINT}/{mid}", headers=headers, params={"format": "full"})
             if detail_resp.status_code != 200:
                 continue
@@ -1088,7 +1101,7 @@ async def fetch_gmail_emails(max_results: int = 20) -> int:
 
             sumber = _tebak_sumber(pengirim)
             doc = {
-                "id": str(uuid.uuid4()),
+                "id": existing["id"] if existing else str(uuid.uuid4()),
                 "gmail_message_id": mid,
                 "subjek": subjek,
                 "pengirim": pengirim,
@@ -1099,7 +1112,10 @@ async def fetch_gmail_emails(max_results: int = 20) -> int:
                 "alasan": alasan,
                 "processed_at": now_iso(),
             }
-            await db.email_logs.insert_one(doc)
+            if existing:
+                await db.email_logs.update_one({"id": existing["id"]}, {"$set": doc})
+            else:
+                await db.email_logs.insert_one(doc)
             disimpan += 1
 
             if status == "Parsed_Success":
