@@ -823,11 +823,22 @@ async def batalkan_reservasi_otomatis(log_id: str, data: dict, sumber: str, subj
 
     now = now_iso()
     for booking in bookings:
-        await db.bookings.update_one({"id": booking["id"]}, {"$set": {
+        update_fields = {
             "status": "cancelled", "cancelled_at": now, "cancelled_by": "ai_email_parser",
             "cancel_reason": f'Dibatalkan otomatis: email {data.get("jenis", "modifikasi/pembatalan")} OTA "{subjek}" ({sumber}, no. {no_reservasi})',
             "cancel_fee": 0, "refund_amount": 0,
-        }})
+        }
+        # payment_status DIRESET juga (2026-08-25, akar masalah dari 8 laporan yang
+        # ditemukan hari ini menghitung booking cancelled sbg pendapatan asli - lihat
+        # catatan lengkap di core.py/reports.py) - endpoint cancel_with_fee (staf manual)
+        # SUDAH benar reset ke refunded/forfeited, tapi auto-cancel OTA di sini TIDAK
+        # PERNAH menyentuh payment_status sama sekali. cancel_fee=0 di sini berarti tidak
+        # ada yang ditahan (RedDoorz yang urus refund tamu di sisi mereka sendiri) - reset
+        # ke "refunded" HANYA kalau booking ini sebelumnya memang "paid" (jangan sentuh
+        # booking yang belum bayar sama sekali).
+        if booking.get("payment_status") == "paid":
+            update_fields["payment_status"] = "refunded"
+        await db.bookings.update_one({"id": booking["id"]}, {"$set": update_fields})
         await log_availability_change(booking["room_id"], booking.get("room_tipe", ""), 1, "booking_dibatalkan_otomatis_ota", booking.get("property_id"), booking_id=booking["id"])
         await db.audit_log.insert_one({
             "id": str(uuid.uuid4()), "user_id": None, "username": "ai_email_parser",
@@ -1308,12 +1319,18 @@ async def modifikasi_batalkan(booking_id: str, user: dict = Depends(get_current_
         raise HTTPException(400, "Booking ini tidak sedang menunggu review modifikasi")
 
     now = now_iso()
-    await db.bookings.update_one({"id": booking_id}, {"$set": {
+    update_fields = {
         "status": "cancelled", "cancelled_at": now, "cancelled_by": user["nama"],
         "cancel_reason": "Dibatalkan staf setelah tinjau email modifikasi OTA (RedDoorz)",
         "cancel_fee": 0, "refund_amount": 0,
         "modifikasi_status": "dibatalkan", "modifikasi_reviewed_at": now, "modifikasi_reviewed_by": user["nama"],
-    }})
+    }
+    # payment_status direset juga - sama fix dgn batalkan_reservasi_otomatis di atas
+    # (2026-08-25, akar masalah 8 laporan yang menghitung booking cancelled sbg
+    # pendapatan asli hari ini).
+    if b.get("payment_status") == "paid":
+        update_fields["payment_status"] = "refunded"
+    await db.bookings.update_one({"id": booking_id}, {"$set": update_fields})
     await log_availability_change(b["room_id"], b.get("room_tipe", ""), 1, "booking_dibatalkan_modifikasi_ota", b.get("property_id"), booking_id=b["id"])
     await db.email_logs.update_many(
         {"id": {"$in": b.get("modifikasi_log_ids", [])}},
