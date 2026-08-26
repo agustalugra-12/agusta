@@ -479,17 +479,28 @@ async def _hitung_pendapatan_harian(from_date: str, to_date: str, property_id: s
         "jam_selesai": {"$gte": start},
         "ota_harga_dikonfirmasi": {"$ne": False},
         "checkin_id": {"$exists": False},
-    }, property_id), {"_id": 0, "total": 1, "jam_mulai": 1, "jam_selesai": 1}).to_list(5000)
+    }, property_id), {"_id": 0, "total": 1, "jam_mulai": 1, "jam_selesai": 1, "tipe": 1}).to_list(5000)
     ks = await db.kasir.find(scoped({"timestamp": {"$gte": start, "$lte": end}}, property_id), {"_id": 0}).to_list(5000)
     ex = await db.expenses.find(scoped({"tanggal": {"$gte": start, "$lte": end}}, property_id), {"_id": 0}).to_list(5000)
     sv = await db.services.find(scoped({"tanggal": {"$gte": start, "$lte": end}}, property_id), {"_id": 0}).to_list(5000)
     by_day: Dict[str, Dict[str, int]] = {}
     bucket = tanggal_wita  # (2026-08-09) konversi ke tanggal KALENDER WITA, bukan slice UTC mentah - lihat docstring tanggal_wita() di core.py
-    def _init(): return {"kamar": 0, "makanan": 0, "minuman": 0, "laundry": 0, "service": 0, "pengeluaran": 0}
+    # kamar_menginap/kamar_day_use (2026-08-26, permintaan Agus - Ringkasan) - pecahan
+    # ADDITIVE dari "kamar" (TIDAK menggantikan, cuma rincian) supaya Dashboard/laporan
+    # lain yang masih baca "kamar" gabungan tidak perlu ikut berubah. `ci` (db.checkins)
+    # SELALU Day Use (create_checkin cuma utk Day Use, & checkin_from_booking Menginap
+    # TIDAK PERNAH membuat dokumen checkins terpisah - lihat docstring checkin_from_booking
+    # di routes/bookings.py) - `bk` (db.bookings belum check-in) bisa Menginap ATAU Day Use
+    # yang belum tiba, dipecah dari field "tipe" masing-masing booking.
+    def _init(): return {
+        "kamar": 0, "kamar_menginap": 0, "kamar_day_use": 0,
+        "makanan": 0, "minuman": 0, "laundry": 0, "service": 0, "pengeluaran": 0,
+    }
     for c in ci:
         d = bucket(c["jam_checkin"])
         by_day.setdefault(d, _init())
         by_day[d]["kamar"] += c.get("total", 0)
+        by_day[d]["kamar_day_use"] += c.get("total", 0)
     for b in bk:
         total = int(b.get("total") or 0)
         jm, js = b.get("jam_mulai"), b.get("jam_selesai")
@@ -499,12 +510,14 @@ async def _hitung_pendapatan_harian(from_date: str, to_date: str, property_id: s
         d1 = datetime.fromisoformat(tanggal_wita(js)).date()
         nights = max(1, (d1 - d0).days)
         per_night = total / nights
+        kunci_tipe = "kamar_day_use" if b.get("tipe") == "day_use" else "kamar_menginap"
         for i in range(nights):
             d = (d0 + timedelta(days=i)).isoformat()
             if d < from_date or d > to_date:
                 continue
             by_day.setdefault(d, _init())
             by_day[d]["kamar"] += round(per_night)
+            by_day[d][kunci_tipe] += round(per_night)
     for k in ks:
         d = bucket(k["timestamp"])
         by_day.setdefault(d, _init())

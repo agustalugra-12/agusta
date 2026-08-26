@@ -332,6 +332,54 @@ async def skenario_whatsapp_request_dan_walkin_menginap_tidak_hilang() -> tuple:
     return ("whatsapp_request_dan_walkin_menginap_tidak_hilang", status)
 
 
+async def skenario_ringkasan_pisah_menginap_dan_day_use() -> tuple:
+    """Fitur baru (2026-08-26, permintaan Agus - Ringkasan) - kamar_menginap/kamar_day_use
+    HARUS terpisah benar per tipe, dan keduanya HARUS tetap jumlah ke "kamar" gabungan yang
+    sudah ada (additive, bukan pengganti). 1 booking Menginap (belum check-in) + 1 checkin
+    Day Use (sudah selesai) di hari yang sama - regresi kalau salah satu tercampur ke bucket
+    yang salah, atau totalnya tidak lagi sama dengan "kamar" gabungan."""
+    from core import db, now_iso
+    from routes.reports import report_daily
+
+    property_id = _property_id_test()
+    room_id = await _bikin_kamar_test(db, property_id, "T10")
+    today_wita = datetime.now(timezone.utc).astimezone(timezone(timedelta(hours=8))).date()
+    today_iso = today_wita.isoformat()
+    besok_iso = (today_wita + timedelta(days=1)).isoformat()
+
+    # Menginap, belum check-in (paid, tipe=menginap)
+    await db.bookings.insert_one({
+        "id": str(uuid.uuid4()), "kode": f"TEST-MG-{uuid.uuid4().hex[:6].upper()}", "property_id": property_id, "room_id": room_id, "room_nomor": "T10",
+        "room_tipe": "Standard", "tipe": "menginap", "nama_tamu": "Test Regresi Ringkasan Menginap",
+        "no_hp": _wa_unik(), "jam_mulai": f"{today_iso}T06:00:00+00:00", "jam_selesai": f"{besok_iso}T04:00:00+00:00",
+        "status": "aktif", "source": "whatsapp_request", "payment_status": "paid",
+        "subtotal": 150000, "service_fee": 4500, "total": 154500, "amount_due": 154500,
+        "paid_at": now_iso(), "created_at": now_iso(),
+    })
+    # Day Use, sudah selesai (checkins collection - SELALU Day Use)
+    await db.checkins.insert_one({
+        "id": str(uuid.uuid4()), "property_id": property_id, "room_id": room_id, "room_nomor": "T10",
+        "room_tipe": "Standard", "nama_tamu": "Test Regresi Ringkasan Day Use", "no_hp": _wa_unik(),
+        "jumlah_tamu": 1, "tarif_dasar": 120000, "jam_checkin": f"{today_iso}T02:00:00+00:00",
+        "jam_checkout": f"{today_iso}T08:00:00+00:00", "durasi_jam": 6, "overtime_jam": 0, "biaya_tambahan": 0,
+        "subtotal": 120000, "service_fee": 3600, "total": 123600, "status": "selesai",
+        "pembayaran": [{"metode": "tunai", "jumlah": 123600}],
+        "petugas_checkin": "Test", "petugas_checkin_id": "test", "created_at": now_iso(),
+    })
+
+    owner = {"id": "test", "nama": "Test Regresi"}
+    daily = await report_daily(from_date=today_iso, to_date=besok_iso, user=owner, property_id=property_id)
+    total_menginap = sum(r["kamar_menginap"] for r in daily)
+    total_day_use = sum(r["kamar_day_use"] for r in daily)
+    total_kamar = sum(r["kamar"] for r in daily)
+    ok = total_menginap == 154500 and total_day_use == 123600 and total_kamar == total_menginap + total_day_use
+    status = "PASS" if ok else (
+        f"FAIL - kamar_menginap={total_menginap} (expected 154500), kamar_day_use={total_day_use} "
+        f"(expected 123600), kamar={total_kamar} (expected {total_menginap + total_day_use})"
+    )
+    return ("ringkasan_pisah_menginap_dan_day_use", status)
+
+
 async def skenario_booking_cancelled_masih_paid_tidak_dihitung() -> tuple:
     """Bug KEDUA ditemukan sambil audit fix whatsapp_request/walk_in di atas (2026-08-25,
     permintaan Agus "dalami akar masalahnya, agar semua aman") - arah SEBALIKNYA
@@ -1026,6 +1074,7 @@ async def main():
         skenario_dashboard_ringkasan_sinkron,
         skenario_whatsapp_auto_tidak_hilang_dan_tidak_dobel,
         skenario_whatsapp_request_dan_walkin_menginap_tidak_hilang,
+        skenario_ringkasan_pisah_menginap_dan_day_use,
         skenario_booking_cancelled_masih_paid_tidak_dihitung,
         skenario_arus_kas_walkin_menginap_tidak_hilang,
         skenario_kas_metode_bayar_walkin_menginap_tidak_hilang,

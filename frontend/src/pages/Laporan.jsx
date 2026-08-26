@@ -137,13 +137,19 @@ function Ringkasan({ from, to }) {
   const [rows, setRows] = useState([]);
   useEffect(() => { api.get("/reports/daily", { params: { from_date: from, to_date: to } }).then(r => setRows(r.data)); }, [from, to]);
   const t = useMemo(() => {
-    const t = { kamar: 0, makanan: 0, minuman: 0, laundry: 0, pengeluaran: 0, pendapatan: 0, laba: 0 };
+    // kamar_menginap/kamar_day_use (2026-08-26, permintaan Agus) - pecahan ADDITIVE dari
+    // "kamar" (backend/routes/reports.py _hitung_pendapatan_harian) - loop generik di
+    // bawah otomatis ikut menjumlahkan key baru ini, tidak perlu logika terpisah.
+    const t = {
+      kamar: 0, kamar_menginap: 0, kamar_day_use: 0,
+      makanan: 0, minuman: 0, laundry: 0, pengeluaran: 0, pendapatan: 0, laba: 0,
+    };
     rows.forEach(r => { for (const k of Object.keys(t)) t[k] += r[k] || 0; });
     return t;
   }, [rows]);
   const exp = () => downloadCsv(`Laporan_Ringkasan_${from}_${to}.csv`,
-    ["Tanggal", "Kamar", "Makanan", "Minuman", "Laundry", "Pendapatan", "Pengeluaran", "Laba"],
-    rows.map(r => [r.tanggal, r.kamar, r.makanan, r.minuman, r.laundry, r.pendapatan, r.pengeluaran, r.laba]));
+    ["Tanggal", "Kamar Menginap", "Kamar Day Use", "Kamar (Total)", "Makanan", "Minuman", "Laundry", "Pendapatan", "Pengeluaran", "Laba"],
+    rows.map(r => [r.tanggal, r.kamar_menginap, r.kamar_day_use, r.kamar, r.makanan, r.minuman, r.laundry, r.pendapatan, r.pengeluaran, r.laba]));
   return (
     <div className="space-y-4">
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
@@ -151,6 +157,11 @@ function Ringkasan({ from, to }) {
         <Stat label="Pengeluaran" value={fmtRp(t.pengeluaran)} color="#EF4444" />
         <Stat label="Laba Bersih" value={fmtRp(t.laba)} color="#10B981" />
         <Stat label="Hari" value={rows.length} color="#64748B" />
+      </div>
+      <div className="grid grid-cols-2 lg:grid-cols-3 gap-3">
+        <Stat label="Kamar Menginap" value={fmtRp(t.kamar_menginap)} color="#1E40AF" />
+        <Stat label="Kamar Day Use" value={fmtRp(t.kamar_day_use)} color="#7C3AED" />
+        <Stat label="Total Kamar (Menginap + Day Use)" value={fmtRp(t.kamar)} color="#0F172A" />
       </div>
       <KasMetodeBayar from={from} to={to} />
       <Card className="border-slate-200"><CardContent className="p-5">
