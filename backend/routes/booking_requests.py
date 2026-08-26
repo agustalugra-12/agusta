@@ -29,6 +29,7 @@ email konfirmasi RedDoorz diterima, dan mematikan/redirect tombol Book Now publi
 from core import *
 from reservation_service import create_reservation, HARMONI_PROPERTY_ID
 import asyncio
+import difflib
 from collections import defaultdict
 from contextlib import asynccontextmanager
 from pymongo.errors import DuplicateKeyError
@@ -728,6 +729,32 @@ async def buat_booking_request(data: Dict[str, Any], property_id: Optional[str] 
             raise HTTPException(400, "Tanggal checkout harus setelah tanggal checkin - cek ulang perhitungannya")
 
     property_id = property_id or await get_default_property_id()
+
+    # Normalisasi room_tipe (2026-08-26, bug nyata - laporan Agus: tamu tanggal 29 dgn
+    # kamar Standard SEBENARNYA tersedia, tapi staf klik "Cek Ulang Kamar" di layar approve
+    # selalu bilang "Tidak ada kamar tersedia"). Root cause: AI kadang tulis varian ejaan
+    # ("standart") BUKAN nilai kanonik PMS ("Standard") ke room_tipe - field ini TIDAK
+    # PERNAH divalidasi/dinormalisasi sejak titik masuk satu-satunya booking_request AI ini
+    # dibuat, beda dari nama_tamu/no_hp/tanggal_checkin dst yg semua sudah dijaga guard di
+    # atas. booking_request tersimpan dgn "standart" - /public/availability (dipakai staf
+    # "Cek Ulang Kamar") exact-match string persis ke rooms.tipe, "standart" != "Standard"
+    # -> staf lihat "Tidak ada kamar tersedia" walau kamarnya objektif ada & kosong.
+    # Fuzzy-match (difflib, stdlib - bukan dependency baru) ke nilai KANONIK rooms.tipe
+    # milik PROPERTI INI (bukan hardcode daftar global - tiap properti bisa beda tipe
+    # kamarnya, mis. Harmoni cuma py "Cottage") - kalau cukup mirip (cutoff 0.6, "standart"
+    # vs "standard" ~0.94), ganti ke ejaan KANONIK sebelum tersimpan. Mutasi `data["room_tipe"]`
+    # LANGSUNG (bukan variabel terpisah) - _hitung_diskon_gabungan/_hitung_preview_harga di
+    # bawah baca `data["room_tipe"]` jg utk exact-match cari tarif kamar (bug SAMA persis:
+    # tanpa normalisasi ini, preview harga jg silently None utk tamu). Tidak ketemu kandidat
+    # mirip sama sekali -> biarkan apa adanya (JANGAN menebak dari string yang benar2 beda -
+    # staf yang approve tetap bisa lihat & koreksi manual kalau ini terjadi).
+    if data.get("room_tipe"):
+        tipe_kanonik = await db.rooms.distinct("tipe", scoped({}, property_id))
+        tipe_kanonik_lower = [t.lower() for t in tipe_kanonik]
+        cocok = difflib.get_close_matches(data["room_tipe"].lower(), tipe_kanonik_lower, n=1, cutoff=0.6)
+        if cocok:
+            data["room_tipe"] = tipe_kanonik[tipe_kanonik_lower.index(cocok[0])]
+
     diskon_info, diskon_ai_persen, diskon_persen_efektif, preview_harga = await _hitung_diskon_gabungan(data, property_id)
 
     doc = {
