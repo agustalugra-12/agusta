@@ -282,6 +282,12 @@ class AiBotTiketIn(BaseModel):
     # booking_request/2026-08-14) - lihat guard di buat_issue (routes/issues.py). Optional/
     # None supaya kompatibel mundur dgn pemanggil lama yang belum kirim field ini.
     idempotency_key: Optional[str] = None
+    # (2026-08-26, PRD "Fix Member Discount & Day Use dengan Code") - ID booking ASLI kalau
+    # tiket ini soal kedatangan tamu yang match ke booking tertentu (lihat
+    # catat_kedatangan_tamu di ai-chat-bot, isi dari booking_ringkasan[0]["id"] yg dikirim
+    # ai_bot_booking_status di bawah). Dipakai bikin tombol "Ya, sudah check-in" ke staf -
+    # None kalau lookup booking gagal/tidak match, tiket tetap dibuat spt biasa TANPA tombol.
+    booking_id: Optional[str] = None
 
 
 @api.post("/integrasi-ai-bot/tiket")
@@ -316,6 +322,18 @@ async def ai_bot_buat_tiket(body: AiBotTiketIn, property_id: str = Depends(verif
         room_id=room_id, room_nomor=room_nomor, nama_tamu=body.nama_tamu, no_hp=body.no_hp,
         idempotency_key=body.idempotency_key,
     )
+    # Tombol "Ya, sudah check-in" ke staf (2026-08-26, PRD "Fix Member Discount & Day Use
+    # dengan Code") - HANYA kalau ada booking_id ASLI yang match (lookup gagal = tidak ada
+    # tombol, best-effort, tiket di atas tetap dibuat apa adanya). Best-effort juga di sini -
+    # gagal kirim alert Telegram TIDAK BOLEH menggagalkan pembuatan tiket yang sudah sukses.
+    if body.booking_id:
+        try:
+            from routes.telegram_bot import _kirim_konfirmasi_kedatangan
+            await _kirim_konfirmasi_kedatangan(body.booking_id, body.deskripsi, property_id)
+        except Exception:
+            logging.getLogger("integrasi_ai_bot").warning(
+                f"Gagal kirim konfirmasi kedatangan (booking {body.booking_id}) ke staf", exc_info=True
+            )
     return {"ok": True, "tiket": tiket}
 
 
@@ -381,6 +399,11 @@ async def ai_bot_booking_status(no_hp: str, property_id: str = Depends(verifikas
             ).to_list(20)
             if bks:
                 booking_ringkasan = [{
+                    # "id": ID booking ASLI (2026-08-26, PRD "Fix Member Discount & Day Use
+                    # dengan Code") - dipakai catat_kedatangan_tamu (ai-chat-bot) supaya bisa
+                    # kirim tombol "Ya, sudah check-in" yang benar-benar merujuk booking ini,
+                    # bukan cuma kode tampilan. Additive, tidak mengubah field yang sudah ada.
+                    "id": b["id"],
                     "kode": b["kode"], "room_nomor": b.get("room_nomor"), "room_tipe": b.get("room_tipe"),
                     "sync_status": b.get("sync_status"),
                     # sudah_diajukan_pembatalan: ditemukan 2026-07-21 - booking dengan

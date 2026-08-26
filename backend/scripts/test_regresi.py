@@ -671,6 +671,88 @@ async def skenario_checkout_payment_protection() -> tuple:
     return ("checkout_payment_protection", "PASS")
 
 
+async def skenario_konfirmasi_checkin_dari_tiket_berhasil() -> tuple:
+    """Fitur baru (2026-08-26, PRD "Fix Member Discount & Day Use dengan Code" - tombol
+    "Ya, sudah check-in" di notifikasi Telegram staf, dipicu dari catat_kedatangan_tamu
+    ai-chat-bot) - _konfirmasi_checkin_dari_tiket HARUS benar-benar menjalankan check-in
+    ASLI (checkin_from_booking yang SUDAH ADA, direct reuse - bukan mekanisme baru):
+    booking berubah status checked_in DAN total_kunjungan tamu naik lewat jalur yang
+    PERSIS SAMA dengan check-in manual biasa di PMS (definisi "kedatangan" tidak berubah)."""
+    from core import db, now_iso
+    from routes.telegram_bot import _konfirmasi_checkin_dari_tiket
+
+    property_id = _property_id_test()
+    room_id = await _bikin_kamar_test(db, property_id, "T8")
+    staff_user = {"id": "test-staf", "nama": "Test Regresi Staf"}
+    no_hp = _wa_unik()
+    today_iso = datetime.now(timezone.utc).isoformat()
+
+    booking_id = str(uuid.uuid4())
+    await db.bookings.insert_one({
+        "id": booking_id, "kode": f"TEST-{uuid.uuid4().hex[:8].upper()}", "property_id": property_id,
+        "room_id": room_id, "room_nomor": "T8", "room_tipe": "Standard", "tipe": "day_use",
+        "nama_tamu": "Test Regresi Konfirmasi Checkin", "no_hp": no_hp,
+        "jam_mulai": today_iso, "jam_selesai": today_iso, "status": "booking_paid",
+        "source": "whatsapp_auto", "payment_status": "paid", "subtotal": 100000, "service_fee": 3000,
+        "total": 103000, "amount_due": 103000, "payment_type": "QRIS", "paid_at": today_iso, "created_at": today_iso,
+    })
+
+    konfirmasi = await _konfirmasi_checkin_dari_tiket(booking_id, staff_user)
+    updated = await db.bookings.find_one({"id": booking_id})
+    guest = await db.guests.find_one({"no_hp": no_hp, "property_id": property_id})
+
+    ok = (
+        konfirmasi.startswith("✅")
+        and updated is not None and updated.get("status") == "checked_in"
+        and guest is not None and guest.get("total_kunjungan") == 1
+    )
+    status = "PASS" if ok else (
+        f"FAIL - konfirmasi={konfirmasi!r}, booking_status={updated.get('status') if updated else None}, "
+        f"guest_total_kunjungan={guest.get('total_kunjungan') if guest else None} (harusnya checked_in & 1)"
+    )
+    return ("konfirmasi_checkin_dari_tiket_berhasil", status)
+
+
+async def skenario_konfirmasi_checkin_dari_tiket_dobel_tidak_dobel_hitung() -> tuple:
+    """Tap tombol "Ya, sudah check-in" DUA KALI pada booking yang SAMA HARUS TIDAK
+    menghasilkan check-in dobel/total_kunjungan naik dua kali. Anti-dobel BUKAN mekanisme
+    baru - direct reuse guard status yang SUDAH ADA di checkin_from_booking
+    (booking_paid/aktif -> checked_in, tap kedua otomatis kena guard itu sendiri)."""
+    from core import db, now_iso
+    from routes.telegram_bot import _konfirmasi_checkin_dari_tiket
+
+    property_id = _property_id_test()
+    room_id = await _bikin_kamar_test(db, property_id, "T9")
+    staff_user = {"id": "test-staf", "nama": "Test Regresi Staf"}
+    no_hp = _wa_unik()
+    today_iso = datetime.now(timezone.utc).isoformat()
+
+    booking_id = str(uuid.uuid4())
+    await db.bookings.insert_one({
+        "id": booking_id, "kode": f"TEST-{uuid.uuid4().hex[:8].upper()}", "property_id": property_id,
+        "room_id": room_id, "room_nomor": "T9", "room_tipe": "Standard", "tipe": "day_use",
+        "nama_tamu": "Test Regresi Dobel Checkin", "no_hp": no_hp,
+        "jam_mulai": today_iso, "jam_selesai": today_iso, "status": "booking_paid",
+        "source": "whatsapp_auto", "payment_status": "paid", "subtotal": 100000, "service_fee": 3000,
+        "total": 103000, "amount_due": 103000, "payment_type": "QRIS", "paid_at": today_iso, "created_at": today_iso,
+    })
+
+    konfirmasi_1 = await _konfirmasi_checkin_dari_tiket(booking_id, staff_user)
+    konfirmasi_2 = await _konfirmasi_checkin_dari_tiket(booking_id, staff_user)
+    guest = await db.guests.find_one({"no_hp": no_hp, "property_id": property_id})
+
+    ok = (
+        konfirmasi_1.startswith("✅")
+        and not konfirmasi_2.startswith("✅")
+        and guest is not None and guest.get("total_kunjungan") == 1
+    )
+    status = "PASS" if ok else (
+        f"FAIL - konfirmasi_1={konfirmasi_1!r}, konfirmasi_2={konfirmasi_2!r}, "
+        f"guest_total_kunjungan={guest.get('total_kunjungan') if guest else None} (harusnya tetap 1)"
+    )
+    return ("konfirmasi_checkin_dari_tiket_dobel_tidak_dobel_hitung", status)
+
+
 async def skenario_checkin_dari_booking_day_use_bisa_ditumpuk_menginap() -> tuple:
     """Bug nyata 2026-08-15 (kasus RedDoorz I Komang Budiana kamar 17 & Indah Inda kamar
     6 - keduanya TOLAK auto-booking & harus di-override manual owner "tumpuk day use ->
@@ -951,6 +1033,8 @@ async def main():
         skenario_telegram_laporan_harian_cancelled_tidak_dihitung,
         skenario_checkout_sync_amount_due,
         skenario_checkout_payment_protection,
+        skenario_konfirmasi_checkin_dari_tiket_berhasil,
+        skenario_konfirmasi_checkin_dari_tiket_dobel_tidak_dobel_hitung,
         skenario_checkin_dari_booking_day_use_bisa_ditumpuk_menginap,
         skenario_estimasi_siap_pada_tanggal_dayuse_pagi,
         skenario_laporan_pengeluaran_tanggal_penuh_timestamp,

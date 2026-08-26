@@ -413,6 +413,63 @@ async def _override_checkout(incident_id: str, owner_user: dict) -> str:
     return f"🔐 Override diberikan — {it['title']}\n\nStaf bisa coba checkout lagi sekarang di PMS."
 
 
+async def _kirim_konfirmasi_kedatangan(booking_id: str, deskripsi: str, property_id: str):
+    """Kirim alert ke staf (bot resepsionis) dgn tombol "Ya, sudah check-in" (2026-08-26,
+    PRD "Fix Member Discount & Day Use dengan Code" - audit: catat_kedatangan_tamu di
+    ai-chat-bot cuma bikin tiket generik terputus dari aksi check-in sungguhan, staf harus
+    buka PMS terpisah & gampang lupa - total_kunjungan pun tidak pernah naik). Tap tombol
+    memicu _konfirmasi_checkin_dari_tiket di bawah - check-in ASLI lewat
+    checkin_from_booking yang SUDAH ADA (routes/bookings.py), BUKAN mekanisme penghitungan
+    kunjungan baru. Staf TETAP yang mengonfirmasi (tap = staf menyatakan tamu BENAR sudah
+    datang) - bukan otomatis dari kata tamu ke AI semata, prinsip "check-in = bukti
+    kedatangan" tidak berubah. Best-effort (gagal kirim alert TIDAK BOLEH menggagalkan
+    pembuatan tiket yang memanggil ini, lihat try/except di pemanggil)."""
+    b = await db.bookings.find_one(scoped({"id": booking_id}, property_id), {"_id": 0})
+    if not b:
+        return
+    teks = (
+        f"🛎️ {deskripsi}\n\n"
+        f"Booking {b.get('kode', '-')} — {b.get('nama_tamu', '-')} ({b.get('room_tipe', '-')} "
+        f"{b.get('room_nomor', '-')})\n\n"
+        f"Kalau tamu ini BENAR sudah tiba, tap tombol di bawah untuk check-in langsung."
+    )
+    tombol = [[{"text": "✅ Ya, sudah check-in", "callback_data": f"checkin_confirm:{booking_id}"}]]
+    staf = await db.users.find(
+        {"role": "resepsionis", "telegram_chat_id": {"$ne": None}}, {"_id": 0, "telegram_chat_id": 1}
+    ).to_list(50)
+    for u in staf:
+        await _kirim_pesan_dengan_tombol(BOT_CONFIG["staff"]["token"], u["telegram_chat_id"], teks, tombol)
+
+
+async def _konfirmasi_checkin_dari_tiket(booking_id: str, staff_user: dict) -> str:
+    """Tap tombol "Ya, sudah check-in" (lihat _kirim_konfirmasi_kedatangan di atas) ->
+    jalankan check-in ASLI lewat checkin_from_booking yang SUDAH ADA (routes/bookings.py),
+    BUKAN mekanisme baru - total_kunjungan naik lewat jalur yang PERSIS SAMA dengan check-in
+    manual biasa di PMS, artinya definisi "kedatangan" TIDAK berubah (2026-08-26, PRD "Fix
+    Member Discount & Day Use dengan Code"). Anti-dobel BUKAN mekanisme baru di sini -
+    checkin_from_booking sendiri sudah menolak booking yang statusnya bukan
+    booking_paid/aktif (guard yang SUDAH ADA, lihat docstring-nya) - tap KEDUA pada booking
+    yang sama otomatis kena guard itu, di sini cuma diterjemahkan jadi pesan ramah.
+    property_id diresolusi dari booking itu sendiri (bukan dari sesi Telegram - callback
+    query tidak sedang punya konteks properti aktif spt sesi PMS staf biasa)."""
+    b = await db.bookings.find_one({"id": booking_id}, {"_id": 0})
+    if not b:
+        return "❌ Booking tidak ditemukan."
+    property_id = b["property_id"]
+    from routes.bookings import checkin_from_booking
+    try:
+        await checkin_from_booking(booking_id, CheckinFromBookingBody(), staff_user, property_id)
+    except HTTPException as e:
+        if e.status_code == 400:
+            return f"ℹ️ {e.detail}"
+        return f"❌ Gagal check-in: {e.detail}"
+    b = await db.bookings.find_one({"id": booking_id}, {"_id": 0}) or b
+    return (
+        f"✅ Check-in berhasil — {b.get('nama_tamu', '-')} (kamar {b.get('room_nomor', '-')}), "
+        f"dicatat oleh {staff_user.get('nama') or 'staf'}."
+    )
+
+
 async def _push_incident_urgent(incident: dict):
     """Push segera utk incident severity="urgent" (2026-08-12) - dipanggil dari
     routes/incidents.py create_incident() lewat import tertunda (hindari circular
@@ -876,7 +933,20 @@ async def _handle_telegram_update(kind: str, request: Request):
         role = BOT_CONFIG[kind]["role"]
         data = cq.get("data") or ""
         u = await db.users.find_one({"telegram_chat_id": chat_id, "role": role})
-        if not u or kind != "owner":
+        if not u:
+            await _answer_callback_query(token, cq["id"], "Akun Telegram ini belum terhubung.")
+            return {"ok": True}
+        if data.startswith("checkin_confirm:"):
+            # (2026-08-26, PRD "Fix Member Discount & Day Use dengan Code") - SATU-SATUNYA
+            # callback yang sengaja dibuka utk bot staf (resepsionis) JUGA, bukan cuma
+            # owner - beda dari Action Center di bawah yang tetap khusus owner. Tombol ini
+            # memang dikirim ke staf (lihat _kirim_konfirmasi_kedatangan), jadi keduanya
+            # (kind=="owner" ATAU kind=="staff") harus bisa menekannya.
+            konfirmasi = await _konfirmasi_checkin_dari_tiket(data.split(":", 1)[1], staff_user=u)
+            await _edit_pesan(token, chat_id, message_id, konfirmasi, [])
+            await _answer_callback_query(token, cq["id"])
+            return {"ok": True}
+        if kind != "owner":
             # Action Center khusus owner (staff bot tidak dapat tombol apa pun sejauh
             # ini) - tombol ini secara desain tidak pernah dikirim ke staff, tapi dijaga
             # di sini juga kalau2 ada yang coba tap dari luar alur normal.
