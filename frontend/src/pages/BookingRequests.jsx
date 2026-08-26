@@ -6,7 +6,9 @@ import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
-import { Copy, ExternalLink, Check, X, AlertOctagon, RefreshCw } from "lucide-react";
+import { Input } from "@/components/ui/input";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Copy, ExternalLink, Check, X, AlertOctagon, RefreshCw, Pencil } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
 
 const STATUS_LABEL = {
@@ -411,6 +413,92 @@ export function TolakDialog({ req, onOpenChange, onDone }) {
   );
 }
 
+// Dialog Edit (2026-08-26, permintaan Agus - kasus tamu Ode Dwik minta ubah 3->5 kamar,
+// sebelumnya PMS tidak punya cara ubah field booking_request sama sekali, staf harus buat
+// permintaan baru dari nol). Cuma untuk status waiting_approval (lihat backend
+// edit_booking_request) - belum ada kamar sungguhan dialokasikan, jadi murni edit metadata +
+// hitung ulang harga otomatis oleh server (PATCH /booking-requests/{id}).
+export function EditDialog({ req, onOpenChange, onSaved }) {
+  const [jumlahKamar, setJumlahKamar] = useState(1);
+  const [roomTipe, setRoomTipe] = useState("");
+  const [checkin, setCheckin] = useState("");
+  const [checkout, setCheckout] = useState("");
+  const [denganSarapan, setDenganSarapan] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+
+  useEffect(() => {
+    if (!req) return;
+    setJumlahKamar(req.jumlah_kamar || 1);
+    setRoomTipe(req.room_tipe || "");
+    setCheckin(req.tanggal_checkin || "");
+    setCheckout(req.tanggal_checkout || "");
+    setDenganSarapan(!!req.dengan_sarapan);
+  }, [req]);
+
+  if (!req) return null;
+
+  const simpan = async () => {
+    setSubmitting(true);
+    try {
+      await api.patch(`/booking-requests/${req.id}`, {
+        jumlah_kamar: Number(jumlahKamar) || 1,
+        room_tipe: roomTipe,
+        tanggal_checkin: checkin,
+        tanggal_checkout: checkout || null,
+        dengan_sarapan: denganSarapan,
+      });
+      toast.success("Permintaan booking berhasil diubah, harga dihitung ulang");
+      onSaved();
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Gagal mengubah permintaan");
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <Dialog open={!!req} onOpenChange={(o) => { if (!o) onOpenChange(false); }}>
+      <DialogContent>
+        <DialogHeader><DialogTitle>Edit Permintaan {req.kode}</DialogTitle></DialogHeader>
+        <div className="space-y-3 text-sm">
+          <div>
+            <Label>Jumlah Kamar</Label>
+            <Input type="number" min={1} value={jumlahKamar} onChange={(e) => setJumlahKamar(e.target.value)} />
+          </div>
+          <div>
+            <Label>Tipe Kamar</Label>
+            <Input value={roomTipe} onChange={(e) => setRoomTipe(e.target.value)} placeholder="mis. Standard" />
+          </div>
+          {req.tipe === "menginap" && (
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <Label>Check-in</Label>
+                <Input type="date" value={checkin} onChange={(e) => setCheckin(e.target.value)} />
+              </div>
+              <div>
+                <Label>Check-out</Label>
+                <Input type="date" value={checkout} onChange={(e) => setCheckout(e.target.value)} />
+              </div>
+            </div>
+          )}
+          {req.tipe === "menginap" && (
+            <div className="flex items-center gap-2">
+              <Checkbox checked={denganSarapan} onCheckedChange={(v) => setDenganSarapan(!!v)} />
+              <Label className="!mb-0">Dengan sarapan</Label>
+            </div>
+          )}
+          <p className="text-xs text-slate-500">
+            Harga (subtotal, diskon, service fee, total) dihitung ulang otomatis oleh sistem setelah disimpan.
+          </p>
+        </div>
+        <DialogFooter>
+          <Button onClick={simpan} disabled={submitting}>{submitting ? "Menyimpan…" : "Simpan Perubahan"}</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 export function ActionRequiredRedDoorz() {
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -492,6 +580,7 @@ export default function BookingRequests() {
   const [approveTarget, setApproveTarget] = useState(null);
   const [rejectTarget, setRejectTarget] = useState(null);
   const [resendTarget, setResendTarget] = useState(null);
+  const [editTarget, setEditTarget] = useState(null);
 
   const load = async () => {
     setLoading(true);
@@ -607,6 +696,9 @@ export default function BookingRequests() {
                     <Button size="sm" variant="outline" onClick={() => setRejectTarget(it)}>
                       <X className="w-3.5 h-3.5 mr-1" /> Tolak
                     </Button>
+                    <Button size="sm" variant="outline" onClick={() => setEditTarget(it)}>
+                      <Pencil className="w-3.5 h-3.5 mr-1" /> Edit
+                    </Button>
                   </div>
                 )}
                 {it.status_efektif === "kadaluarsa" && (
@@ -625,6 +717,7 @@ export default function BookingRequests() {
       <SetujuiDialog req={approveTarget} onOpenChange={(o) => { if (!o) setApproveTarget(null); }} onApproved={load} />
       <SetujuiDialog req={resendTarget} onOpenChange={(o) => { if (!o) setResendTarget(null); }} onApproved={load} mode="resend" />
       <TolakDialog req={rejectTarget} onOpenChange={(o) => { if (!o) setRejectTarget(null); }} onDone={() => { setRejectTarget(null); load(); }} />
+      <EditDialog req={editTarget} onOpenChange={(o) => { if (!o) setEditTarget(null); }} onSaved={() => { setEditTarget(null); load(); }} />
     </div>
   );
 }

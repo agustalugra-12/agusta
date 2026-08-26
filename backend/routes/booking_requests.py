@@ -1075,6 +1075,70 @@ async def get_booking_request(rid: str, user: dict = Depends(get_current_user),
     return r
 
 
+@api.patch("/booking-requests/{rid}")
+async def edit_booking_request(rid: str, body: BookingRequestEdit, user: dict = Depends(get_current_user),
+                                property_id: str = Depends(get_active_property)):
+    """Edit field Booking Request SEBELUM disetujui (2026-08-26, permintaan Agus - kasus
+    tamu Ode Dwik minta ubah 3->5 kamar; sebelumnya SATU-SATUNYA cara ubah field
+    booking_request adalah buat request baru dari nol, PMS tidak punya cara edit sama
+    sekali). Dibatasi ke status waiting_approval saja (STATUS_TERBUKA) - belum ada kamar
+    sungguhan dialokasikan di tahap ini, jadi ini murni edit metadata + hitung ulang harga
+    (reuse _hitung_diskon_gabungan, SATU-SATUNYA sumber kebenaran hitungan harga, sama
+    yang dipakai saat pembuatan) - BUKAN realokasi/cancel booking asli (booking yang sudah
+    disetujui/waiting_payment perlu batalkan+realokasi kamar sungguhan, beda kelas
+    kompleksitas & resiko, sengaja di luar scope endpoint ini)."""
+    async with _request_lock(rid):
+        req = await db.booking_requests.find_one(scoped({"id": rid}, property_id))
+        if not req:
+            raise HTTPException(404, "Permintaan booking tidak ditemukan")
+        if req["status"] not in STATUS_TERBUKA:
+            raise HTTPException(400, f"Hanya permintaan waiting_approval yang bisa diedit (status: {req['status']})")
+
+        perubahan = body.model_dump(exclude_unset=True)
+        if not perubahan:
+            raise HTTPException(400, "Tidak ada perubahan dikirim")
+        if perubahan.get("payment_option_diminta") not in (None, "dp50", "full"):
+            raise HTTPException(400, "payment_option harus 'dp50' atau 'full'")
+        if perubahan.get("metode_pembayaran_diminta") not in (None, *TRIPAY_METODE_VALID):
+            raise HTTPException(400, f"metode_pembayaran tidak valid, pilih salah satu: {sorted(TRIPAY_METODE_VALID)}")
+
+        data = {**req, **perubahan}
+        if perubahan.get("jumlah_kamar") is not None:
+            data["jumlah_kamar"] = max(1, int(perubahan["jumlah_kamar"]))
+
+        # room_tipe berubah -> fuzzy-match ke ejaan kanonik properti ini (pola sama persis
+        # dgn buat_booking_request - "standart" != "Standard" bikin preview harga None)
+        if perubahan.get("room_tipe"):
+            tipe_kanonik = await db.rooms.distinct("tipe", scoped({}, property_id))
+            tipe_kanonik_lower = [t.lower() for t in tipe_kanonik]
+            cocok = difflib.get_close_matches(data["room_tipe"].lower(), tipe_kanonik_lower, n=1, cutoff=0.6)
+            if cocok:
+                data["room_tipe"] = tipe_kanonik[tipe_kanonik_lower.index(cocok[0])]
+
+        diskon_info, diskon_ai_persen, diskon_persen_efektif, preview_harga = await _hitung_diskon_gabungan(data, property_id)
+        if preview_harga is None:
+            raise HTTPException(400, "Tidak bisa hitung ulang harga - cek tipe kamar/tanggal")
+
+        update_fields = {
+            k: data[k] for k in (
+                "jumlah_kamar", "room_tipe", "tanggal_checkin", "tanggal_checkout", "jam_checkin",
+                "dengan_sarapan", "payment_option_diminta", "metode_pembayaran_diminta", "catatan",
+            ) if k in perubahan
+        }
+        update_fields.update({
+            "preview_kedatangan_ke": diskon_info["kedatangan_ke"],
+            "preview_diskon_persen": diskon_persen_efektif,
+            "preview_diskon_member_persen": diskon_info["diskon_persen"],
+            "diskon_ai_persen": diskon_ai_persen,
+            "preview_harga": preview_harga,
+            "total": preview_harga["total"],
+            "updated_at": now_iso(),
+        })
+        await db.booking_requests.update_one({"id": rid}, {"$set": update_fields})
+        await log_activity(user, "edit_booking_request", f"{req['kode']} ({req['nama_tamu']}): {perubahan}")
+        return await db.booking_requests.find_one(scoped({"id": rid}, property_id), {"_id": 0})
+
+
 @api.post("/booking-requests/{rid}/approve")
 async def approve_booking_request(rid: str, body: BookingRequestApprove, user: dict = Depends(get_current_user),
                                    property_id: str = Depends(get_active_property)):

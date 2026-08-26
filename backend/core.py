@@ -1318,6 +1318,25 @@ class BookingRequestApprove(BaseModel):
 class BookingRequestReject(BaseModel):
     alasan: Optional[str] = ""
 
+class BookingRequestEdit(BaseModel):
+    """Body untuk staf mengedit Booking Request SEBELUM disetujui (2026-08-26, permintaan
+    Agus - kasus tamu Ode Dwik minta ubah 3->5 kamar, PMS sebelumnya TIDAK punya cara edit
+    sama sekali, staf harus buat request baru dari nol). SENGAJA dibatasi ke status
+    waiting_approval saja (lihat routes/booking_requests.py edit_booking_request) - belum
+    ada kamar sungguhan dialokasikan di tahap ini, jadi murni edit metadata + hitung ulang
+    harga, bukan realokasi/cancel booking asli (kompleksitas beda kelas, di luar scope ini).
+    Semua field opsional - cuma field yang dikirim yang berubah (partial update)."""
+    jumlah_kamar: Optional[int] = None
+    room_tipe: Optional[str] = None
+    tanggal_checkin: Optional[str] = None
+    tanggal_checkout: Optional[str] = None
+    jam_checkin: Optional[str] = None
+    dengan_sarapan: Optional[bool] = None
+    payment_option_diminta: Optional[str] = None  # dp50 | full
+    metode_pembayaran_diminta: Optional[str] = None  # kode channel Tripay
+    diskon_diminta_tamu: Optional[bool] = None
+    catatan: Optional[str] = None
+
 class StaffKerjaCreate(BaseModel):
     """Dokumen di collection `staff_kerja` — roster staf yang dijadwalkan shift (Jadwal
     Kerja). SENGAJA terpisah dari `users` (akun login PMS) — staf shift (housekeeping/
