@@ -55,7 +55,7 @@ def _data_dasar(property_id: str, idempotency_key) -> dict:
         "no_hp": _wa_unik(),
         "tipe": "day_use",
         "tanggal_checkin": _tanggal_checkin_aman(),
-        "jam_checkin": "12:00",  # >= 11:00 WITA (guard minimum Day Use)
+        "jam_checkin": "12:00",  # >= 12:00 WITA (guard minimum Day Use)
         # room_tipe SENGAJA kosong - _hitung_preview_harga return None dgn aman kalau
         # room_tipe tidak ditemukan, tidak perlu bikin db.rooms utk tes ini.
         # payment_option SENGAJA tidak diisi - _coba_auto_approve_day_use no-op kalau

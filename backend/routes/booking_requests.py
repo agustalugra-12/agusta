@@ -187,6 +187,8 @@ async def _coba_auto_approve_day_use(doc: Dict[str, Any]) -> None:
             return
         if doc["jumlah_kamar"] != 1:
             return  # grup >1 kamar tetap lewat review staf (auto-pilih banyak kamar sekaligus lebih berisiko)
+        if doc.get("jam_checkin_perlu_review"):
+            return  # (2026-09-01) jam check-in di bawah 12:00 - staf yang putuskan, bukan auto-approve
 
         from routes.public import public_availability
         # Bug nyata ditemukan 2026-08-02 (insiden langsung: tamu "Frisnanda Maulana" coba
@@ -678,29 +680,36 @@ async def buat_booking_request(data: Dict[str, Any], property_id: Optional[str] 
             "datang (format HH:MM, contoh 10:00) sebelum lanjut booking.",
         )
 
-    # Guard jam minimum Day Use = 11:00 WITA (2026-08-08, keputusan bisnis Agus - insiden
-    # nyata: booking Day Use tamu JUMARTO ke kamar 14 tercatat jam 10:00 WITA, harusnya
-    # ditolak/dikoreksi ke 11:00). SENGAJA membalik rule 2026-08-01 (lihat komentar
-    # ai_service.py "Day Use TIDAK punya jam mulai tetap" - waktu itu Day Use SENGAJA
-    # dibuat TANPA jam minimum krn AI pernah salah menolak tamu jam 10/11 dgn alasan
-    # ngarang "mulai jam 14:00", tamu batal booking) - Agus KONFIRMASI EKSPLISIT 2026-08-08
-    # ingin ini jadi aturan TETAP sekarang (bukan cuma kasus Jumarto), jam minimum
-    # sungguhan 11:00 (BUKAN ngarang seperti insiden lama, ini benar2 kebijakan baru yg
-    # diminta pemilik). Divalidasi di SINI (satu-satunya titik masuk booking_request AI,
-    # sama seperti guard jam_checkin wajib di atas) - BUKAN di create_reservation/
-    # check_room_available (itu tetap generic utk semua sumber tipe day_use termasuk
-    # walk-in staf Quick Book, yang SENGAJA tidak disentuh guard ini - tamu yang FISIK
-    # sudah datang ke lokasi beda konteks dari booking AI jarak jauh).
+    # Guard jam minimum Day Use = 12:00 WITA (2026-08-08, keputusan bisnis Agus, threshold
+    # dinaikkan dari 11:00 ke 12:00 pada 2026-09-01 - insiden nyata: booking Day Use tamu
+    # JUMARTO ke kamar 14 tercatat jam 10:00 WITA, harusnya ditolak/dikoreksi). SENGAJA
+    # membalik rule 2026-08-01 (lihat komentar ai_service.py "Day Use TIDAK punya jam mulai
+    # tetap" - waktu itu Day Use SENGAJA dibuat TANPA jam minimum krn AI pernah salah
+    # menolak tamu jam 10/11 dgn alasan ngarang "mulai jam 14:00", tamu batal booking).
+    #
+    # (2026-09-01) BEDA dari versi lama (hard-reject HTTPException 400 yang memblokir
+    # booking_request tercipta sama sekali): sekarang request TETAP DIBUAT (data booking
+    # tidak hilang dari pembukuan/antrian staf), cuma ditandai `jam_checkin_perlu_review`
+    # supaya `_coba_auto_approve_day_use` di bawah SENGAJA melewati auto-approve utk
+    # request ini - booking_request tetap "waiting_approval", staf yang putuskan terima/
+    # tolak jam custom itu (bukan AI/sistem otomatis yang memutuskan). Divalidasi di SINI
+    # (satu-satunya titik masuk booking_request AI, sama seperti guard jam_checkin wajib
+    # di atas) - BUKAN di create_reservation/check_room_available (itu tetap generic utk
+    # semua sumber tipe day_use termasuk walk-in staf Quick Book, yang SENGAJA tidak
+    # disentuh guard ini - tamu yang FISIK sudah datang ke lokasi beda konteks dari
+    # booking AI jarak jauh).
     if data.get("tipe") == "day_use":
         jam_checkin_raw = (data.get("jam_checkin") or "").strip()
         try:
             jam_h, jam_m = (int(x) for x in jam_checkin_raw.split(":")[:2])
-            if (jam_h, jam_m) < (11, 0):
-                raise HTTPException(
-                    400,
-                    f"Day Use tidak bisa check-in jam {jam_checkin_raw} - kebijakan sekarang "
-                    "Day Use baru bisa mulai dari jam 11:00 WITA. Sampaikan ke tamu Day Use "
-                    "baru bisa mulai jam 11:00, tanya apakah mau di jam itu atau lebih siang.",
+            if (jam_h, jam_m) < (12, 0):
+                data["jam_checkin_perlu_review"] = True
+                catatan_review = (
+                    f"[PERLU REVIEW STAF] Jam check-in {jam_checkin_raw} di bawah kebijakan "
+                    "minimum Day Use (12:00 WITA) - putuskan terima/tolak jam ini secara manual."
+                )
+                data["catatan"] = (
+                    f"{data['catatan']}\n{catatan_review}" if data.get("catatan") else catatan_review
                 )
         except (ValueError, IndexError):
             pass  # format jam sudah divalidasi di tempat lain - di sini cukup dilewati kalau tidak bisa diparse
@@ -765,6 +774,7 @@ async def buat_booking_request(data: Dict[str, Any], property_id: Optional[str] 
         "jumlah_kamar": int(data.get("jumlah_kamar") or 1),
         "jumlah_tamu": int(data.get("jumlah_tamu") or 1),
         "tanggal_checkin": data["tanggal_checkin"], "jam_checkin": data.get("jam_checkin"),
+        "jam_checkin_perlu_review": bool(data.get("jam_checkin_perlu_review")),
         "tanggal_checkout": data.get("tanggal_checkout"), "catatan": data.get("catatan") or "",
         "dengan_sarapan": bool(data.get("dengan_sarapan")) if data.get("tipe") == "menginap" else False,
         "payment_option_diminta": payment_option if payment_option in ("dp50", "full") else None,
