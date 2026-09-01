@@ -518,7 +518,9 @@ async def mark_paid_manual(bid: str, body: ManualMarkPaidBody, user: dict = Depe
     # klik cepat tanpa jejak).
     if not (body.alasan or "").strip():
         raise HTTPException(400, "Alasan konfirmasi pembayaran manual wajib diisi")
-    nominal = body.nominal if body.nominal else int(b.get("total", 0))
+    if not body.nominal or body.nominal <= 0:
+        raise HTTPException(400, "Nominal yang diterima wajib diisi & lebih dari 0")
+    nominal = body.nominal
     now = now_iso()
     await db.bookings.update_one({"id": bid}, {"$set": {
         "status": "booking_paid", "payment_status": "paid",

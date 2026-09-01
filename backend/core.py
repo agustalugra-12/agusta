@@ -1118,7 +1118,13 @@ class NoShowBody(BaseModel):
 class ManualMarkPaidBody(BaseModel):
     alasan: Optional[str] = ""
     metode: Optional[str] = "transfer_manual"
-    nominal: Optional[int] = None  # if not provided, use total
+    # (2026-09-01, bug nyata: DP tamu walk-in - datang lokasi tgl 10 bayar DP utk booking
+    # tgl 15 - salah tercatat LUNAS krn field ini sebelumnya diam-diam default ke total kalau
+    # kosong) Tipe TETAP Optional (bukan wajib di level Pydantic) supaya request ke booking
+    # yang TIDAK ADA tetap 404 duluan (bukan 422 validation error) - validasi "wajib diisi &
+    # >0" dilakukan di handler (routes/bookings.py) SETELAH cek booking ditemukan, tidak lagi
+    # diam-diam fallback ke total.
+    nominal: Optional[int] = None
 
 class KonfirmasiHargaOtaBody(BaseModel):
     total_nominal: int  # nominal settlement ASLI dari OTA (mis. laporan RedDoorz), untuk SEMUA

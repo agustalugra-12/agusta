@@ -788,11 +788,26 @@ export default function Dashboard() {
   // ditambah di sini, backend juga menolak kalau alasan kosong (bukan cuma UI).
   const markPaidManual = async () => {
     if (!bookingDetail) return;
-    if (!window.confirm(`Konfirmasi pembayaran manual untuk ${bookingDetail.kode}?\n\nPASTIKAN pembayaran BENAR-BENAR sudah diterima (cek mutasi rekening/bukti transfer) sebelum lanjut - aksi ini menandai booking LUNAS.`)) return;
+    if (!window.confirm(`Konfirmasi pembayaran manual untuk ${bookingDetail.kode}?\n\nPASTIKAN pembayaran BENAR-BENAR sudah diterima (cek mutasi rekening/bukti transfer) sebelum lanjut.`)) return;
     const total = Number(bookingDetail.total || 0);
-    const nominalStr = window.prompt(`Nominal yang diterima (default: ${fmtRp(total)}):`, total);
-    if (nominalStr === null) return;
-    const nominal = Number(nominalStr) || total;
+    // (2026-09-01, bug nyata: DP tamu walk-in - datang lokasi bayar DP utk booking tanggal
+    // lain - salah tercatat LUNAS) Prompt SENGAJA TIDAK pre-fill dgn total lagi (dulu staf
+    // gampang klik OK tanpa ubah, jadi DP kepatok jadi lunas) - total cuma ditampilkan sbg
+    // INFO di teks pertanyaan, staf WAJIB ketik sendiri nominal yang benar-benar diterima.
+    let nominal = null;
+    while (nominal === null) {
+      const nominalStr = window.prompt(
+        `Berapa nominal yang BENAR-BENAR diterima? (total tagihan booking ini: ${fmtRp(total)} - isi nominal PENUH kalau lunas, atau nominal DP kalau baru sebagian)`,
+        "",
+      );
+      if (nominalStr === null) return; // staf batal
+      const parsed = Number(nominalStr);
+      if (!nominalStr.trim() || !Number.isFinite(parsed) || parsed <= 0) {
+        toast.error("Nominal wajib diisi angka lebih dari 0");
+        continue;
+      }
+      nominal = parsed;
+    }
     let alasan = "";
     while (!alasan.trim()) {
       const input = window.prompt("Alasan/sumber verifikasi pembayaran ini (wajib diisi, mis. \"cek mutasi BCA tgl 8 Agustus\"):", "");
