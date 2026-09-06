@@ -811,6 +811,51 @@ async def buat_reservasi_otomatis(log_id: str, data: dict, sumber: str, subjek: 
     await db.email_logs.update_one({"id": log_id}, {"$set": log_update})
 
 
+async def coba_retry_ota_manual_required(property_id: str, room_tipe: str) -> None:
+    """Dipanggil dari routes/rooms.py's housekeeping_done() (2026-09-07, laporan Agus -
+    "day use blokir OTA, datanya kelupaan terus, staf yang pakai apa bisa dibantu?") - MIRIP
+    coba_retry_menginap_dayuse (booking_requests.py, jalur AI WhatsApp) tapi utk jalur email
+    OTA (RedDoorz), yang SEBELUM ini TIDAK PUNYA retry otomatis sama sekali - sekali
+    Manual_Required krn "tidak ada kamar kosong" (kamar tipe itu penuh, mis. dipakai Day Use),
+    email itu diam selamanya sampai staf buka halaman Otomasi Email & klik proses manual.
+    Audit 2026-09-07 nemu 16 email dari Juli-Agustus masih tersangkut Manual_Required -
+    sebagian TERNYATA sudah ditangani staf via cara lain (booking manual) tapi log tidak
+    pernah diperbarui, sebagian lain benar-benar belum ada booking sama sekali.
+
+    HANYA retry kasus GAGAL TOTAL (`reservation_ids` kosong/tidak ada) - kasus SEBAGIAN
+    berhasil ("N kamar SISANYA") SENGAJA DILEWATI: buat_reservasi_otomatis tidak tahu kamar
+    mana yang "sudah pernah dicoba lagi utk reservasi yang sama", jadi retry pada kasus
+    sebagian-berhasil berisiko bikin reservasi DOBEL utk kamar yang sudah lebih dulu jadi
+    (candidate baru yang kosong akan ikut dibuatkan lagi, menambah di atas yang sudah ada,
+    bukan menggantikan). Kasus gagal total AMAN diulang - buat_reservasi_otomatis sendiri
+    sudah idempotent (cek kode-anchor/booking pending WA dulu sebelum bikin reservasi baru),
+    jadi kalau ternyata staf sudah menangani manual & itu match, tidak akan dobel; kalau
+    tidak match & kamar masih penuh, paling banter gagal lagi dgn alasan yang sama (tidak
+    ada downside). Best-effort, tidak pernah melempar exception ke pemanggil."""
+    try:
+        pending = await db.email_logs.find({
+            "status": "Manual_Required", "jenis": "baru",
+            "alasan": {"$regex": "^Tidak ada kamar"},
+        }, {"_id": 0}).sort("processed_at", 1).to_list(100)
+        for log in pending:
+            if log.get("reservation_ids"):
+                continue
+            data = log.get("extracted_data") or {}
+            sumber = log.get("sumber")
+            subjek = log.get("subjek") or ""
+            if not data or not sumber:
+                continue
+            resolved_property = await _resolve_property_dari_subjek(subjek) or await get_default_property_id()
+            if resolved_property != property_id:
+                continue
+            mapping = await db.room_mappings.find_one({"ota_nama": data.get("tipe_kamar"), "sumber": sumber})
+            if not mapping or mapping.get("pms_tipe") != room_tipe:
+                continue
+            await buat_reservasi_otomatis(log["id"], data, sumber, subjek)
+    except Exception as e:
+        logging.getLogger("otomasi_email").warning(f"Retry OTA Manual_Required gagal: {e}")
+
+
 async def batalkan_reservasi_otomatis(log_id: str, data: dict, sumber: str, subjek: str) -> None:
     """Reservation Automation untuk email PEMBATALAN eksplisit (jenis="pembatalan" — sinyal
     tidak ambigu dari OTA). Juga dipanggil dari proses_modifikasi_otomatis kalau tanggal

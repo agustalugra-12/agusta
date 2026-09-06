@@ -1559,6 +1559,63 @@ async def skenario_ota_jam_geser_tembus_tengah_malam_ditolak_otomatis() -> tuple
     return ("ota_jam_geser_tembus_tengah_malam_ditolak_otomatis", status)
 
 
+async def skenario_ota_manual_required_retry_otomatis_setelah_housekeeping() -> tuple:
+    """Bug nyata 2026-09-07 (laporan Agus - "day use blokir OTA, staf yang pakai apa bisa
+    dibantu?"): email OTA yang gagal total (Manual_Required krn "tidak ada kamar kosong",
+    mis. kamar tipe itu penuh Day Use) SEBELUM ini diam selamanya - beda dari jalur booking
+    AI WhatsApp yang SUDAH punya retry otomatis begitu housekeeping selesai
+    (coba_retry_menginap_dayuse). Audit nemu 16 email OTA dari Juli-Agustus masih
+    tersangkut Manual_Required krn tidak ada retry ini. Fix: coba_retry_ota_manual_required
+    dipanggil dari housekeeping_done() (routes/rooms.py), sama pola dgn jalur WA.
+
+    Skenario: email_log Manual_Required (alasan "Tidak ada kamar...", reservation_ids
+    kosong) utk kamar tipe Standard, TAPI saat retry dipanggil kamar tipe itu SUDAH kosong
+    (skenario ini sengaja tidak bikin konflik apa pun) - panggil housekeeping_done() pada
+    kamar test tipe sama, HARUS memicu retry yang berhasil bikin reservasi & log jadi
+    Parsed_Success (bukan diam selamanya)."""
+    from core import db, now_iso, HousekeepingDone
+    from routes.rooms import housekeeping_done
+
+    property_id = _property_id_test()
+    subjek_unik = f"Test Regresi OTA Retry {uuid.uuid4().hex[:6]}"
+    ota_tipe_unik = f"TEST-REGRESI-RETRY-{uuid.uuid4().hex[:6]}"
+    sumber_unik = f"RedDoorzTestRetry{uuid.uuid4().hex[:6]}"
+    log_id = str(uuid.uuid4())
+
+    await db.properties.insert_one({"id": property_id, "nama": subjek_unik, "aktif": True})
+    await db.room_mappings.insert_one({
+        "id": str(uuid.uuid4()), "ota_nama": ota_tipe_unik, "sumber": sumber_unik, "pms_tipe": "Standard",
+    })
+    room_id = await _bikin_kamar_test(db, property_id, "T12")
+    await db.rooms.update_one({"id": room_id}, {"$set": {"status": "perlu_dibersihkan"}})
+    await db.email_logs.insert_one({
+        "id": log_id, "gmail_message_id": f"test-{log_id}", "subjek": subjek_unik,
+        "pengirim": "test@test.com", "sumber": sumber_unik, "status": "Manual_Required", "jenis": "baru",
+        "alasan": "Tidak ada kamar Standard yang kosong pada 2026-08-20-2026-08-21 (kemungkinan bentrok)",
+        "extracted_data": {
+            "tipe_kamar": ota_tipe_unik, "no_reservasi": f"TEST-{uuid.uuid4().hex[:8]}",
+            "nama_tamu": "Test Regresi Retry Housekeeping", "check_in": "2026-08-20T14:00:00",
+            "check_out": "2026-08-21T12:00:00", "jumlah_tamu": 1, "harga": 150000,
+            "status_pembayaran": "Belum Bayar", "jumlah_kamar": 1, "permintaan_khusus": "NA",
+        },
+        "processed_at": now_iso(),
+    })
+
+    owner = {"id": "test", "nama": "Test Regresi", "role": "owner"}
+    try:
+        await housekeeping_done(room_id, HousekeepingDone(petugas="Test"), user=owner, property_id=property_id)
+        log = await db.email_logs.find_one({"id": log_id}, {"_id": 0})
+        ok = log.get("status") == "Parsed_Success" and bool(log.get("reservation_ids"))
+        status = ("PASS" if ok else
+                  f"FAIL - status={log.get('status')!r}, reservation_ids={log.get('reservation_ids')} (harusnya Parsed_Success dgn reservasi terbuat)")
+    finally:
+        await db.properties.delete_one({"id": property_id})
+        await db.room_mappings.delete_many({"ota_nama": ota_tipe_unik})
+        await db.email_logs.delete_one({"id": log_id})
+
+    return ("ota_manual_required_retry_otomatis_setelah_housekeeping", status)
+
+
 async def main():
     unit_tests = [
         test_tanggal_wita_dini_hari_geser_ke_hari_berikutnya,
@@ -1604,6 +1661,7 @@ async def main():
         skenario_kasir_list_timestamp_penuh_timestamp,
         skenario_services_list_tanggal_penuh_timestamp,
         skenario_ota_jam_geser_tembus_tengah_malam_ditolak_otomatis,
+        skenario_ota_manual_required_retry_otomatis_setelah_housekeeping,
     ]
 
     print("--- Unit test (murni, tanpa DB) ---")

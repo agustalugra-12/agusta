@@ -209,6 +209,10 @@ async def housekeeping_done(room_id: str, body: HousekeepingDone, user: dict = D
     # Best-effort, tidak pernah menggagalkan housekeeping_done itu sendiri.
     from routes.booking_requests import coba_retry_menginap_dayuse
     await coba_retry_menginap_dayuse(property_id, r["tipe"])
+    # Sama alasan spt di atas, tapi utk jalur email OTA (RedDoorz) yang sebelum 2026-09-07
+    # tidak punya retry otomatis sama sekali - lihat docstring coba_retry_ota_manual_required.
+    from routes.otomasi_email import coba_retry_ota_manual_required
+    await coba_retry_ota_manual_required(property_id, r["tipe"])
     return {"ok": True}
 
 @api.post("/rooms/{room_id}/housekeeping-inspect")
