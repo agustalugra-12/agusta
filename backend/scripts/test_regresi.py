@@ -607,6 +607,49 @@ async def skenario_kas_metode_bayar_collect_balance_manual_tidak_hilang() -> tup
     return ("kas_metode_bayar_collect_balance_manual_tidak_hilang", status)
 
 
+async def skenario_service_revenue_ota_belum_konfirmasi_dikecualikan() -> tuple:
+    """Bug ditemukan 2026-09-06 (audit lanjutan permintaan Agus "cek satu-satu fitur
+    laporan keuangan") - guard `ota_harga_dikonfirmasi != False` sudah ada di
+    _hitung_pendapatan_harian & report_rooms (booking OTA yg harganya masih ESTIMASI
+    dari tarif publik PMS, belum dikonfirmasi staf dari settlement asli - lihat
+    routes/bookings.py) tapi KELEWAT di report_service_revenue - service_fee booking OTA
+    yg masih estimasi ikut terhitung sbg pendapatan service fee asli."""
+    from core import db, now_iso
+    from routes.reports import report_service_revenue
+
+    property_id = _property_id_test()
+    room_id = await _bikin_kamar_test(db, property_id, "T7")
+    today_wita = datetime.now(timezone.utc).astimezone(timezone(timedelta(hours=8))).date()
+    today_iso = today_wita.isoformat()
+    besok_iso = (today_wita + timedelta(days=1)).isoformat()
+    now = now_iso()
+
+    # Booking OTA harga BELUM dikonfirmasi - HARUS dikecualikan.
+    await db.bookings.insert_one({
+        "id": str(uuid.uuid4()), "kode": f"TEST-SR1-{uuid.uuid4().hex[:6].upper()}", "property_id": property_id, "room_id": room_id, "room_nomor": "T7",
+        "room_tipe": "Standard", "tipe": "menginap", "nama_tamu": "Test Regresi Service Revenue OTA Estimasi",
+        "no_hp": _wa_unik(), "jam_mulai": f"{today_iso}T06:00:00+00:00", "jam_selesai": f"{besok_iso}T04:00:00+00:00",
+        "status": "aktif", "source": "ota", "payment_status": "paid", "ota_harga_dikonfirmasi": False,
+        "subtotal": 100000, "service_fee": 3000, "total": 103000, "amount_due": 103000,
+        "created_at": now,
+    })
+    # Booking OTA harga SUDAH dikonfirmasi - HARUS tetap terhitung.
+    await db.bookings.insert_one({
+        "id": str(uuid.uuid4()), "kode": f"TEST-SR2-{uuid.uuid4().hex[:6].upper()}", "property_id": property_id, "room_id": room_id, "room_nomor": "T7",
+        "room_tipe": "Standard", "tipe": "menginap", "nama_tamu": "Test Regresi Service Revenue OTA Konfirmasi",
+        "no_hp": _wa_unik(), "jam_mulai": f"{today_iso}T06:00:00+00:00", "jam_selesai": f"{besok_iso}T04:00:00+00:00",
+        "status": "aktif", "source": "ota", "payment_status": "paid", "ota_harga_dikonfirmasi": True,
+        "subtotal": 200000, "service_fee": 6000, "total": 206000, "amount_due": 206000,
+        "created_at": now,
+    })
+
+    owner = {"id": "test", "nama": "Test Regresi"}
+    hasil = await report_service_revenue(from_date=today_iso, to_date=besok_iso, user=owner, property_id=property_id)
+    ok = hasil["booking_service_fee_total"] == 6000
+    status = "PASS" if ok else f"FAIL - booking_service_fee_total={hasil['booking_service_fee_total']}, expected=6000 (OTA belum konfirmasi 3000 HARUS tidak ikut)"
+    return ("service_revenue_ota_belum_konfirmasi_dikecualikan", status)
+
+
 async def skenario_analitik_saluran_cancelled_dan_walkin_tidak_dobel() -> tuple:
     """Bug KELIMA ditemukan sambil audit lanjutan (2026-08-25) - laporan_analitik.py
     (Analitik Saluran) TIDAK PERNAH cek `status` sama sekali (booking cancelled yg lupa
@@ -1181,6 +1224,7 @@ async def main():
         skenario_arus_kas_walkin_menginap_tidak_hilang,
         skenario_arus_kas_collect_balance_manual_masuk_kamar_tunai_bukan_online,
         skenario_kas_metode_bayar_collect_balance_manual_tidak_hilang,
+        skenario_service_revenue_ota_belum_konfirmasi_dikecualikan,
         skenario_kas_metode_bayar_walkin_menginap_tidak_hilang,
         skenario_analitik_saluran_cancelled_dan_walkin_tidak_dobel,
         skenario_telegram_laporan_harian_cancelled_tidak_dihitung,

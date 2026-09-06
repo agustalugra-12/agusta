@@ -170,6 +170,14 @@ async def report_service_revenue(from_date: str = Query(...), to_date: str = Que
             "jam_mulai": {"$gte": start, "$lte": end},
             "payment_status": "paid",
             "status": {"$ne": "cancelled"},
+            # ota_harga_dikonfirmasi != False (2026-09-06, bug nyata ditemukan - audit
+            # lanjutan permintaan Agus "cek satu-satu fitur laporan keuangan") - guard
+            # ini SUDAH ADA di _hitung_pendapatan_harian & report_rooms (booking OTA yg
+            # harganya masih ESTIMASI dari tarif publik, belum dikonfirmasi staf dari
+            # settlement asli, lihat routes/bookings.py) tapi KELEWAT di sini - service_fee
+            # booking OTA yg masih estimasi ikut terhitung sbg pendapatan service fee asli,
+            # padahal angkanya bisa berubah begitu staf konfirmasi harga sungguhan.
+            "ota_harga_dikonfirmasi": {"$ne": False},
             "checkin_id": {"$exists": False},
         }, property_id),
         {"_id": 0}
