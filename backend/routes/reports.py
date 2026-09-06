@@ -616,11 +616,17 @@ async def report_kas_metode_bayar(from_date: str = Query(...), to_date: str = Qu
     barusan). Ditambahkan sbg sumber KEEMPAT - filter `gateway != "tripay"` (uang Tripay
     ASLI TETAP dikecualikan sesuai niat docstring di atas), payment_type dipetakan ke
     kunci Indonesia yang sudah ada ("cash"->"tunai", "transfer_manual"->"transfer",
-    "qris" sudah cocok apa adanya)."""
+    "qris" sudah cocok apa adanya).
+
+    Layanan manual (2026-09-06, bug nyata ditemukan sambil investigasi laporan Agus
+    "bingung kenapa Total Uang Masuk beda dari Pendapatan") - db.services (Late Check-out
+    dkk) TIDAK PERNAH dibaca laporan ini, walau sudah py `metode_pembayaran` (tunai/qris/
+    transfer, sama persis penamaan kunci di sini - tidak perlu dipetakan lagi spt
+    payment_type payment_log). Ditambahkan sbg sumber KELIMA."""
     start, end = wita_date_range_to_utc(from_date, to_date)
     totals = {"tunai": 0, "qris": 0, "transfer": 0}
     METODE_MAP = {"cash": "tunai", "qris": "qris", "transfer_manual": "transfer"}
-    ks, ci, bk_cash, logs_manual = await asyncio.gather(
+    ks, ci, bk_cash, logs_manual, svc = await asyncio.gather(
         db.kasir.find(scoped({"timestamp": {"$gte": start, "$lte": end}}, property_id), {"_id": 0, "pembayaran": 1}).to_list(5000),
         db.checkins.find(
             scoped({"status": "selesai", "jam_checkout": {"$gte": start, "$lte": end}}, property_id),
@@ -637,6 +643,8 @@ async def report_kas_metode_bayar(from_date: str = Query(...), to_date: str = Qu
             "transaction_status": {"$in": ["settlement", "capture"]},
             "updated_at": {"$gte": start, "$lte": end},
         }, property_id), {"_id": 0, "gross_amount": 1, "payment_type": 1}).to_list(5000),
+        db.services.find(scoped({"tanggal": {"$gte": start, "$lte": end}}, property_id),
+                          {"_id": 0, "nominal": 1, "metode_pembayaran": 1}).to_list(5000),
     )
     for row in ks + ci + bk_cash:
         for p in row.get("pembayaran") or []:
@@ -647,6 +655,10 @@ async def report_kas_metode_bayar(from_date: str = Query(...), to_date: str = Qu
         m = METODE_MAP.get(log.get("payment_type"))
         if m in totals:
             totals[m] += int(float(log.get("gross_amount") or 0))
+    for s in svc:
+        m = s.get("metode_pembayaran")
+        if m in totals:
+            totals[m] += int(s.get("nominal") or 0)
     return {**totals, "total": sum(totals.values())}
 
 
@@ -745,6 +757,16 @@ async def report_arus_kas(from_date: str = Query(...), to_date: str = Query(...)
             "updated_at": {"$gte": start, "$lte": end},
         }, property_id), {"_id": 0, "gross_amount": 1, "updated_at": 1}).to_list(5000),
     )
+    # Layanan manual (2026-09-06, bug nyata - laporan Agus "bingung kenapa Total Uang
+    # Masuk beda dari Pendapatan", ditemukan sambil investigasi) - db.services (Late
+    # Check-out dkk, routes/services.py) TIDAK PERNAH dibaca laporan ini sama sekali,
+    # padahal uangnya sungguhan diterima staf (metode_pembayaran terisi tunai/QRIS/
+    # transfer) - persis definisi "kamar_tunai_langsung" (fisik/manual, bukan gateway).
+    # Uang ini SUDAH benar masuk Pendapatan (report_daily, bucket "service") tapi HILANG
+    # dari sini - beda kelas masalah dari fix collect_balance/manual sebelumnya (itu
+    # salah bucket, ini malah tidak pernah dibaca sama sekali).
+    svc = await db.services.find(scoped({"tanggal": {"$gte": start, "$lte": end}}, property_id),
+                                  {"_id": 0, "tanggal": 1, "nominal": 1}).to_list(5000)
     by_day: Dict[str, Dict[str, int]] = {}
     bucket = tanggal_wita  # (2026-08-09) tanggal KALENDER WITA, bukan slice UTC mentah - lihat core.py
     def _init(): return {"online": 0, "kamar_tunai_langsung": 0, "kasir": 0}
@@ -756,6 +778,10 @@ async def report_arus_kas(from_date: str = Query(...), to_date: str = Query(...)
         d = bucket(log["updated_at"])
         by_day.setdefault(d, _init())
         by_day[d]["kamar_tunai_langsung"] += int(float(log.get("gross_amount") or 0))
+    for s in svc:
+        d = bucket(s.get("tanggal"))
+        by_day.setdefault(d, _init())
+        by_day[d]["kamar_tunai_langsung"] += int(s.get("nominal") or 0)
     for c in ci:
         d = bucket(c["jam_checkout"])
         by_day.setdefault(d, _init())

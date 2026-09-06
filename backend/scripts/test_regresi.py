@@ -774,6 +774,38 @@ async def skenario_ubah_status_manual_masuk_ledger_rekening() -> tuple:
     return ("ubah_status_manual_masuk_ledger_rekening", status)
 
 
+async def skenario_layanan_manual_masuk_arus_kas_dan_kas_metode_bayar() -> tuple:
+    """Bug ditemukan 2026-09-06 (investigasi laporan Agus "bingung kenapa Total Uang
+    Masuk beda dari Pendapatan") - db.services (Late Check-out dkk, routes/services.py)
+    TIDAK PERNAH dibaca report_arus_kas MAUPUN report_kas_metode_bayar, walau uangnya
+    sungguhan diterima staf (metode_pembayaran terisi) - sudah benar masuk Pendapatan
+    (report_daily, bucket "service") tapi hilang total dari 2 laporan cash-basis ini."""
+    from core import db, now_iso
+    from routes.reports import report_arus_kas, report_kas_metode_bayar
+
+    property_id = _property_id_test()
+    today_wita = datetime.now(timezone.utc).astimezone(timezone(timedelta(hours=8))).date()
+    today_iso = today_wita.isoformat()
+    besok_iso = (today_wita + timedelta(days=1)).isoformat()
+    now = now_iso()
+
+    await db.services.insert_one({
+        "id": str(uuid.uuid4()), "kode": f"SVC-TEST-{uuid.uuid4().hex[:6].upper()}", "property_id": property_id,
+        "tanggal": now, "kategori": "Late Check-out", "deskripsi": "Test Regresi", "nominal": 40000,
+        "tamu": "", "no_hp": "", "room_nomor": "", "metode_pembayaran": "transfer",
+        "user": "Test Regresi", "user_id": "test", "created_at": now,
+    })
+
+    owner = {"id": "test", "nama": "Test Regresi"}
+    arus = await report_arus_kas(from_date=today_iso, to_date=besok_iso, user=owner, property_id=property_id)
+    kmb = await report_kas_metode_bayar(from_date=today_iso, to_date=besok_iso, user=owner, property_id=property_id)
+    tunai_kmb = kmb["transfer"]
+    tunai_ak = sum(r["kamar_tunai_langsung"] for r in arus)
+    ok = tunai_ak == 40000 and tunai_kmb == 40000
+    status = "PASS" if ok else f"FAIL - arus_kas.kamar_tunai_langsung={tunai_ak}, kas_metode_bayar.transfer={tunai_kmb}, expected 40000 keduanya"
+    return ("layanan_manual_masuk_arus_kas_dan_kas_metode_bayar", status)
+
+
 async def skenario_analitik_saluran_cancelled_dan_walkin_tidak_dobel() -> tuple:
     """Bug KELIMA ditemukan sambil audit lanjutan (2026-08-25) - laporan_analitik.py
     (Analitik Saluran) TIDAK PERNAH cek `status` sama sekali (booking cancelled yg lupa
@@ -1352,6 +1384,7 @@ async def main():
         skenario_pendapatan_harian_kategori_kasir_tak_dikenal_tidak_crash,
         skenario_quickbook_bayar_depan_masuk_ledger_rekening,
         skenario_ubah_status_manual_masuk_ledger_rekening,
+        skenario_layanan_manual_masuk_arus_kas_dan_kas_metode_bayar,
         skenario_kas_metode_bayar_walkin_menginap_tidak_hilang,
         skenario_analitik_saluran_cancelled_dan_walkin_tidak_dobel,
         skenario_telegram_laporan_harian_cancelled_tidak_dihitung,
