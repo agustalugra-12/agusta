@@ -685,6 +685,45 @@ async def skenario_pendapatan_harian_kategori_kasir_tak_dikenal_tidak_crash() ->
     return ("pendapatan_harian_kategori_kasir_tak_dikenal_tidak_crash", status)
 
 
+async def skenario_quickbook_bayar_depan_masuk_ledger_rekening() -> tuple:
+    """Bug ditemukan 2026-09-06 (audit lanjutan "cek satu-satu fitur laporan keuangan",
+    SAMA AKAR MASALAH dgn collect_balance()/mark_paid_manual() yg sudah diperbaiki lebih
+    dulu) - Quick Book "bayar di depan semua" (create_booking, booking walk-in dgn
+    body.pembayaran langsung) TIDAK PERNAH memanggil auto_posting() sejak awal dibuat,
+    uang tunai/QRIS/transfer yg staf terima LANGSUNG saat booking dibuat tidak pernah
+    tercatat ke ledger kas (db.rekening_transaksi) - padahal sudah benar muncul di Arus
+    Kas/Kas per Metode Bayar (sumber beda, baca bookings.pembayaran langsung)."""
+    from core import db, now_iso, BookingCreate
+    from routes.bookings import create_booking
+
+    property_id = _property_id_test()
+    room_id = await _bikin_kamar_test(db, property_id, "T8")
+    now = now_iso()
+    besok = (datetime.fromisoformat(now) + timedelta(days=1)).isoformat()
+
+    rekening_id = str(uuid.uuid4())
+    await db.rekening.insert_one({
+        "id": rekening_id, "nama": "Test Rekening Operasional", "bank": "", "no_rekening": "",
+        "pemilik": "", "jenis": "operasional", "saldo": 0, "target": None,
+        "warna": "#000000", "icon": "Wallet", "status": "aktif", "default_operasional": True,
+        "created_at": now, "updated_at": now, "property_id": property_id,
+    })
+
+    owner = {"id": "test", "nama": "Test Regresi"}
+    body = BookingCreate(
+        room_id=room_id, tipe="menginap", nama_tamu="Test Regresi QuickBook Ledger",
+        no_hp=_wa_unik(), jam_mulai=now, jam_selesai=besok, tarif_override=100000,
+        pembayaran=[{"metode": "tunai", "jumlah": 100000}],
+    )
+    await create_booking(body, user=owner, property_id=property_id)
+
+    r = await db.rekening.find_one({"id": rekening_id}, {"_id": 0, "saldo": 1})
+    trx = await db.rekening_transaksi.find_one({"rekening_id": rekening_id, "kategori": "Booking Tamu (Walk-in/Quick Book)"}, {"_id": 0})
+    ok = r is not None and r["saldo"] >= 100000 and trx is not None and trx["nominal"] == 100000
+    status = "PASS" if ok else f"FAIL - saldo rekening={r.get('saldo') if r else None}, trx ditemukan={trx is not None}, expected saldo>=100000 & trx.nominal=100000"
+    return ("quickbook_bayar_depan_masuk_ledger_rekening", status)
+
+
 async def skenario_analitik_saluran_cancelled_dan_walkin_tidak_dobel() -> tuple:
     """Bug KELIMA ditemukan sambil audit lanjutan (2026-08-25) - laporan_analitik.py
     (Analitik Saluran) TIDAK PERNAH cek `status` sama sekali (booking cancelled yg lupa
@@ -1261,6 +1300,7 @@ async def main():
         skenario_kas_metode_bayar_collect_balance_manual_tidak_hilang,
         skenario_service_revenue_ota_belum_konfirmasi_dikecualikan,
         skenario_pendapatan_harian_kategori_kasir_tak_dikenal_tidak_crash,
+        skenario_quickbook_bayar_depan_masuk_ledger_rekening,
         skenario_kas_metode_bayar_walkin_menginap_tidak_hilang,
         skenario_analitik_saluran_cancelled_dan_walkin_tidak_dobel,
         skenario_telegram_laporan_harian_cancelled_tidak_dihitung,
@@ -1307,7 +1347,7 @@ async def main():
     # baru insert langsung ke koleksi ini - celah SAMA PERSIS dgn catatan expenses/dst
     # di atas kalau tidak ditambahkan di sini).
     for coll in ["rooms", "bookings", "checkins", "guests", "issues", "housekeeping_log", "incidents",
-                 "expenses", "rekening_transaksi", "kasir", "services", "payment_log"]:
+                 "expenses", "rekening_transaksi", "rekening", "kasir", "services", "payment_log"]:
         r = await db.get_collection(coll).delete_many({"property_id": prop_pattern})
         if r.deleted_count:
             print(f"cleanup: {r.deleted_count} dokumen {coll} test dihapus")

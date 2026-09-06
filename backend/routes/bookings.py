@@ -122,6 +122,20 @@ async def create_booking(body: BookingCreate, user: dict = Depends(get_current_u
             if group_id:
                 doc["group_id"] = group_id
             await db.bookings.insert_one(doc)
+            # Cash & Account Intelligence (2026-09-06, bug nyata ditemukan - audit lanjutan
+            # permintaan Agus "cek satu-satu fitur laporan keuangan", SAMA AKAR MASALAH
+            # dgn collect_balance()/mark_paid_manual() yg sudah diperbaiki lebih dulu -
+            # lihat komentar di sana) - Quick Book "bayar di depan semua" (2026-07-31) TIDAK
+            # PERNAH memanggil auto_posting() sama sekali sejak awal dibuat, uang tunai/QRIS/
+            # transfer yang staf terima LANGSUNG saat booking dibuat tidak pernah tercatat
+            # ke ledger kas (db.rekening_transaksi) - padahal sudah benar muncul di Arus
+            # Kas/Kas per Metode Bayar/pendapatan (baca `bookings.pembayaran` langsung, beda
+            # sumber dari ledger rekening ini). Pakai `dibayar` (uang SUNGGUHAN diterima saat
+            # ini), BUKAN `total` - DP yg belum lunas cuma post sebesar yg benar2 diterima.
+            if dibayar > 0:
+                from routes.rekening import auto_posting
+                await auto_posting("pemasukan", dibayar, "Booking Tamu (Walk-in/Quick Book)",
+                                   f"Booking {kode} - {body.nama_tamu}", property_id)
             await log_availability_change(r["id"], r["tipe"], -1, "booking_dibuat", property_id, booking_id=doc["id"])
             await upsert_guest(body.nama_tamu, body.no_hp, body.no_identitas, body.kendaraan, property_id, count_kunjungan=False)
             if izinkan_tumpuk:
