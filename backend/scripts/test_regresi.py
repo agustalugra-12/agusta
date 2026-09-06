@@ -806,6 +806,48 @@ async def skenario_layanan_manual_masuk_arus_kas_dan_kas_metode_bayar() -> tuple
     return ("layanan_manual_masuk_arus_kas_dan_kas_metode_bayar", status)
 
 
+async def skenario_mark_paid_manual_tidak_bisa_dobel() -> tuple:
+    """Bug ditemukan 2026-09-06 (audit lanjutan permintaan Agus "cek laporan keuangan,
+    jangan ada data dobel") - booking Hendra Pratama nyata (BKO-20260807221531-FB1F,
+    insiden yg SAMA yg jadi alasan fix "alasan wajib diisi" 2026-08-08) TERNYATA masih
+    kena manual_paid 2x (gap 2 jam - staf submit ulang, bukan cuma race condition
+    milidetik), payment_log Rp123.600 tercatat 2x, dobel-hitung di Arus Kas & Kas per
+    Metode Bayar. Fix guard lama (plain find_one baca status) TIDAK cukup - diganti
+    find_one_and_update ATOMIK dgn filter status="booking_pending" DI QUERY yang sama
+    dgn update, pola sama dgn checkin_from_booking (room status "kosong")."""
+    from core import db, now_iso, ManualMarkPaidBody
+    from routes.bookings import mark_paid_manual
+    from fastapi import HTTPException
+
+    property_id = _property_id_test()
+    room_id = await _bikin_kamar_test(db, property_id, "T10")
+    now = now_iso()
+    booking_id = str(uuid.uuid4())
+    await db.bookings.insert_one({
+        "id": booking_id, "kode": f"TEST-MPM-{uuid.uuid4().hex[:6].upper()}", "property_id": property_id,
+        "room_id": room_id, "room_nomor": "T10", "room_tipe": "Standard", "tipe": "menginap",
+        "nama_tamu": "Test Regresi Mark Paid Manual", "no_hp": _wa_unik(),
+        "jam_mulai": now, "jam_selesai": (datetime.fromisoformat(now) + timedelta(days=1)).isoformat(),
+        "status": "booking_pending", "payment_status": "pending",
+        "subtotal": 120000, "service_fee": 3600, "total": 123600, "created_at": now,
+    })
+
+    owner = {"id": "test", "nama": "Test Regresi"}
+    body = ManualMarkPaidBody(alasan="Test regresi - konfirmasi manual", metode="transfer_manual", nominal=123600)
+
+    await mark_paid_manual(booking_id, body, user=owner, property_id=property_id)
+    ditolak = False
+    try:
+        await mark_paid_manual(booking_id, body, user=owner, property_id=property_id)
+    except HTTPException as e:
+        ditolak = e.status_code == 400
+
+    jumlah_log = await db.payment_log.count_documents({"booking_id": booking_id})
+    ok = ditolak and jumlah_log == 1
+    status = "PASS" if ok else f"FAIL - panggilan kedua ditolak={ditolak}, jumlah payment_log={jumlah_log} (expected: ditolak=True, jumlah=1)"
+    return ("mark_paid_manual_tidak_bisa_dobel", status)
+
+
 async def skenario_analitik_saluran_cancelled_dan_walkin_tidak_dobel() -> tuple:
     """Bug KELIMA ditemukan sambil audit lanjutan (2026-08-25) - laporan_analitik.py
     (Analitik Saluran) TIDAK PERNAH cek `status` sama sekali (booking cancelled yg lupa
@@ -1385,6 +1427,7 @@ async def main():
         skenario_quickbook_bayar_depan_masuk_ledger_rekening,
         skenario_ubah_status_manual_masuk_ledger_rekening,
         skenario_layanan_manual_masuk_arus_kas_dan_kas_metode_bayar,
+        skenario_mark_paid_manual_tidak_bisa_dobel,
         skenario_kas_metode_bayar_walkin_menginap_tidak_hilang,
         skenario_analitik_saluran_cancelled_dan_walkin_tidak_dobel,
         skenario_telegram_laporan_harian_cancelled_tidak_dihitung,

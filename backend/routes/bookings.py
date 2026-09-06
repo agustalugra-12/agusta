@@ -536,12 +536,34 @@ async def mark_paid_manual(bid: str, body: ManualMarkPaidBody, user: dict = Depe
         raise HTTPException(400, "Nominal yang diterima wajib diisi & lebih dari 0")
     nominal = body.nominal
     now = now_iso()
-    await db.bookings.update_one({"id": bid}, {"$set": {
-        "status": "booking_paid", "payment_status": "paid",
-        "amount_due": nominal, "payment_type": body.metode,
-        "paid_at": now, "manual_paid_by": user["nama"], "manual_paid_reason": body.alasan,
-        "updated_at": now,
-    }})
+    # find_one_and_update ATOMIK dgn filter status="booking_pending" DI QUERY yang SAMA
+    # dgn update-nya (2026-09-06, bug nyata ditemukan - audit lanjutan permintaan Agus
+    # "cek laporan keuangan, jangan ada data dobel/terlewat" - booking Hendra Pratama
+    # SAMA PERSIS [BKO-20260807221531-FB1F] yang jadi alasan fix "alasan wajib diisi"
+    # 2026-08-08 TERNYATA masih kena manual_paid 2x [06:27 & 08:23, gap 2 jam - bukan
+    # race condition murni, staf kemungkinan besar submit ulang krn responsnya lambat/
+    # tidak yakin sudah tersimpan] - fix 2026-08-08 cuma nambah wajib alasan, TIDAK
+    # mencegah pemanggilan kedua berhasil krn guard di atas (plain find_one, baris 523)
+    # cuma BACA status, race/retry APA PUN antara baca & tulis tetap bisa lolos dobel -
+    # akibatnya payment_log Rp123.600 tercatat 2x, dobel-hitung di Arus Kas & Kas per
+    # Metode Bayar (Pendapatan/report_daily TIDAK terpengaruh - itu baca bookings.total
+    # langsung, bukan payment_log). Pola SAMA PERSIS dgn atomic guard status="kosong"
+    # yang sudah dipakai checkin_from_booking (baris ~396) utk race condition serupa -
+    # dibawa ke sini jg. Kalau hasilnya None (sudah bukan booking_pending lagi - baik
+    # krn race ATAU krn submit ulang staf), request KEDUA ditolak jelas, bukan diam-diam
+    # lolos lagi.
+    updated = await db.bookings.find_one_and_update(
+        scoped({"id": bid, "status": "booking_pending"}, property_id),
+        {"$set": {
+            "status": "booking_paid", "payment_status": "paid",
+            "amount_due": nominal, "payment_type": body.metode,
+            "paid_at": now, "manual_paid_by": user["nama"], "manual_paid_reason": body.alasan,
+            "updated_at": now,
+        }},
+        return_document=True,
+    )
+    if not updated:
+        raise HTTPException(400, "Booking ini baru saja dikonfirmasi/berubah status oleh proses lain - muat ulang halaman")
     await db.payment_log.insert_one({
         "id": str(uuid.uuid4()), "property_id": property_id, "booking_id": b["id"], "booking_kode": b["kode"],
         "order_id": f"MANUAL-{b['kode']}", "transaction_token": None, "redirect_url": None,
