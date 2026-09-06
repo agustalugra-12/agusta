@@ -1056,3 +1056,39 @@ async def report_shift(from_date: str = Query(...), to_date: str = Query(...),
         "rows": rows_list,
         "per_petugas": sorted(per_petugas.values(), key=lambda p: p["kasir_total"] + p["checkout_total"], reverse=True),
     }
+
+
+@api.get("/reports/financial-summary/pdf")
+async def report_financial_summary_pdf(from_date: str = Query(...), to_date: str = Query(...),
+                                        user: dict = Depends(get_current_user),
+                                        property_id: str = Depends(get_active_property)):
+    """Laporan Keuangan PDF profesional (2026-09-06, permintaan Agus - "laporan
+    profesional yang biasa dibuat untuk perusahaan besar, dgn grafik pendapatan per
+    tanggal + saran peningkatan pendapatan berdasarkan data"). Gabungan dari laporan
+    yang SUDAH ada (report_daily, report_arus_kas, report_service_revenue,
+    laporan_performa_saluran, cancellation_revenue, laporan_tren_okupansi) - SATU sumber
+    kebenaran yang sama, bukan hitung ulang formula baru, supaya angka di PDF selalu
+    identik dgn yang tampil di dashboard utk periode yang sama. Rendering murni
+    deterministik (reports_pdf.py, reportlab) - bukan panggilan LLM, konsisten dgn
+    filosofi seluruh modul laporan keuangan (data akuntansi harus reproducible)."""
+    from reports_pdf import build_financial_report_pdf
+    from routes.laporan_analitik import laporan_performa_saluran, laporan_tren_okupansi
+    from fastapi.responses import Response
+
+    nama = await nama_properti(property_id)
+    daily_rows = await report_daily(from_date=from_date, to_date=to_date, user=user, property_id=property_id)
+    arus_kas_rows = await report_arus_kas(from_date=from_date, to_date=to_date, user=user, property_id=property_id)
+    service_data = await report_service_revenue(from_date=from_date, to_date=to_date, user=user, property_id=property_id)
+    saluran_rows = await laporan_performa_saluran(channel="Semua", user=user, property_id=property_id)
+    cancel_data = await cancellation_revenue(from_date=from_date, to_date=to_date, user=user, property_id=property_id)
+    okupansi_rows = await laporan_tren_okupansi(from_date=from_date, to_date=to_date, user=user, property_id=property_id)
+    okupansi_avg = (sum(r["okupansi"] for r in okupansi_rows) / len(okupansi_rows)) if okupansi_rows else None
+
+    pdf_bytes = build_financial_report_pdf(
+        nama, from_date, to_date, daily_rows, arus_kas_rows, service_data, saluran_rows, cancel_data, okupansi_avg,
+    )
+    filename = f"Laporan_Keuangan_{nama.replace(' ', '_')}_{from_date}_{to_date}.pdf"
+    return Response(
+        content=pdf_bytes, media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )

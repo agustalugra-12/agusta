@@ -29,6 +29,26 @@ function downloadCsv(filename, headers, rows) {
   URL.revokeObjectURL(url);
 }
 
+// Download PDF (2026-09-06, permintaan Agus - "laporan profesional... unduh pdf") - BEDA
+// dari downloadCsv (blob dibuat client-side dari data yg sudah di-fetch) - PDF ini
+// di-generate SERVER-SIDE (reportlab, lihat backend/reports_pdf.py), jadi harus fetch
+// via axios (bukan <a href> polos) supaya header Authorization/X-Property-Id ikut
+// terkirim (endpoint ini butuh login, beda dari asset publik biasa).
+async function downloadFinancialPdf(from, to) {
+  try {
+    const res = await api.get("/reports/financial-summary/pdf", {
+      params: { from_date: from, to_date: to },
+      responseType: "blob",
+    });
+    const url = URL.createObjectURL(new Blob([res.data], { type: "application/pdf" }));
+    const a = document.createElement("a");
+    a.href = url; a.download = `Laporan_Keuangan_${from}_${to}.pdf`; a.click();
+    URL.revokeObjectURL(url);
+  } catch (err) {
+    toast.error("Gagal buat PDF laporan - coba lagi");
+  }
+}
+
 function DateRange({ from, setFrom, to, setTo }) {
   const set = (p) => {
     if (p === "today") { setFrom(today()); setTo(today()); }
@@ -193,7 +213,12 @@ function Ringkasan({ from, to }) {
           </LineChart>
         </ResponsiveContainer></div>
       </CardContent></Card>
-      <Button onClick={exp} variant="outline" data-testid="export-ringkasan">Export CSV / Excel</Button>
+      <div className="flex gap-2">
+        <Button onClick={exp} variant="outline" data-testid="export-ringkasan">Export CSV / Excel</Button>
+        <Button onClick={() => downloadFinancialPdf(from, to)} variant="outline" data-testid="export-pdf-ringkasan">
+          Unduh Laporan PDF
+        </Button>
+      </div>
     </div>
   );
 }
