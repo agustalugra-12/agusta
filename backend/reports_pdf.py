@@ -98,6 +98,7 @@ def _bar_chart_pendapatan_harian(daily_rows: List[Dict[str, Any]]) -> Drawing:
     legend.fontSize = 7
     legend.colorNamePairs = [(_BIRU, "Kamar"), (_HIJAU, "Kasir"), (colors.HexColor("#F97316"), "Service")]
     drawing.add(legend)
+    drawing.hAlign = "CENTER"
     return drawing
 
 
@@ -195,6 +196,7 @@ def _pie_chart_jenis_kamar(day_use_n: int, menginap_n: int) -> Optional[Drawing]
     legend.fontSize = 8
     legend.colorNamePairs = [(colors.HexColor("#F97316"), "Day Use"), (_BIRU, "Menginap")]
     drawing.add(legend)
+    drawing.hAlign = "CENTER"
     return drawing
 
 
@@ -300,14 +302,23 @@ def build_financial_report_pdf(
                     Paragraph(d.get("kode") or "-", ss["Cell"]),
                     Paragraph(d.get("nama_tamu") or "-", ss["Cell"]),
                     _rp(d.get("nominal", 0)),
-                    "Masuk" if d.get("arah") == "masuk" else "Keluar",
+                    {"masuk": "Masuk", "keluar": "Keluar", "anomali": "PERLU CEK"}.get(d.get("arah"), "-"),
                     Paragraph(d.get("keterangan") or "-", ss["Cell"]),
                 ])
             sel_tbl = Table(sel_rows, repeatRows=1, hAlign="LEFT",
-                             colWidths=[18 * mm, 30 * mm, 32 * mm, 25 * mm, 15 * mm, 55 * mm])
+                             colWidths=[18 * mm, 30 * mm, 32 * mm, 25 * mm, 20 * mm, 55 * mm])
             sel_tbl.setStyle(_tabel_style(header_bg=_ABU))
             story.append(Spacer(1, 4))
             story.append(sel_tbl)
+            if any(d.get("arah") == "anomali" for d in selisih_detail):
+                story.append(Spacer(1, 3))
+                story.append(Paragraph(
+                    "Baris \"PERLU CEK\" BUKAN soal waktu pembukuan (akrual vs cash) - ini transaksi "
+                    "yang nominal tercatat DITERIMA tidak sama dengan tagihan sebenarnya (kemungkinan input "
+                    "dobel atau diskon yang tidak disesuaikan ke catatan pembayaran) - mohon konfirmasi manual "
+                    "ke staf yang menangani transaksi tersebut.",
+                    ss["Insight"],
+                ))
 
     if rooms_items:
         day_use_n = sum(1 for it in rooms_items if it.get("tipe") == "day_use")

@@ -2,6 +2,35 @@ from core import *
 import asyncio
 import logging
 
+
+def _rp_reports(n: Any) -> str:
+    try:
+        n = int(round(float(n or 0)))
+    except (TypeError, ValueError):
+        n = 0
+    return "Rp" + f"{n:,}".replace(",", ".")
+
+
+def _uang_diterima_bersih(log: Dict[str, Any]) -> int:
+    """Nominal BERSIH yang benar2 masuk rekening Pelangi dari 1 entri payment_log Tripay
+    (2026-09-07, laporan Agus - "kok beda dgn Tripay" + audit selisih Rp249rb Harmoni
+    Agustus): `gross_amount` payment_log DIISI dari `total_amount` webhook Tripay
+    (routes/tripay.py callback) - itu TOTAL YANG DITAGIH KE TAMU, TERMASUK fee_customer
+    (biaya QRIS/VA yang Tripay bebankan ke tamu, BUKAN ke Pelangi). Tripay menahan fee itu
+    sendiri sebelum settle ke rekening merchant - `tripay_response.amount_received` adalah
+    angka yang SUNGGUHAN masuk rekening. Bukti nyata: 29/29 transaksi settlement Harmoni
+    Agustus SEMUANYA py fee_customer (total gross Rp2.862.252 vs net Rp2.806.800, selisih
+    Rp55.452) - `online` yang pakai gross_amount SELALU overstate "uang masuk" sejumlah fee
+    yang Tripay tahan, konsisten jadi salah satu penyumbang selisih Pendapatan vs Total
+    Uang Masuk yang tidak pernah "ketemu" penjelasannya sebelum audit ini.
+
+    Fallback ke gross_amount kalau `tripay_response`/`amount_received` tidak ada (entri
+    lama era Midtrans, atau payload webhook tidak menyertakannya) - lebih baik angka lama
+    tetap tampil apa adanya drpd tiba-tiba hilang."""
+    gross = int(float(log.get("gross_amount") or 0))
+    net = (log.get("tripay_response") or {}).get("amount_received")
+    return int(net) if isinstance(net, (int, float)) else gross
+
 # ---- Reports ----
 @api.get("/reports/booking-widgets")
 async def booking_widgets(user: dict = Depends(get_current_user), property_id: str = Depends(get_active_property)):
@@ -731,7 +760,7 @@ async def report_arus_kas(from_date: str = Query(...), to_date: str = Query(...)
             "gateway": "tripay",
             "transaction_status": {"$in": ["settlement", "capture"]},
             "updated_at": {"$gte": start, "$lte": end},
-        }, property_id), {"_id": 0, "gross_amount": 1, "updated_at": 1}).to_list(5000),
+        }, property_id), {"_id": 0, "gross_amount": 1, "updated_at": 1, "tripay_response": 1}).to_list(5000),
         db.checkins.find(scoped({
             "jam_checkout": {"$gte": start, "$lte": end}, "status": "selesai",
         }, property_id), {"_id": 0, "jam_checkout": 1, "pembayaran": 1, "from_booking_id": 1, "booking_paid": 1}).to_list(5000),
@@ -773,7 +802,7 @@ async def report_arus_kas(from_date: str = Query(...), to_date: str = Query(...)
     for log in logs:
         d = bucket(log["updated_at"])
         by_day.setdefault(d, _init())
-        by_day[d]["online"] += int(float(log.get("gross_amount") or 0))
+        by_day[d]["online"] += _uang_diterima_bersih(log)
     for log in logs_non_gateway:
         d = bucket(log["updated_at"])
         by_day.setdefault(d, _init())
@@ -1097,10 +1126,24 @@ async def _detail_selisih_kas_pendapatan(from_date: str, to_date: str, property_
     detil tamu siapa"). 2 arah kontribusi:
     1. `masuk` - uang BENAR-BENAR diterima (payment_log settlement) periode ini, TAPI
        booking-nya menginap (jam_mulai) di LUAR periode ini - kontribusi POSITIF ke
-       selisih (Total Uang Masuk > Pendapatan).
+       selisih (Total Uang Masuk > Pendapatan). Nominal dihitung BERSIH (lihat
+       _uang_diterima_bersih) - konsisten dgn `online` di report_arus_kas.
     2. `keluar` - booking menginap (jam_mulai, diakui sbg Pendapatan) periode ini, TAPI
        `paid_at`-nya di LUAR periode ini (sudah dibayar sebelum/sesudah periode) -
        kontribusi NEGATIF ke selisih (Pendapatan > Total Uang Masuk periode ini).
+    3. `anomali` - BUKAN soal waktu/akrual sama sekali, ini SALAH CATAT nyata dlm periode
+       yang sama (2026-09-07, ditemukan sambil audit mendalam selisih Rp249rb Harmoni
+       Agustus atas permintaan Agus "kalau tidak ketemu pasti ada salah pencatatan"):
+       uang yang tercatat DITERIMA (checkins.pembayaran / bookings.pembayaran Quick Book)
+       TIDAK SAMA dgn nilai jasa yang diakui (`total`) utk transaksi yang SAMA - kasus nyata
+       "perdy" (checkin Harmoni 1 Agu): tercatat BAYAR DUA KALI (transfer Rp123.600 + tunai
+       Rp123.600) padahal tagihan cuma Rp123.600 - kelebihan Rp123.600 sungguhan msk kas tapi
+       TIDAK PERNAH nambah Pendapatan (yang tetap pakai `total`, bukan sum(pembayaran)).
+       Kasus lain (Quick Book "deica"/"kartika"): diskon member dipotong dari `total` TAPI
+       nominal `pembayaran` tidak ikut dikurangi - lebih tercatat "diterima" dari yang
+       seharusnya. TIDAK bisa diperbaiki otomatis (butuh verifikasi staf - benar dobel
+       bayar tunai vs transfer? atau staf salah input?) - makanya disurfacekan eksplisit
+       di sini drpd didiamkan sbg "selisih akrual normal" yang menyesatkan.
     Granularitas per-BOOKING (bukan per-malam) - cukup utk "siapa tamunya", tidak perlu
     presisi sampai ke pecahan malam lintas bulan (beda tujuan dari _hitung_pendapatan_
     harian yg memang harus presisi per-malam utk total akrualnya)."""
@@ -1111,7 +1154,7 @@ async def _detail_selisih_kas_pendapatan(from_date: str, to_date: str, property_
         "transaction_status": {"$in": ["settlement", "capture"]},
         "updated_at": {"$gte": start, "$lte": end},
         "booking_id": {"$exists": True, "$ne": None},
-    }, property_id), {"_id": 0, "booking_id": 1, "gross_amount": 1, "updated_at": 1}).to_list(2000)
+    }, property_id), {"_id": 0, "booking_id": 1, "gross_amount": 1, "updated_at": 1, "tripay_response": 1}).to_list(2000)
     booking_ids = list({l["booking_id"] for l in logs})
     bmap: Dict[str, Any] = {}
     if booking_ids:
@@ -1123,7 +1166,7 @@ async def _detail_selisih_kas_pendapatan(from_date: str, to_date: str, property_
         if b and jm and not (start <= jm <= end):
             hasil.append({
                 "arah": "masuk", "tanggal": (l["updated_at"] or "")[:10], "kode": b.get("kode"),
-                "nama_tamu": b.get("nama_tamu") or "-", "nominal": int(float(l.get("gross_amount") or 0)),
+                "nama_tamu": b.get("nama_tamu") or "-", "nominal": _uang_diterima_bersih(l),
                 "keterangan": f"Dibayar periode ini, menginap {jm[:10]}",
             })
 
@@ -1140,6 +1183,50 @@ async def _detail_selisih_kas_pendapatan(from_date: str, to_date: str, property_
                 "arah": "keluar", "tanggal": (b["jam_mulai"] or "")[:10], "kode": b.get("kode"),
                 "nama_tamu": b.get("nama_tamu") or "-", "nominal": int(b.get("total") or 0),
                 "keterangan": f"Menginap periode ini, dibayar {pa[:10]}",
+            })
+
+    cks_anomali = await db.checkins.find(scoped({
+        "jam_checkout": {"$gte": start, "$lte": end}, "status": "selesai",
+    }, property_id), {"_id": 0, "trx_no": 1, "nama_tamu": 1, "jam_checkout": 1, "total": 1, "pembayaran": 1, "booking_paid": 1}).to_list(5000)
+    for c in cks_anomali:
+        # checkin dgn booking_paid > 0 (dari DP online) DILEWATI (2026-09-07) - selisih
+        # total-vs-bayar utk checkin jenis ini biasanya cuma fee_customer Tripay pada DP-nya,
+        # SUDAH tercakup di fix _uang_diterima_bersih (online bucket) - flag di sini akan
+        # dobel-hitung akar masalah yang sama. Hanya walk-in murni (booking_paid=0, TIDAK
+        # ada penjelasan fee gateway sama sekali) yang benar2 sinyal salah catat manual.
+        if c.get("booking_paid"):
+            continue
+        bayar = sum(int(p.get("jumlah") or 0) for p in (c.get("pembayaran") or []))
+        selisih_item = bayar - int(c.get("total") or 0)
+        if selisih_item != 0:
+            hasil.append({
+                "arah": "anomali", "tanggal": (c["jam_checkout"] or "")[:10], "kode": c.get("trx_no"),
+                "nama_tamu": c.get("nama_tamu") or "-", "nominal": selisih_item,
+                "keterangan": (
+                    f"Tercatat dibayar {_rp_reports(bayar)} tapi tagihan cuma {_rp_reports(c.get('total') or 0)} "
+                    f"- cek manual (dobel input / diskon tidak disesuaikan?)"
+                    if selisih_item > 0 else
+                    f"Tercatat dibayar {_rp_reports(bayar)} padahal tagihan {_rp_reports(c.get('total') or 0)} - cek manual (kurang input?)"
+                ),
+            })
+
+    bks_anomali = await db.bookings.find(scoped({
+        "pembayaran": {"$exists": True, "$ne": []}, "checkin_id": {"$exists": False},
+        "status": {"$ne": "cancelled"}, "created_at": {"$gte": start, "$lte": end},
+    }, property_id), {"_id": 0, "kode": 1, "nama_tamu": 1, "created_at": 1, "total": 1, "pembayaran": 1}).to_list(5000)
+    for b in bks_anomali:
+        bayar = sum(int(p.get("jumlah") or 0) for p in (b.get("pembayaran") or []))
+        selisih_item = bayar - int(b.get("total") or 0)
+        if selisih_item != 0:
+            hasil.append({
+                "arah": "anomali", "tanggal": (b["created_at"] or "")[:10], "kode": b.get("kode"),
+                "nama_tamu": b.get("nama_tamu") or "-", "nominal": selisih_item,
+                "keterangan": (
+                    f"Tercatat dibayar {_rp_reports(bayar)} tapi tagihan cuma {_rp_reports(b.get('total') or 0)} "
+                    f"- cek manual (dobel input / diskon tidak disesuaikan?)"
+                    if selisih_item > 0 else
+                    f"Tercatat dibayar {_rp_reports(bayar)} padahal tagihan {_rp_reports(b.get('total') or 0)} - cek manual (kurang input?)"
+                ),
             })
     return sorted(hasil, key=lambda x: x["tanggal"])
 

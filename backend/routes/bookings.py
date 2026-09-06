@@ -435,7 +435,12 @@ async def checkin_from_booking(bid: str, body: CheckinFromBookingBody = CheckinF
             try:
                 jam_mulai_lama = datetime.fromisoformat(b["jam_mulai"])
                 now_dt = datetime.fromisoformat(now)
-                if now_dt < jam_mulai_lama and now_dt.date() == jam_mulai_lama.date():
+                # tanggal KALENDER WITA, bukan .date() UTC mentah (2026-09-07, bug sejenis
+                # ditemukan sambil investigasi laporan MASNAN MASNAN - .date() UTC bisa beda
+                # dari tanggal WITA krn WITA (+8) selalu menembus 2 tanggal UTC, lihat
+                # tanggal_wita() di core.py) - checkin subuh hari yang sama (WITA) tapi UTC-nya
+                # sudah tanggal sebelumnya sempat gagal dianggap "tanggal sama" & tidak dimajukan.
+                if now_dt < jam_mulai_lama and tanggal_wita(now) == tanggal_wita(b["jam_mulai"]):
                     booking_update["jam_mulai"] = now
             except (KeyError, ValueError, TypeError):
                 pass

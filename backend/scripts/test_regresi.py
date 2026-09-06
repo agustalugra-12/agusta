@@ -526,6 +526,57 @@ async def skenario_arus_kas_collect_balance_manual_masuk_kamar_tunai_bukan_onlin
     return ("arus_kas_collect_balance_manual_masuk_kamar_tunai_bukan_online", status)
 
 
+async def skenario_arus_kas_online_pakai_amount_diterima_bersih_bukan_gross() -> tuple:
+    """Bug nyata 2026-09-07 (audit mendalam selisih Rp249.332 Pendapatan vs Total Uang
+    Masuk Harmoni Agustus, permintaan Agus "kalau tidak ketemu pasti ada salah
+    pencatatan"): `online` di report_arus_kas menjumlah `payment_log.gross_amount` -
+    field ini diisi dari `total_amount` webhook Tripay (routes/tripay.py), yaitu TOTAL
+    YANG DITAGIH KE TAMU TERMASUK fee_customer (biaya QRIS/VA yg Tripay bebankan ke
+    tamu, Tripay TAHAN sendiri fee itu sebelum settle ke rekening Pelangi -
+    `tripay_response.amount_received` adalah angka bersih yang benar2 masuk rekening).
+    Bukti nyata: 29/29 transaksi settlement Harmoni Agustus SEMUANYA py fee_customer,
+    total gross Rp2.862.252 vs net Rp2.806.800 (selisih Rp55.452) - `online` yang pakai
+    gross SELALU overstate uang masuk sejumlah fee yg tidak pernah sampai ke Pelangi.
+    Fix: `_uang_diterima_bersih()` pakai `tripay_response.amount_received` kalau ada,
+    fallback ke gross_amount kalau tidak (entri lama/Midtrans)."""
+    from core import db, now_iso
+    from routes.reports import report_arus_kas
+
+    property_id = _property_id_test()
+    today_wita = datetime.now(timezone.utc).astimezone(timezone(timedelta(hours=8))).date()
+    today_iso = today_wita.isoformat()
+    besok_iso = (today_wita + timedelta(days=1)).isoformat()
+    now = now_iso()
+
+    await db.payment_log.insert_one({
+        "id": str(uuid.uuid4()), "property_id": property_id, "booking_id": "test-booking-fee",
+        "booking_kode": "TEST-FEE", "order_id": f"TRIPAY-FEE-{uuid.uuid4().hex[:4].upper()}",
+        "gateway": "tripay", "gross_amount": "62983", "payment_option": "dp50",
+        "transaction_status": "settlement", "status_code": "200",
+        "payment_type": "QRIS2", "fraud_status": None,
+        "tripay_response": {"amount": 62983, "fee_customer": 1183, "amount_received": 61800},
+        "created_at": now, "updated_at": now,
+    })
+    # Pembanding: entri LAMA tanpa tripay_response (Midtrans/histori) - HARUS fallback
+    # ke gross_amount apa adanya, bukan dianggap 0.
+    await db.payment_log.insert_one({
+        "id": str(uuid.uuid4()), "property_id": property_id, "booking_id": "test-booking-lama",
+        "booking_kode": "TEST-LAMA", "order_id": f"TRIPAY-LAMA-{uuid.uuid4().hex[:4].upper()}",
+        "gateway": "tripay", "gross_amount": "40000", "payment_option": "full",
+        "transaction_status": "settlement", "status_code": "200",
+        "payment_type": "bank_transfer", "fraud_status": None,
+        "created_at": now, "updated_at": now,
+    })
+
+    owner = {"id": "test", "nama": "Test Regresi"}
+    arus = await report_arus_kas(from_date=today_iso, to_date=besok_iso, user=owner, property_id=property_id)
+    total_online = sum(r["online"] for r in arus)
+    ok = total_online == 61800 + 40000
+    status = ("PASS" if ok else
+              f"FAIL - online={total_online} (harusnya 101800 = 61800 bersih + 40000 fallback gross, BUKAN 102983 gross mentah)")
+    return ("arus_kas_online_pakai_amount_diterima_bersih_bukan_gross", status)
+
+
 async def skenario_kas_metode_bayar_walkin_menginap_tidak_hilang() -> tuple:
     """Bug KEEMPAT ditemukan sambil audit lanjutan (2026-08-25, laporan Agus - "Kas per
     Metode Bayar cuma 4jt-an, Arus Kas 7jt-an") - sama akar dgn fix Arus Kas hari ini,
@@ -1400,6 +1451,79 @@ async def skenario_services_list_tanggal_penuh_timestamp() -> tuple:
     return ("services_list_tanggal_penuh_timestamp", status)
 
 
+async def skenario_ota_jam_geser_tembus_tengah_malam_ditolak_otomatis() -> tuple:
+    """Bug nyata 2026-09-07 (laporan Agus - "tamu harusnya checkin tanggal 4 tapi di PMS
+    masuk tanggal 5"), kasus MASNAN MASNAN BKO-20260904173118-4400: buat_reservasi_otomatis
+    (routes/otomasi_email.py) menggeser jam_mulai reservasi OTA baru ke jam kamar
+    diperkirakan bebas kalau kamar standar (14:00 WITA) masih dipakai tamu Day Use walk-in.
+    Kalau pergeserannya TEMBUS tengah malam WITA (kamar baru bebas SETELAH tanggal check-in
+    yang dijanjikan di email OTA), sebelum fix ini tetap dibuat reservasi otomatis dgn
+    tanggal SALAH (H+1) - tamu jadi hilang dari laporan tanggal aslinya. SETELAH fix: kasus
+    tembus tengah malam TIDAK dibuat otomatis, email_log jadi Manual_Required dgn alasan
+    jelas - staf yang putuskan, bukan sistem diam-diam salah catat tanggal.
+
+    Skenario: kamar test tipe Standard, ada checkin walk-in aktif (Day Use, TANPA
+    from_booking_id) jam_checkin 18:00 WITA (10:00 UTC) - estimasi konservatif walk-in
+    (+6 jam di check_room_available) MEMANG masih bentrok dgn jam standar OTA 14:00 WITA,
+    dan estimasi otomasi_email (+6 jam 30 menit = 00:30 WITA hari BERIKUTNYA) TEMBUS
+    tengah malam dari tanggal check-in email (2026-08-20). Panggil buat_reservasi_otomatis
+    langsung - HARUS TIDAK membuat booking (reservation_ids kosong), status email_log HARUS
+    Manual_Required, dan alasan HARUS menyebut "tengah malam" (jejak jelas kenapa ditolak)."""
+    from core import db, now_iso
+    from routes.otomasi_email import buat_reservasi_otomatis
+
+    property_id = _property_id_test()
+    subjek_unik = f"Test Regresi OTA Midnight {uuid.uuid4().hex[:6]}"
+    ota_tipe_unik = f"TEST-REGRESI-TIPE-{uuid.uuid4().hex[:6]}"
+    sumber_unik = f"RedDoorzTestRegresi{uuid.uuid4().hex[:6]}"
+    log_id = str(uuid.uuid4())
+
+    await db.properties.insert_one({"id": property_id, "nama": subjek_unik, "aktif": True})
+    await db.room_mappings.insert_one({
+        "id": str(uuid.uuid4()), "ota_nama": ota_tipe_unik, "sumber": sumber_unik, "pms_tipe": "Standard",
+    })
+    room_id = await _bikin_kamar_test(db, property_id, "T9")
+    await db.checkins.insert_one({
+        "id": str(uuid.uuid4()), "property_id": property_id, "room_id": room_id, "room_nomor": "T9",
+        "room_tipe": "Standard", "nama_tamu": "Test Regresi WalkIn DayUse", "no_hp": _wa_unik(),
+        "jumlah_tamu": 1, "tarif_dasar": 100000, "jam_checkin": "2026-08-20T10:00:00+00:00",
+        "jam_checkout": None, "durasi_jam": 6, "overtime_jam": 0, "biaya_tambahan": 0,
+        "subtotal": 100000, "service_fee": 3000, "total": 103000, "status": "aktif",
+        "pembayaran": [{"metode": "tunai", "jumlah": 103000}],
+        "petugas_checkin": "Test", "petugas_checkin_id": "test", "created_at": now_iso(),
+    })
+    await db.email_logs.insert_one({
+        "id": log_id, "gmail_message_id": f"test-{log_id}", "subjek": subjek_unik,
+        "pengirim": "test@test.com", "sumber": sumber_unik, "status": "Parsed_Success", "jenis": "baru",
+        "extracted_data": {}, "processed_at": now_iso(),
+    })
+
+    try:
+        await buat_reservasi_otomatis(
+            log_id,
+            {
+                "tipe_kamar": ota_tipe_unik, "no_reservasi": f"TEST-{uuid.uuid4().hex[:8]}",
+                "nama_tamu": "Test Regresi Masnan Style", "check_in": "2026-08-20T14:00:00",
+                "check_out": "2026-08-21T12:00:00", "jumlah_tamu": 1, "harga": 200000,
+                "status_pembayaran": "Belum Bayar", "jumlah_kamar": 1, "permintaan_khusus": "NA",
+            },
+            sumber_unik, subjek_unik,
+        )
+        log = await db.email_logs.find_one({"id": log_id}, {"_id": 0})
+        tidak_ada_booking = not log.get("reservation_ids")
+        status_benar = log.get("status") == "Manual_Required"
+        alasan_jelas = "tengah malam" in (log.get("alasan") or "").lower()
+        ok = tidak_ada_booking and status_benar and alasan_jelas
+        status = ("PASS" if ok else
+                  f"FAIL - reservation_ids={log.get('reservation_ids')}, status={log.get('status')!r}, alasan={log.get('alasan')!r}")
+    finally:
+        await db.properties.delete_one({"id": property_id})
+        await db.room_mappings.delete_many({"ota_nama": ota_tipe_unik})
+        await db.email_logs.delete_one({"id": log_id})
+
+    return ("ota_jam_geser_tembus_tengah_malam_ditolak_otomatis", status)
+
+
 async def main():
     unit_tests = [
         test_tanggal_wita_dini_hari_geser_ke_hari_berikutnya,
@@ -1421,6 +1545,7 @@ async def main():
         skenario_booking_cancelled_masih_paid_tidak_dihitung,
         skenario_arus_kas_walkin_menginap_tidak_hilang,
         skenario_arus_kas_collect_balance_manual_masuk_kamar_tunai_bukan_online,
+        skenario_arus_kas_online_pakai_amount_diterima_bersih_bukan_gross,
         skenario_kas_metode_bayar_collect_balance_manual_tidak_hilang,
         skenario_service_revenue_ota_belum_konfirmasi_dikecualikan,
         skenario_pendapatan_harian_kategori_kasir_tak_dikenal_tidak_crash,
@@ -1442,6 +1567,7 @@ async def main():
         skenario_checkins_list_jam_checkin_penuh_timestamp,
         skenario_kasir_list_timestamp_penuh_timestamp,
         skenario_services_list_tanggal_penuh_timestamp,
+        skenario_ota_jam_geser_tembus_tengah_malam_ditolak_otomatis,
     ]
 
     print("--- Unit test (murni, tanpa DB) ---")

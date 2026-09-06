@@ -686,13 +686,32 @@ async def buat_reservasi_otomatis(log_id: str, data: dict, sumber: str, subjek: 
                 }, property_id))
                 if checkin_aktif and checkin_aktif.get("jam_checkin"):
                     estimasi_selesai = datetime.fromisoformat(checkin_aktif["jam_checkin"]) + timedelta(hours=6, minutes=30)
-            if estimasi_selesai and estimasi_selesai < check_out:
+            # Kalau pergeseran ini nembus tengah malam WITA (kamar baru kosong SETELAH tanggal
+            # kalender aslinya lewat), JANGAN otomatis dibuat - laporan MASNAN MASNAN 2026-09-07
+            # (Agus: "tamu harusnya checkin tanggal 4 tapi di PMS masuk tanggal 5") - kasus nyata
+            # BKO-20260904173118-4400, kamar Cottage 2 baru bebas 00:54 WITA krn tamu Day Use
+            # walk-in checkout larut malam, reservasi otomatis kepakai jam_mulai tanggal SETELAH
+            # tanggal check-in yang dijanjikan di email OTA, bikin tamu "hilang" dari laporan
+            # tanggal aslinya & muncul di tanggal yang salah. Tanggal beda kalender WITA = sinyal
+            # kuat pergeserannya terlalu jauh utk diotomasi aman - serahkan ke staf drpd diam-diam
+            # salah catat tanggal (pola sama dgn kasus "bko-" di permintaan_khusus di atas).
+            if (
+                estimasi_selesai and estimasi_selesai < check_out
+                and tanggal_wita(estimasi_selesai.isoformat()) == tanggal_wita(check_in.isoformat())
+            ):
                 try:
                     await check_room_available(r["id"], estimasi_selesai, check_out, property_id)
                     jam_mulai_efektif = estimasi_selesai
                 except HTTPException as e2:
                     gagal_detail.append(f'kamar {r["nomor"]}: {e2.detail}')
                     continue
+            elif estimasi_selesai and estimasi_selesai < check_out:
+                gagal_detail.append(
+                    f'kamar {r["nomor"]}: baru kosong {estimasi_selesai.astimezone(WITA).strftime("%H:%M %d %b")} WITA - '
+                    f'sudah lewat tengah malam dari tanggal check-in {check_in.astimezone(WITA).strftime("%d %b")}, '
+                    f'perlu keputusan staf (bukan otomatis)'
+                )
+                continue
             else:
                 gagal_detail.append(f'kamar {r["nomor"]}: {e.detail}')
                 continue
