@@ -1083,9 +1083,14 @@ async def report_financial_summary_pdf(from_date: str = Query(...), to_date: str
     cancel_data = await cancellation_revenue(from_date=from_date, to_date=to_date, user=user, property_id=property_id)
     okupansi_rows = await laporan_tren_okupansi(from_date=from_date, to_date=to_date, user=user, property_id=property_id)
     okupansi_avg = (sum(r["okupansi"] for r in okupansi_rows) / len(okupansi_rows)) if okupansi_rows else None
+    # Lampiran detail per-tamu (2026-09-06, permintaan Agus - "apakah di PDF disebutkan
+    # tamunya?") - reuse report_rooms (sudah py nama_tamu/room_nomor/detail_pembayaran
+    # per transaksi), bukan query baru.
+    rooms_data = await report_rooms(from_date=from_date, to_date=to_date, user=user, property_id=property_id)
 
     pdf_bytes = build_financial_report_pdf(
         nama, from_date, to_date, daily_rows, arus_kas_rows, service_data, saluran_rows, cancel_data, okupansi_avg,
+        rooms_items=rooms_data.get("items"),
     )
     filename = f"Laporan_Keuangan_{nama.replace(' ', '_')}_{from_date}_{to_date}.pdf"
     return Response(

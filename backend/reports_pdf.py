@@ -177,6 +177,18 @@ def _hitung_saran(
     return saran
 
 
+def _metode_bayar_ringkas(detail_pembayaran: List[Dict[str, Any]]) -> str:
+    """Ringkas daftar detail_pembayaran (dari report_rooms - lihat _ambil_detail_pembayaran_
+    booking/_detail_pembayaran_checkin) jadi 1 string singkat, mis. "Tunai" atau
+    "QRIS + Transfer" kalau DP & pelunasan pakai metode beda."""
+    metodes = [p.get("metode") for p in (detail_pembayaran or []) if p.get("metode") and p["metode"] != "-"]
+    seen = []
+    for m in metodes:
+        if m not in seen:
+            seen.append(m)
+    return " + ".join(seen) if seen else "-"
+
+
 def build_financial_report_pdf(
     property_name: str,
     from_date: str,
@@ -187,6 +199,7 @@ def build_financial_report_pdf(
     saluran_rows: List[Dict[str, Any]],
     cancel_data: Dict[str, Any],
     okupansi_avg: Optional[float] = None,
+    rooms_items: Optional[List[Dict[str, Any]]] = None,
 ) -> bytes:
     buf = io.BytesIO()
     doc = SimpleDocTemplate(
@@ -271,6 +284,27 @@ def build_financial_report_pdf(
         ], hAlign="LEFT")
         cancel_tbl.setStyle(_tabel_style())
         story.append(cancel_tbl)
+
+    if rooms_items:
+        story.append(PageBreak())
+        story.append(Paragraph("Lampiran: Detail Transaksi Tamu", ss["SectionHeader"]))
+        story.append(Paragraph(
+            f"{len(rooms_items)} transaksi (walk-in check-in & booking online/OTA/WA), diurutkan tanggal kedatangan.",
+            ss["SubTitle"],
+        ))
+        tamu_rows = [["Tanggal", "Nama Tamu", "Kamar", "Tipe", "Total", "Metode Bayar"]]
+        for it in sorted(rooms_items, key=lambda x: x.get("jam_checkin") or ""):
+            tamu_rows.append([
+                (it.get("jam_checkin") or "")[:10],
+                it.get("nama_tamu") or "-",
+                it.get("room_nomor") or "-",
+                it.get("room_tipe") or "-",
+                _rp(it.get("total", 0)),
+                _metode_bayar_ringkas(it.get("detail_pembayaran")),
+            ])
+        tamu_tbl = Table(tamu_rows, repeatRows=1, hAlign="LEFT", colWidths=[20 * mm, 45 * mm, 22 * mm, 22 * mm, 28 * mm, 33 * mm])
+        tamu_tbl.setStyle(_tabel_style())
+        story.append(tamu_tbl)
 
     story.append(PageBreak())
     story.append(Paragraph("Saran Peningkatan Pendapatan", ss["SectionHeader"]))
