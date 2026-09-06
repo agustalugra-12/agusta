@@ -236,6 +236,40 @@ def build_financial_report_pdf(
     cash_tbl.setStyle(_tabel_style(header_bg=_ABU))
     story.append(cash_tbl)
 
+    # Penjelasan selisih Pendapatan vs Total Uang Masuk (2026-09-06, permintaan Agus -
+    # "jelaskan di laporan PDF kenapa bisa ada selisih") - dihitung DINAMIS dari angka
+    # periode ini sendiri (bukan teks statis) - Pendapatan = akrual (diakui saat malam
+    # kamar TERPAKAI), Total Uang Masuk = cash basis (uang diterima kapan pun, tidak
+    # peduli kapan tamu menginap) - DP diterima periode ini utk stay BULAN LAIN muncul
+    # di Total Uang Masuk tapi belum di Pendapatan (begitu jg sebaliknya: DP bulan lalu
+    # utk stay periode ini muncul di Pendapatan tapi TIDAK di Total Uang Masuk periode
+    # ini) - selisih ini WAJAR/BUKAN kesalahan, sama seperti PMS profesional lain
+    # (Cloudbeds/Mews/Majoo) yg selalu punya 2 laporan beda utk 2 pertanyaan beda.
+    selisih = total_masuk - total_pendapatan
+    if selisih != 0:
+        arah = (
+            "lebih banyak uang diterima periode ini dibanding pendapatan yang diakui"
+            if selisih > 0 else
+            "lebih banyak pendapatan diakui periode ini dibanding uang yang benar-benar diterima"
+        )
+        sebab = (
+            "kemungkinan ada DP/pelunasan yang diterima periode ini untuk booking yang "
+            "menginapnya di bulan lain (uang sudah masuk, tapi jasanya belum/sudah "
+            "dikonsumsi di luar periode ini)"
+            if selisih > 0 else
+            "kemungkinan ada booking yang menginap periode ini tapi DP-nya sudah diterima "
+            "di bulan sebelumnya (jasa sudah diakui, tapi uangnya masuk di luar periode ini)"
+        )
+        story.append(Spacer(1, 4))
+        story.append(Paragraph(
+            f"<b>Kenapa Total Uang Masuk ({_rp(total_masuk)}) berbeda dari Pendapatan ({_rp(total_pendapatan)})?</b> "
+            f"Selisih {_rp(abs(selisih))} ini normal, BUKAN kesalahan pencatatan - Pendapatan dihitung "
+            f"saat jasa (malam kamar) benar-benar terpakai (akrual), sedangkan Total Uang Masuk dihitung "
+            f"saat uang benar-benar diterima (cash basis), tidak peduli kapan tamu menginap. Periode ini "
+            f"{arah} - {sebab}.",
+            ss["Insight"],
+        ))
+
     story.append(Paragraph("Grafik Pendapatan per Tanggal", ss["SectionHeader"]))
     if daily_rows:
         story.append(_bar_chart_pendapatan_harian(daily_rows))
