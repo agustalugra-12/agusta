@@ -1262,6 +1262,41 @@ async def skenario_checkin_dari_booking_day_use_bisa_ditumpuk_menginap() -> tupl
     return ("checkin_dari_booking_day_use_bisa_ditumpuk_menginap", status)
 
 
+async def skenario_checkin_pesan_error_perlu_dibersihkan_bukan_sedang_dipakai() -> tuple:
+    """Bug nyata 2026-09-07 (laporan Agus - "day use ditumpuk menginap ada yang aneh?"):
+    checkin_from_booking() SELALU bilang "Kamar X sedang dipakai" kalau room.status !=
+    "kosong", TERMASUK saat statusnya sebenarnya "perlu_dibersihkan" (tamu Day Use SUDAH
+    checkout, kamar fisik kosong, cuma belum ditandai selesai dibersihkan) - staf yang baca
+    pesan ini bisa salah kira tamu sebelumnya belum pergi & menunggu sia-sia, padahal cukup
+    klik "Selesai Dibersihkan" dulu. Fix: pesan dibedakan per status asli kamar."""
+    from core import db, now_iso
+    from routes.bookings import checkin_from_booking
+    from core import CheckinFromBookingBody
+
+    property_id = _property_id_test()
+    room_id = await _bikin_kamar_test(db, property_id, "T10")
+    await db.rooms.update_one({"id": room_id}, {"$set": {"status": "perlu_dibersihkan"}})
+    bk_id = str(uuid.uuid4())
+    await db.bookings.insert_one({
+        "id": bk_id, "kode": f"TEST-PB-{uuid.uuid4().hex[:6].upper()}", "property_id": property_id,
+        "room_id": room_id, "room_nomor": "T10", "room_tipe": "Standard", "tipe": "menginap",
+        "nama_tamu": "Test Regresi Perlu Dibersihkan", "no_hp": _wa_unik(),
+        "jam_mulai": "2026-08-20T06:00:00+00:00", "jam_selesai": "2026-08-21T04:00:00+00:00",
+        "status": "aktif", "source": "whatsapp_auto", "payment_status": "paid",
+        "subtotal": 150000, "service_fee": 4500, "total": 154500, "amount_due": 154500,
+        "paid_at": now_iso(), "created_at": now_iso(),
+    })
+    owner = {"id": "test", "nama": "Test Regresi", "role": "owner"}
+    try:
+        await checkin_from_booking(bk_id, CheckinFromBookingBody(), user=owner, property_id=property_id)
+        status = "FAIL - checkin_from_booking harusnya menolak (kamar belum ditandai kosong), tapi malah sukses"
+    except Exception as e:
+        detail = getattr(e, "detail", str(e))
+        ok = "belum ditandai selesai dibersihkan" in detail or "Selesai Dibersihkan" in detail
+        status = "PASS" if ok else f"FAIL - pesan error masih generik/salah: {detail!r}"
+    return ("checkin_pesan_error_perlu_dibersihkan_bukan_sedang_dipakai", status)
+
+
 async def skenario_estimasi_siap_pada_tanggal_dayuse_pagi() -> tuple:
     """Bug nyata 2026-08-15 (permintaan Agus - kasus kamar 9 tanggal 16 Aug): tamu minta
     Day Use PAGI di tanggal masa depan yang kamarnya masih dipakai Menginap checkout 12:00
@@ -1562,6 +1597,7 @@ async def main():
         skenario_konfirmasi_checkin_dari_tiket_dobel_tidak_dobel_hitung,
         skenario_checkin_dari_booking_day_use_bisa_ditumpuk_menginap,
         skenario_estimasi_siap_pada_tanggal_dayuse_pagi,
+        skenario_checkin_pesan_error_perlu_dibersihkan_bukan_sedang_dipakai,
         skenario_laporan_pengeluaran_tanggal_penuh_timestamp,
         skenario_rekening_transaksi_tanggal_penuh_timestamp,
         skenario_checkins_list_jam_checkin_penuh_timestamp,

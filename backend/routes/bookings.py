@@ -398,7 +398,23 @@ async def checkin_from_booking(bid: str, body: CheckinFromBookingBody = CheckinF
         return_document=True,
     )
     if not r:
-        raise HTTPException(400, f"Kamar {r_check['nomor']} sedang dipakai dan tidak dapat digunakan untuk check-in.")
+        # Pesan dibedakan per status SEBENARNYA (2026-09-07, laporan Agus - "day use ditumpuk
+        # menginap ada yang aneh?") - SEBELUM ini selalu bilang "sedang dipakai" walau status
+        # aslinya "perlu_dibersihkan" (kamar SUDAH kosong scr fisik, tamu Day Use sudah checkout,
+        # cuma belum ditandai selesai dibersihkan) - staf yang baca "sedang dipakai" bisa salah
+        # kira tamu Day Use belum pergi & menunggu sia-sia, padahal cukup klik "Selesai
+        # Dibersihkan" dulu di Kamar. check_room_available (dipakai saat RESERVASI dibuat) sudah
+        # tahu Day Use bakal selesai duluan & izinkan tumpuk - gerbang INI (checkin_from_booking,
+        # klaim fisik saat tamu SUNGGUHAN datang) sengaja tetap wajib "kosong" (kamar harus benar2
+        # bersih dulu), tapi pesannya harus jujur soal KENAPA.
+        status_asli = r_check.get("status")
+        if status_asli == "perlu_dibersihkan":
+            pesan = f"Kamar {r_check['nomor']} sudah kosong tapi belum ditandai selesai dibersihkan - klik \"Selesai Dibersihkan\" di halaman Kamar dulu, baru check-in bisa dilanjutkan."
+        elif status_asli == "maintenance":
+            pesan = f"Kamar {r_check['nomor']} sedang maintenance, tidak bisa dipakai check-in."
+        else:
+            pesan = f"Kamar {r_check['nomor']} sedang dipakai tamu lain dan tidak dapat digunakan untuk check-in."
+        raise HTTPException(400, pesan)
 
     try:
         no_hp = (b.get("no_hp") or "").strip() or (body.no_hp or "").strip()
