@@ -614,11 +614,18 @@ async def report_arus_kas(from_date: str = Query(...), to_date: str = Query(...)
       SINI bulan lalu, bukan bulan ini - kebalikan dari /reports/daily.
 
     3 sumber uang masuk, masing2 dibucket per tanggal SUNGGUHAN transaksi bayar terjadi:
-    1. `online` - pembayaran gateway (Tripay QRIS/VA, DP maupun pelunasan/collect-balance
-       maupun verifikasi manual staf) dari `payment_log`, HANYA status settlement/capture
-       (bukan pending/expired) - dibucket per `updated_at` (saat callback/staf BENAR-BENAR
-       mengonfirmasi settlement), BUKAN `created_at` (itu cuma saat link/invoice dibuat -
-       tamu bisa bayar berjam-jam/berhari-hari kemudian, beda tanggal kalau pakai created_at).
+    1. `online` - HANYA pembayaran gateway ASLI (Tripay QRIS/VA, DP maupun pelunasan/
+       collect-balance via Tripay) dari `payment_log` dgn `gateway="tripay"` eksplisit,
+       status settlement/capture (bukan pending/expired) - dibucket per `updated_at`
+       (saat callback Tripay BENAR-BENAR mengonfirmasi settlement), BUKAN `created_at`
+       (itu cuma saat link/invoice dibuat - tamu bisa bayar berjam-jam/berhari-hari
+       kemudian, beda tanggal kalau pakai created_at). Filter `gateway="tripay"`
+       (2026-09-06, bug nyata - laporan Agus "Arus Kas 'online' 19,9jt tapi dashboard
+       Tripay cuma 10,4jt") - SEBELUM ini query tidak cek `gateway` sama sekali, jadi
+       `collect_balance()`/konfirmasi manual transfer (yg TIDAK PERNAH lewat Tripay,
+       insert payment_log tanpa `gateway`) ikut tersapu ke sini. Uang itu SEKARANG masuk
+       `kamar_tunai_langsung` di bawah (lihat query `logs_non_gateway`) - fisik/manual,
+       bukan gateway, sesuai definisi bucket ini sendiri.
     2. `kamar_tunai_langsung` - bagian FISIK (cash/QR di lokasi, BUKAN online) dari
        `checkins.pembayaran`, dibucket per `jam_checkout` (saat transaksi kamar itu
        benar2 tutup/lunas). Utk checkin yang berasal dari booking (`from_booking_id`
@@ -653,8 +660,9 @@ async def report_arus_kas(from_date: str = Query(...), to_date: str = Query(...)
        kemudian di-checkin sbg day_use (checkin_id terisi), pembayarannya sudah
        tercakup via `ci`/`kamar_tunai_langsung` di atas, jangan dobel di sini."""
     start, end = wita_date_range_to_utc(from_date, to_date)
-    logs, ci, ks, bk_cash = await asyncio.gather(
+    logs, ci, ks, bk_cash, logs_non_gateway = await asyncio.gather(
         db.payment_log.find(scoped({
+            "gateway": "tripay",
             "transaction_status": {"$in": ["settlement", "capture"]},
             "updated_at": {"$gte": start, "$lte": end},
         }, property_id), {"_id": 0, "gross_amount": 1, "updated_at": 1}).to_list(5000),
@@ -668,6 +676,20 @@ async def report_arus_kas(from_date: str = Query(...), to_date: str = Query(...)
             "status": {"$ne": "cancelled"},
             "created_at": {"$gte": start, "$lte": end},
         }, property_id), {"_id": 0, "created_at": 1, "pembayaran": 1}).to_list(5000),
+        # collect_balance/manual (2026-09-06, bug nyata - laporan Agus "Arus Kas 'online'
+        # 19,9jt tapi Tripay dashboard cuma 10,4jt") - `gateway` != "tripay" ARTINYA uang
+        # ini TIDAK PERNAH lewat Tripay sama sekali: collect_balance() (pelunasan sisa
+        # tunai/QRIS di lokasi, routes/bookings.py) & konfirmasi manual transfer
+        # (routes/bookings.py) KEDUANYA insert ke payment_log TANPA field `gateway` -
+        # sebelum fix ini ikut tersapu ke bucket "online" krn query lama cuma cek
+        # transaction_status, tidak cek gateway. Uang ini SUNGGUHAN fisik/manual (bukan
+        # gateway), jadi seharusnya di "kamar_tunai_langsung", bukan "online" - dipindah
+        # ke sini, BUKAN dihapus/diabaikan (uangnya tetap harus muncul di suatu bucket).
+        db.payment_log.find(scoped({
+            "gateway": {"$ne": "tripay"},
+            "transaction_status": {"$in": ["settlement", "capture"]},
+            "updated_at": {"$gte": start, "$lte": end},
+        }, property_id), {"_id": 0, "gross_amount": 1, "updated_at": 1}).to_list(5000),
     )
     by_day: Dict[str, Dict[str, int]] = {}
     bucket = tanggal_wita  # (2026-08-09) tanggal KALENDER WITA, bukan slice UTC mentah - lihat core.py
@@ -676,6 +698,10 @@ async def report_arus_kas(from_date: str = Query(...), to_date: str = Query(...)
         d = bucket(log["updated_at"])
         by_day.setdefault(d, _init())
         by_day[d]["online"] += int(float(log.get("gross_amount") or 0))
+    for log in logs_non_gateway:
+        d = bucket(log["updated_at"])
+        by_day.setdefault(d, _init())
+        by_day[d]["kamar_tunai_langsung"] += int(float(log.get("gross_amount") or 0))
     for c in ci:
         d = bucket(c["jam_checkout"])
         by_day.setdefault(d, _init())

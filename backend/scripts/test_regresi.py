@@ -472,6 +472,60 @@ async def skenario_arus_kas_walkin_menginap_tidak_hilang() -> tuple:
     return ("arus_kas_walkin_menginap_tidak_hilang", status)
 
 
+async def skenario_arus_kas_collect_balance_manual_masuk_kamar_tunai_bukan_online() -> tuple:
+    """Bug KEEMPAT ditemukan 2026-09-06 (laporan Agus - "Arus Kas 'online' Rp19,9jt tapi
+    dashboard Tripay cuma Rp10,4jt", dicek langsung ke Buffer... eh Tripay API asli -
+    memang cuma Rp10,4jt). Root cause: collect_balance() & konfirmasi manual transfer
+    (routes/bookings.py) insert ke payment_log TANPA field `gateway` (beda dari
+    tripay.py yang SELALU set gateway="tripay" eksplisit) - uang tunai/QRIS/transfer
+    yang dikumpulkan STAF DI LOKASI (bukan lewat Tripay sama sekali) ikut tersapu ke
+    bucket "online" krn query report_arus_kas lama cuma cek transaction_status, tidak
+    cek gateway. Fix: filter gateway="tripay" utk bucket online, entri TANPA gateway
+    (collect_balance/manual) dipindah ke kamar_tunai_langsung (fisik/manual, sesuai
+    definisi bucket itu sendiri) - total_uang_masuk TETAP SAMA (uang tidak hilang,
+    cuma pindah bucket yang benar)."""
+    from core import db, now_iso
+    from routes.reports import report_arus_kas
+
+    property_id = _property_id_test()
+    today_wita = datetime.now(timezone.utc).astimezone(timezone(timedelta(hours=8))).date()
+    today_iso = today_wita.isoformat()
+    besok_iso = (today_wita + timedelta(days=1)).isoformat()
+    now = now_iso()
+
+    # Simulasi payment_log dari collect_balance() - TANPA field `gateway`, persis pola
+    # nyata di routes/bookings.py (bukan dari Tripay sama sekali).
+    await db.payment_log.insert_one({
+        "id": str(uuid.uuid4()), "property_id": property_id, "booking_id": "test-booking",
+        "booking_kode": "TEST-CB", "order_id": f"COLLECT-TEST-{uuid.uuid4().hex[:4].upper()}",
+        "gross_amount": "50000", "payment_option": "collect_balance",
+        "transaction_status": "settlement", "status_code": "200",
+        "payment_type": "cash", "fraud_status": None,
+        "created_at": now, "updated_at": now,
+    })
+    # Pembanding: payment_log ASLI dari Tripay (gateway="tripay") - HARUS tetap masuk online.
+    await db.payment_log.insert_one({
+        "id": str(uuid.uuid4()), "property_id": property_id, "booking_id": "test-booking-2",
+        "booking_kode": "TEST-TP", "order_id": f"TRIPAY-TEST-{uuid.uuid4().hex[:4].upper()}",
+        "gateway": "tripay", "gross_amount": "75000", "payment_option": "dp50",
+        "transaction_status": "settlement", "status_code": "200",
+        "payment_type": "QRIS2", "fraud_status": None,
+        "created_at": now, "updated_at": now,
+    })
+
+    owner = {"id": "test", "nama": "Test Regresi"}
+    arus = await report_arus_kas(from_date=today_iso, to_date=besok_iso, user=owner, property_id=property_id)
+    total_online = sum(r["online"] for r in arus)
+    total_tunai = sum(r["kamar_tunai_langsung"] for r in arus)
+    total_masuk = sum(r["total_uang_masuk"] for r in arus)
+    ok = total_online == 75000 and total_tunai == 50000 and total_masuk == 125000
+    status = (
+        "PASS" if ok
+        else f"FAIL - online={total_online} (expected 75000), kamar_tunai_langsung={total_tunai} (expected 50000), total_masuk={total_masuk} (expected 125000)"
+    )
+    return ("arus_kas_collect_balance_manual_masuk_kamar_tunai_bukan_online", status)
+
+
 async def skenario_kas_metode_bayar_walkin_menginap_tidak_hilang() -> tuple:
     """Bug KEEMPAT ditemukan sambil audit lanjutan (2026-08-25, laporan Agus - "Kas per
     Metode Bayar cuma 4jt-an, Arus Kas 7jt-an") - sama akar dgn fix Arus Kas hari ini,
@@ -1077,6 +1131,7 @@ async def main():
         skenario_ringkasan_pisah_menginap_dan_day_use,
         skenario_booking_cancelled_masih_paid_tidak_dihitung,
         skenario_arus_kas_walkin_menginap_tidak_hilang,
+        skenario_arus_kas_collect_balance_manual_masuk_kamar_tunai_bukan_online,
         skenario_kas_metode_bayar_walkin_menginap_tidak_hilang,
         skenario_analitik_saluran_cancelled_dan_walkin_tidak_dobel,
         skenario_telegram_laporan_harian_cancelled_tidak_dihitung,
@@ -1119,8 +1174,11 @@ async def main():
     # ditemukan - skenario tanggal-penuh-timestamp baru insert ke 4 koleksi ini tapi
     # cleanup lama tidak menghapusnya sama sekali, data test bocor permanen ke DB
     # produksi di bawah property_id palsu).
+    # payment_log ditambahkan 2026-09-06 (skenario arus_kas_collect_balance_manual...
+    # baru insert langsung ke koleksi ini - celah SAMA PERSIS dgn catatan expenses/dst
+    # di atas kalau tidak ditambahkan di sini).
     for coll in ["rooms", "bookings", "checkins", "guests", "issues", "housekeeping_log", "incidents",
-                 "expenses", "rekening_transaksi", "kasir", "services"]:
+                 "expenses", "rekening_transaksi", "kasir", "services", "payment_log"]:
         r = await db.get_collection(coll).delete_many({"property_id": prop_pattern})
         if r.deleted_count:
             print(f"cleanup: {r.deleted_count} dokumen {coll} test dihapus")
