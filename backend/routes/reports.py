@@ -574,25 +574,50 @@ async def report_kas_metode_bayar(from_date: str = Query(...), to_date: str = Qu
     transfer di TEMPAT, bukan lewat Tripay - persis definisi "uang fisik di laci" yang
     laporan ini maksud, tapi TIDAK PERNAH dibaca sebelumnya (checkins.pembayaran cuma
     Day Use, Menginap tidak pernah bikin dokumen checkins). Ditambahkan sbg sumber KETIGA,
-    guard sama persis dgn fix Arus Kas (checkin_id belum ada, status bukan cancelled)."""
+    guard sama persis dgn fix Arus Kas (checkin_id belum ada, status bukan cancelled).
+
+    collect_balance() & konfirmasi manual transfer (2026-09-06, audit lanjutan permintaan
+    Agus "cek satu-satu fitur laporan keuangan" - sama akar bug dgn fix Arus Kas hari ini)
+    - KEDUANYA persis definisi "uang fisik/manual di tangan staf" yang laporan ini
+    maksud (collect_balance = pelunasan sisa tunai/QRIS di lokasi, verifikasi manual =
+    transfer masuk rekening yang staf konfirmasi sendiri), TAPI keduanya disimpan di
+    `payment_log` (bukan `checkins.pembayaran`/`bookings.pembayaran`) - laporan ini
+    SEBELUM fix TIDAK PERNAH baca `payment_log` sama sekali, jadi uang ini hilang total
+    dari sini (walau sudah benar muncul di kamar_tunai_langsung Arus Kas sejak fix
+    barusan). Ditambahkan sbg sumber KEEMPAT - filter `gateway != "tripay"` (uang Tripay
+    ASLI TETAP dikecualikan sesuai niat docstring di atas), payment_type dipetakan ke
+    kunci Indonesia yang sudah ada ("cash"->"tunai", "transfer_manual"->"transfer",
+    "qris" sudah cocok apa adanya)."""
     start, end = wita_date_range_to_utc(from_date, to_date)
     totals = {"tunai": 0, "qris": 0, "transfer": 0}
-    ks = await db.kasir.find(scoped({"timestamp": {"$gte": start, "$lte": end}}, property_id), {"_id": 0, "pembayaran": 1}).to_list(5000)
-    ci = await db.checkins.find(
-        scoped({"status": "selesai", "jam_checkout": {"$gte": start, "$lte": end}}, property_id),
-        {"_id": 0, "pembayaran": 1},
-    ).to_list(5000)
-    bk_cash = await db.bookings.find(scoped({
-        "pembayaran": {"$exists": True, "$ne": []},
-        "checkin_id": {"$exists": False},
-        "status": {"$ne": "cancelled"},
-        "created_at": {"$gte": start, "$lte": end},
-    }, property_id), {"_id": 0, "pembayaran": 1}).to_list(5000)
+    METODE_MAP = {"cash": "tunai", "qris": "qris", "transfer_manual": "transfer"}
+    ks, ci, bk_cash, logs_manual = await asyncio.gather(
+        db.kasir.find(scoped({"timestamp": {"$gte": start, "$lte": end}}, property_id), {"_id": 0, "pembayaran": 1}).to_list(5000),
+        db.checkins.find(
+            scoped({"status": "selesai", "jam_checkout": {"$gte": start, "$lte": end}}, property_id),
+            {"_id": 0, "pembayaran": 1},
+        ).to_list(5000),
+        db.bookings.find(scoped({
+            "pembayaran": {"$exists": True, "$ne": []},
+            "checkin_id": {"$exists": False},
+            "status": {"$ne": "cancelled"},
+            "created_at": {"$gte": start, "$lte": end},
+        }, property_id), {"_id": 0, "pembayaran": 1}).to_list(5000),
+        db.payment_log.find(scoped({
+            "gateway": {"$ne": "tripay"},
+            "transaction_status": {"$in": ["settlement", "capture"]},
+            "updated_at": {"$gte": start, "$lte": end},
+        }, property_id), {"_id": 0, "gross_amount": 1, "payment_type": 1}).to_list(5000),
+    )
     for row in ks + ci + bk_cash:
         for p in row.get("pembayaran") or []:
             m = p.get("metode")
             if m in totals:
                 totals[m] += int(p.get("jumlah") or 0)
+    for log in logs_manual:
+        m = METODE_MAP.get(log.get("payment_type"))
+        if m in totals:
+            totals[m] += int(float(log.get("gross_amount") or 0))
     return {**totals, "total": sum(totals.values())}
 
 

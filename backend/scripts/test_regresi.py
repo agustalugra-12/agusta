@@ -559,6 +559,54 @@ async def skenario_kas_metode_bayar_walkin_menginap_tidak_hilang() -> tuple:
     return ("kas_metode_bayar_walkin_menginap_tidak_hilang", status)
 
 
+async def skenario_kas_metode_bayar_collect_balance_manual_tidak_hilang() -> tuple:
+    """Bug ditemukan 2026-09-06 (audit lanjutan permintaan Agus "cek satu-satu fitur
+    laporan keuangan", sama akar bug dgn fix Arus Kas hari ini) - collect_balance()
+    (pelunasan sisa tunai/QRIS di lokasi) & konfirmasi manual transfer disimpan di
+    payment_log (bukan checkins.pembayaran/bookings.pembayaran) - report_kas_metode_bayar
+    TIDAK PERNAH baca payment_log sama sekali, uang fisik/manual ini hilang total dari
+    laporan rekonsiliasi laci kas, walau sudah benar sbg kamar_tunai_langsung di Arus
+    Kas. Tripay ASLI (gateway="tripay") harus TETAP dikecualikan (sesuai niat laporan
+    ini) - dicek eksplisit di sini juga."""
+    from core import db, now_iso
+    from routes.reports import report_kas_metode_bayar
+
+    property_id = _property_id_test()
+    today_wita = datetime.now(timezone.utc).astimezone(timezone(timedelta(hours=8))).date()
+    today_iso = today_wita.isoformat()
+    besok_iso = (today_wita + timedelta(days=1)).isoformat()
+    now = now_iso()
+
+    await db.payment_log.insert_one({
+        "id": str(uuid.uuid4()), "property_id": property_id, "booking_id": "test-cb",
+        "booking_kode": "TEST-CB2", "order_id": f"COLLECT-TEST-{uuid.uuid4().hex[:4].upper()}",
+        "gross_amount": "30000", "payment_option": "collect_balance",
+        "transaction_status": "settlement", "status_code": "200",
+        "payment_type": "cash", "fraud_status": None, "created_at": now, "updated_at": now,
+    })
+    await db.payment_log.insert_one({
+        "id": str(uuid.uuid4()), "property_id": property_id, "booking_id": "test-manual",
+        "booking_kode": "TEST-MN2", "order_id": f"MANUAL-TEST-{uuid.uuid4().hex[:4].upper()}",
+        "gross_amount": "40000", "payment_option": "manual",
+        "transaction_status": "settlement", "status_code": "200",
+        "payment_type": "transfer_manual", "fraud_status": None, "created_at": now, "updated_at": now,
+    })
+    # Tripay ASLI - HARUS TETAP diabaikan laporan ini (sesuai niat docstring).
+    await db.payment_log.insert_one({
+        "id": str(uuid.uuid4()), "property_id": property_id, "booking_id": "test-tripay",
+        "booking_kode": "TEST-TP2", "order_id": f"TRIPAY-TEST-{uuid.uuid4().hex[:4].upper()}",
+        "gateway": "tripay", "gross_amount": "999999", "payment_option": "dp50",
+        "transaction_status": "settlement", "status_code": "200",
+        "payment_type": "QRIS2", "fraud_status": None, "created_at": now, "updated_at": now,
+    })
+
+    owner = {"id": "test", "nama": "Test Regresi"}
+    hasil = await report_kas_metode_bayar(from_date=today_iso, to_date=besok_iso, user=owner, property_id=property_id)
+    ok = hasil["tunai"] == 30000 and hasil["transfer"] == 40000 and hasil["total"] == 70000
+    status = "PASS" if ok else f"FAIL - hasil={hasil}, expected tunai=30000 transfer=40000 total=70000 (Tripay 999999 HARUS tidak ikut)"
+    return ("kas_metode_bayar_collect_balance_manual_tidak_hilang", status)
+
+
 async def skenario_analitik_saluran_cancelled_dan_walkin_tidak_dobel() -> tuple:
     """Bug KELIMA ditemukan sambil audit lanjutan (2026-08-25) - laporan_analitik.py
     (Analitik Saluran) TIDAK PERNAH cek `status` sama sekali (booking cancelled yg lupa
@@ -1132,6 +1180,7 @@ async def main():
         skenario_booking_cancelled_masih_paid_tidak_dihitung,
         skenario_arus_kas_walkin_menginap_tidak_hilang,
         skenario_arus_kas_collect_balance_manual_masuk_kamar_tunai_bukan_online,
+        skenario_kas_metode_bayar_collect_balance_manual_tidak_hilang,
         skenario_kas_metode_bayar_walkin_menginap_tidak_hilang,
         skenario_analitik_saluran_cancelled_dan_walkin_tidak_dobel,
         skenario_telegram_laporan_harian_cancelled_tidak_dihitung,
