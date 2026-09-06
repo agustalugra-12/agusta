@@ -724,6 +724,56 @@ async def skenario_quickbook_bayar_depan_masuk_ledger_rekening() -> tuple:
     return ("quickbook_bayar_depan_masuk_ledger_rekening", status)
 
 
+async def skenario_ubah_status_manual_masuk_ledger_rekening() -> tuple:
+    """Bug ditemukan 2026-09-06 (audit lanjutan "cek satu-satu fitur laporan keuangan",
+    SAMA AKAR MASALAH dgn collect_balance()/mark_paid_manual()/create_booking yg sudah
+    diperbaiki lebih dulu) - update_payment_status_manual (owner ubah status transaksi
+    payment_log macet jadi "settlement" manual, routes/payments.py) TIDAK PERNAH
+    memanggil auto_posting() - uang ini sungguhan masuk (via Tripay, konfirmasi manual
+    krn webhook gagal), tapi tidak pernah tercatat ke ledger kas."""
+    from core import db, now_iso, PaymentStatusUpdateBody
+    from routes.payments import update_payment_status_manual
+
+    property_id = _property_id_test()
+    room_id = await _bikin_kamar_test(db, property_id, "T9")
+    now = now_iso()
+
+    rekening_id = str(uuid.uuid4())
+    await db.rekening.insert_one({
+        "id": rekening_id, "nama": "Test Rekening Operasional 2", "bank": "", "no_rekening": "",
+        "pemilik": "", "jenis": "operasional", "saldo": 0, "target": None,
+        "warna": "#000000", "icon": "Wallet", "status": "aktif", "default_operasional": True,
+        "created_at": now, "updated_at": now, "property_id": property_id,
+    })
+    booking_id = str(uuid.uuid4())
+    await db.bookings.insert_one({
+        "id": booking_id, "kode": f"TEST-UM-{uuid.uuid4().hex[:6].upper()}", "property_id": property_id,
+        "room_id": room_id, "room_nomor": "T9", "room_tipe": "Standard", "tipe": "menginap",
+        "nama_tamu": "Test Regresi Ubah Status Manual", "no_hp": _wa_unik(),
+        "jam_mulai": now, "jam_selesai": (datetime.fromisoformat(now) + timedelta(days=1)).isoformat(),
+        "status": "booking_pending", "payment_status": "pending",
+        "subtotal": 100000, "service_fee": 3000, "total": 103000, "created_at": now,
+    })
+    log_id = str(uuid.uuid4())
+    await db.payment_log.insert_one({
+        "id": log_id, "property_id": property_id, "booking_id": booking_id, "booking_kode": "TEST-UM",
+        "order_id": f"TRIPAY-TEST-UM-{uuid.uuid4().hex[:4].upper()}", "gateway": "tripay",
+        "gross_amount": "103000", "payment_option": "full", "transaction_status": "pending",
+        "status_code": None, "payment_type": "QRIS2", "fraud_status": None,
+        "created_at": now, "updated_at": now,
+    })
+
+    owner = {"id": "test", "nama": "Test Regresi", "role": "owner"}
+    body = PaymentStatusUpdateBody(status="settlement", alasan="Test regresi - konfirmasi manual")
+    await update_payment_status_manual(log_id, body, user=owner, property_id=property_id)
+
+    r = await db.rekening.find_one({"id": rekening_id}, {"_id": 0, "saldo": 1})
+    trx = await db.rekening_transaksi.find_one({"rekening_id": rekening_id, "kategori": "Booking Tamu (Tripay - konfirmasi manual)"}, {"_id": 0})
+    ok = r is not None and r["saldo"] == 103000 and trx is not None and trx["nominal"] == 103000
+    status = "PASS" if ok else f"FAIL - saldo rekening={r.get('saldo') if r else None}, trx ditemukan={trx is not None}, expected saldo=103000"
+    return ("ubah_status_manual_masuk_ledger_rekening", status)
+
+
 async def skenario_analitik_saluran_cancelled_dan_walkin_tidak_dobel() -> tuple:
     """Bug KELIMA ditemukan sambil audit lanjutan (2026-08-25) - laporan_analitik.py
     (Analitik Saluran) TIDAK PERNAH cek `status` sama sekali (booking cancelled yg lupa
@@ -1301,6 +1351,7 @@ async def main():
         skenario_service_revenue_ota_belum_konfirmasi_dikecualikan,
         skenario_pendapatan_harian_kategori_kasir_tak_dikenal_tidak_crash,
         skenario_quickbook_bayar_depan_masuk_ledger_rekening,
+        skenario_ubah_status_manual_masuk_ledger_rekening,
         skenario_kas_metode_bayar_walkin_menginap_tidak_hilang,
         skenario_analitik_saluran_cancelled_dan_walkin_tidak_dobel,
         skenario_telegram_laporan_harian_cancelled_tidak_dihitung,

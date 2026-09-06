@@ -56,6 +56,20 @@ async def update_payment_status_manual(log_id: str, body: PaymentStatusUpdateBod
                 "updated_at": now,
             }})
             if new_payment == "paid" and not was_paid:
+                # Cash & Account Intelligence (2026-09-06, bug nyata ditemukan - audit
+                # lanjutan permintaan Agus "cek satu-satu fitur laporan keuangan", SAMA
+                # AKAR MASALAH dgn collect_balance()/mark_paid_manual()/create_booking
+                # yg sudah diperbaiki lebih dulu, lihat komentar di routes/bookings.py) -
+                # owner ubah status transaksi macet jadi "settlement" MANUAL (mis. webhook
+                # Tripay gagal terkirim tapi owner cek langsung ke dashboard Tripay uangnya
+                # sudah masuk) TIDAK PERNAH memanggil auto_posting() sama sekali - uang ini
+                # SUNGGUHAN masuk (via Tripay, walau konfirmasinya manual), tapi tidak
+                # pernah tercatat ke ledger kas.
+                from routes.rekening import auto_posting
+                gross = int(float(log.get("gross_amount") or 0))
+                if gross > 0:
+                    await auto_posting("pemasukan", gross, "Booking Tamu (Tripay - konfirmasi manual)",
+                                       f"Booking {b['kode']} - order {log.get('order_id')}", property_id)
                 try:
                     b_paid = {**b, "status": new_status, "payment_status": new_payment}
                     branding = await get_property_branding(b_paid.get("property_id"))
