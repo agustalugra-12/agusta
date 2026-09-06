@@ -319,13 +319,18 @@ async def report_summary(user: dict = Depends(get_current_user), property_id: st
     # sama persis dgn /reports/daily (Ringkasan) & /reports/rooms utk rentang yang sama,
     # bukan dihitung ulang pakai formula sendiri (paid_at/jam_checkout) lagi seperti
     # sebelumnya - itulah akar masalah "Dashboard tidak sinkron dengan Ringkasan".
-    _init_kosong = {"kamar": 0, "makanan": 0, "minuman": 0, "laundry": 0, "service": 0, "pengeluaran": 0}
+    # "lainnya" (2026-09-06, audit lanjutan - lihat catatan lengkap di
+    # _hitung_pendapatan_harian) - kategori produk kasir yg tidak dikenal dibucket ke
+    # sini drpd bikin mesin pendapatan crash, HARUS ikut disertakan di rev_kasir_today/
+    # rev_month juga (kalau tidak, uangnya "hilang" dari Dashboard walau sudah aman
+    # tidak bikin crash - beda kelas masalah tapi sama-sama harus dihindari).
+    _init_kosong = {"kamar": 0, "makanan": 0, "minuman": 0, "laundry": 0, "lainnya": 0, "service": 0, "pengeluaran": 0}
     today_row = by_day_month.get(today_wita.isoformat(), _init_kosong)
-    rev_kasir_today = today_row["makanan"] + today_row["minuman"] + today_row["laundry"]
-    rev_per_kat = {"makanan": today_row["makanan"], "minuman": today_row["minuman"], "laundry": today_row["laundry"]}
+    rev_kasir_today = today_row["makanan"] + today_row["minuman"] + today_row["laundry"] + today_row["lainnya"]
+    rev_per_kat = {"makanan": today_row["makanan"], "minuman": today_row["minuman"], "laundry": today_row["laundry"], "lainnya": today_row["lainnya"]}
     rev_svc_today = today_row["service"]
     total_exp_today = today_row["pengeluaran"]
-    rev_month = sum(r["kamar"] + r["makanan"] + r["minuman"] + r["laundry"] + r["service"] for r in by_day_month.values())
+    rev_month = sum(r["kamar"] + r["makanan"] + r["minuman"] + r["laundry"] + r["lainnya"] + r["service"] for r in by_day_month.values())
     rev_svc_month = sum(r["service"] for r in by_day_month.values())
     total_exp_month = sum(r["pengeluaran"] for r in by_day_month.values())
     # Okupansi harian (2026-07-21, permintaan user) - kamar yang TIDAK "kosong" (day_use,
@@ -502,7 +507,7 @@ async def _hitung_pendapatan_harian(from_date: str, to_date: str, property_id: s
     # yang belum tiba, dipecah dari field "tipe" masing-masing booking.
     def _init(): return {
         "kamar": 0, "kamar_menginap": 0, "kamar_day_use": 0,
-        "makanan": 0, "minuman": 0, "laundry": 0, "service": 0, "pengeluaran": 0,
+        "makanan": 0, "minuman": 0, "laundry": 0, "lainnya": 0, "service": 0, "pengeluaran": 0,
     }
     for c in ci:
         d = bucket(c["jam_checkin"])
@@ -530,7 +535,23 @@ async def _hitung_pendapatan_harian(from_date: str, to_date: str, property_id: s
         d = bucket(k["timestamp"])
         by_day.setdefault(d, _init())
         for it in k.get("items", []):
-            by_day[d][it["kategori"]] += it["subtotal"]
+            # .get(..., "lainnya") (2026-09-06, audit lanjutan "cek satu-satu fitur
+            # laporan keuangan") - kategori produk kasir field BEBAS TEKS (tidak
+            # dibatasi enum di level Pydantic, lihat core.py), SEBELUM ini indexing
+            # langsung `by_day[d][it["kategori"]]` bikin mesin pendapatan TUNGGAL ini
+            # (dipakai Dashboard & Ringkasan) CRASH TOTAL (KeyError, 500) kalau ada
+            # kategori produk baru yg belum didaftarkan di sini - drpd crash SELURUH
+            # laporan krn 1 produk nyasar, uangnya tetap masuk (kategori "lainnya",
+            # ikut tersambung ke pendapatan_bulan_ini/pendapatan_hari_ini di
+            # report_summary & report_daily) & tercatat jelas biar ketahuan perlu
+            # didaftarkan sbg kategori resmi.
+            kat = it["kategori"] if it["kategori"] in by_day[d] else "lainnya"
+            if kat == "lainnya" and it["kategori"] not in ("makanan", "minuman", "laundry"):
+                logging.getLogger("reports").warning(
+                    "Kategori kasir tidak dikenal %r (produk %s) - dibucket sbg 'lainnya', "
+                    "pertimbangkan daftarkan sbg kategori resmi", it["kategori"], it.get("nama"),
+                )
+            by_day[d][kat] += it["subtotal"]
     for s in sv:
         tgl_raw = s.get("tanggal")
         if not tgl_raw: continue
@@ -558,7 +579,7 @@ async def report_daily(from_date: str = Query(...), to_date: str = Query(...),
     result = []
     for d in sorted(by_day.keys()):
         row = by_day[d]
-        pendapatan = row["kamar"] + row["makanan"] + row["minuman"] + row["laundry"] + row["service"]
+        pendapatan = row["kamar"] + row["makanan"] + row["minuman"] + row["laundry"] + row["lainnya"] + row["service"]
         result.append({
             "tanggal": d, **row,
             "pendapatan": pendapatan,
@@ -762,12 +783,16 @@ async def _ambil_detail_pembayaran_booking(booking_ids: List[str]) -> Dict[str, 
     perlu tunjukkan tamu DP berapa via cash/Tripay & pelunasannya ditagih di sistem
     pakai cash/QR atau lainnya), dari payment_log (sumber kebenaran tiap event bayar
     sungguhan - Tripay create-transaction/webhook, collect-balance staf, atau verifikasi
-    manual) - HANYA entri yang benar settlement (transaction_status=="settlement"),
-    bukan yang masih pending/belum terbayar."""
+    manual) - HANYA entri yang benar settlement/capture (transaction_status IN
+    settlement/capture - "capture" status khusus histori Midtrans lama, sama konvensi
+    dgn semua query payment_log lain di file ini, bukan yang masih pending/belum
+    terbayar). Konsistensi ditambahkan 2026-09-06 (audit lanjutan "cek satu-satu fitur
+    laporan keuangan") - SEBELUM ini cuma cek "settlement" (kelewat "capture"), booking
+    lama era Midtrans bisa tampil rincian pembayarannya kosong walau uangnya sah."""
     if not booking_ids:
         return {}
     logs = await db.payment_log.find({
-        "booking_id": {"$in": booking_ids}, "transaction_status": "settlement",
+        "booking_id": {"$in": booking_ids}, "transaction_status": {"$in": ["settlement", "capture"]},
     }, {"_id": 0, "booking_id": 1, "payment_option": 1, "payment_type": 1, "gross_amount": 1, "created_at": 1}).sort("created_at", 1).to_list(2000)
     out: Dict[str, List[Dict[str, Any]]] = {}
     for l in logs:

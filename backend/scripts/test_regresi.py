@@ -650,6 +650,41 @@ async def skenario_service_revenue_ota_belum_konfirmasi_dikecualikan() -> tuple:
     return ("service_revenue_ota_belum_konfirmasi_dikecualikan", status)
 
 
+async def skenario_pendapatan_harian_kategori_kasir_tak_dikenal_tidak_crash() -> tuple:
+    """Bug ditemukan 2026-09-06 (audit lanjutan "cek satu-satu fitur laporan keuangan")
+    - kategori produk kasir field BEBAS TEKS (tidak dibatasi enum di level Pydantic),
+    tapi _hitung_pendapatan_harian (mesin pendapatan TUNGGAL, dipakai Dashboard &
+    Ringkasan) SEBELUM ini indexing langsung `by_day[d][it["kategori"]]` - kategori
+    produk yg belum terdaftar (mis. "oleh-oleh") bikin KeyError, CRASH TOTAL laporan
+    (bukan cuma produk itu yg gagal, SELURUH Dashboard/Ringkasan ikut 500). Fix: bucket
+    kategori tak dikenal ke "lainnya" (uangnya TETAP masuk pendapatan, tidak hilang &
+    tidak crash)."""
+    from core import db, now_iso
+    from routes.reports import report_daily
+
+    property_id = _property_id_test()
+    today_wita = datetime.now(timezone.utc).astimezone(timezone(timedelta(hours=8))).date()
+    today_iso = today_wita.isoformat()
+    now = now_iso()
+
+    await db.kasir.insert_one({
+        "id": str(uuid.uuid4()), "trx_no": f"TEST-{uuid.uuid4().hex[:6].upper()}", "property_id": property_id,
+        "items": [{"product_id": "test-p1", "kode": "P1", "nama": "Oleh-oleh Test", "kategori": "oleh-oleh",
+                   "harga": 25000, "qty": 1, "subtotal": 25000}],
+        "total": 25000, "metode_bayar": "tunai", "timestamp": now, "created_at": now,
+    })
+
+    owner = {"id": "test", "nama": "Test Regresi"}
+    try:
+        hasil = await report_daily(from_date=today_iso, to_date=today_iso, user=owner, property_id=property_id)
+        total_pendapatan = sum(r["pendapatan"] for r in hasil)
+        ok = total_pendapatan == 25000
+        status = "PASS" if ok else f"FAIL - total_pendapatan={total_pendapatan}, expected=25000 (uang kategori tak dikenal HARUS tetap masuk)"
+    except KeyError as e:
+        status = f"FAIL - masih crash KeyError: {e!r} (kategori tak dikenal harusnya di-handle, bukan crash)"
+    return ("pendapatan_harian_kategori_kasir_tak_dikenal_tidak_crash", status)
+
+
 async def skenario_analitik_saluran_cancelled_dan_walkin_tidak_dobel() -> tuple:
     """Bug KELIMA ditemukan sambil audit lanjutan (2026-08-25) - laporan_analitik.py
     (Analitik Saluran) TIDAK PERNAH cek `status` sama sekali (booking cancelled yg lupa
@@ -1225,6 +1260,7 @@ async def main():
         skenario_arus_kas_collect_balance_manual_masuk_kamar_tunai_bukan_online,
         skenario_kas_metode_bayar_collect_balance_manual_tidak_hilang,
         skenario_service_revenue_ota_belum_konfirmasi_dikecualikan,
+        skenario_pendapatan_harian_kategori_kasir_tak_dikenal_tidak_crash,
         skenario_kas_metode_bayar_walkin_menginap_tidak_hilang,
         skenario_analitik_saluran_cancelled_dan_walkin_tidak_dobel,
         skenario_telegram_laporan_harian_cancelled_tidak_dihitung,
