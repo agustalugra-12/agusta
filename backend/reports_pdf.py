@@ -25,6 +25,7 @@ from reportlab.platypus import (
 )
 from reportlab.graphics.shapes import Drawing
 from reportlab.graphics.charts.barcharts import VerticalBarChart
+from reportlab.graphics.charts.piecharts import Pie
 from reportlab.graphics.charts.legends import Legend
 
 NAMA_HARI = ["Senin", "Selasa", "Rabu", "Kamis", "Jumat", "Sabtu", "Minggu"]
@@ -49,6 +50,7 @@ def _styles():
     ss.add(ParagraphStyle("SubTitle", parent=ss["Normal"], textColor=_ABU, fontSize=10, spaceAfter=14))
     ss.add(ParagraphStyle("SectionHeader", parent=ss["Heading2"], textColor=_BIRU, spaceBefore=16, spaceAfter=8))
     ss.add(ParagraphStyle("Insight", parent=ss["Normal"], fontSize=10, leading=14, spaceAfter=6, leftIndent=8))
+    ss.add(ParagraphStyle("Cell", parent=ss["Normal"], fontSize=8, leading=10))
     return ss
 
 
@@ -177,6 +179,25 @@ def _hitung_saran(
     return saran
 
 
+def _pie_chart_jenis_kamar(day_use_n: int, menginap_n: int) -> Optional[Drawing]:
+    if day_use_n + menginap_n <= 0:
+        return None
+    drawing = Drawing(300, 150)
+    pie = Pie()
+    pie.x, pie.y, pie.width, pie.height = 75, 10, 130, 130
+    pie.data = [day_use_n, menginap_n]
+    pie.labels = [f"Day Use ({day_use_n})", f"Menginap ({menginap_n})"]
+    pie.slices[0].fillColor = colors.HexColor("#F97316")
+    pie.slices[1].fillColor = _BIRU
+    drawing.add(pie)
+    legend = Legend()
+    legend.x, legend.y = 220, 100
+    legend.fontSize = 8
+    legend.colorNamePairs = [(colors.HexColor("#F97316"), "Day Use"), (_BIRU, "Menginap")]
+    drawing.add(legend)
+    return drawing
+
+
 def _metode_bayar_ringkas(detail_pembayaran: List[Dict[str, Any]]) -> str:
     """Ringkas daftar detail_pembayaran (dari report_rooms - lihat _ambil_detail_pembayaran_
     booking/_detail_pembayaran_checkin) jadi 1 string singkat, mis. "Tunai" atau
@@ -200,6 +221,8 @@ def build_financial_report_pdf(
     cancel_data: Dict[str, Any],
     okupansi_avg: Optional[float] = None,
     rooms_items: Optional[List[Dict[str, Any]]] = None,
+    expenses_rows: Optional[List[Dict[str, Any]]] = None,
+    selisih_detail: Optional[List[Dict[str, Any]]] = None,
 ) -> bytes:
     buf = io.BytesIO()
     doc = SimpleDocTemplate(
@@ -269,6 +292,64 @@ def build_financial_report_pdf(
             f"{arah} - {sebab}.",
             ss["Insight"],
         ))
+        if selisih_detail:
+            sel_rows = [["Tanggal", "Kode", "Nama Tamu", "Nominal", "Arah", "Keterangan"]]
+            for d in selisih_detail:
+                sel_rows.append([
+                    d.get("tanggal", "-"),
+                    Paragraph(d.get("kode") or "-", ss["Cell"]),
+                    Paragraph(d.get("nama_tamu") or "-", ss["Cell"]),
+                    _rp(d.get("nominal", 0)),
+                    "Masuk" if d.get("arah") == "masuk" else "Keluar",
+                    Paragraph(d.get("keterangan") or "-", ss["Cell"]),
+                ])
+            sel_tbl = Table(sel_rows, repeatRows=1, hAlign="LEFT",
+                             colWidths=[18 * mm, 30 * mm, 32 * mm, 25 * mm, 15 * mm, 55 * mm])
+            sel_tbl.setStyle(_tabel_style(header_bg=_ABU))
+            story.append(Spacer(1, 4))
+            story.append(sel_tbl)
+
+    if rooms_items:
+        day_use_n = sum(1 for it in rooms_items if it.get("tipe") == "day_use")
+        menginap_n = sum(1 for it in rooms_items if it.get("tipe") == "menginap")
+        rev_day_use = sum(r.get("kamar_day_use", 0) for r in daily_rows)
+        rev_menginap = sum(r.get("kamar_menginap", 0) for r in daily_rows)
+        story.append(Paragraph("Jenis Kamar Terjual", ss["SectionHeader"]))
+        jk_tbl = Table([
+            ["Jenis", "Jumlah Transaksi", "Pendapatan"],
+            ["Day Use", str(day_use_n), _rp(rev_day_use)],
+            ["Menginap", str(menginap_n), _rp(rev_menginap)],
+        ], hAlign="LEFT")
+        jk_tbl.setStyle(_tabel_style())
+        story.append(jk_tbl)
+        pie = _pie_chart_jenis_kamar(day_use_n, menginap_n)
+        if pie:
+            story.append(Spacer(1, 4))
+            story.append(pie)
+
+    if expenses_rows:
+        story.append(Paragraph("Detail Pengeluaran", ss["SectionHeader"]))
+        exp_rows = [["Tanggal", "Kategori", "Deskripsi", "Nominal"]]
+        for e in expenses_rows:
+            exp_rows.append([
+                (e.get("tanggal") or "")[:10], e.get("kategori") or "-",
+                Paragraph(e.get("deskripsi") or "-", ss["Cell"]), _rp(e.get("nominal", 0)),
+            ])
+        exp_tbl = Table(exp_rows, repeatRows=1, hAlign="LEFT", colWidths=[22 * mm, 30 * mm, 78 * mm, 30 * mm])
+        exp_tbl.setStyle(_tabel_style())
+        story.append(exp_tbl)
+
+        top5 = sorted(expenses_rows, key=lambda e: e.get("nominal", 0), reverse=True)[:5]
+        story.append(Paragraph("Top 5 Pengeluaran Terbesar", ss["SectionHeader"]))
+        top5_rows = [["Tanggal", "Kategori", "Deskripsi", "Nominal"]]
+        for e in top5:
+            top5_rows.append([
+                (e.get("tanggal") or "")[:10], e.get("kategori") or "-",
+                Paragraph(e.get("deskripsi") or "-", ss["Cell"]), _rp(e.get("nominal", 0)),
+            ])
+        top5_tbl = Table(top5_rows, repeatRows=1, hAlign="LEFT", colWidths=[22 * mm, 30 * mm, 78 * mm, 30 * mm])
+        top5_tbl.setStyle(_tabel_style(header_bg=_MERAH))
+        story.append(top5_tbl)
 
     story.append(Paragraph("Grafik Pendapatan per Tanggal", ss["SectionHeader"]))
     if daily_rows:
@@ -330,7 +411,7 @@ def build_financial_report_pdf(
         for it in sorted(rooms_items, key=lambda x: x.get("jam_checkin") or ""):
             tamu_rows.append([
                 (it.get("jam_checkin") or "")[:10],
-                it.get("nama_tamu") or "-",
+                Paragraph(it.get("nama_tamu") or "-", ss["Cell"]),
                 it.get("room_nomor") or "-",
                 it.get("room_tipe") or "-",
                 _rp(it.get("total", 0)),

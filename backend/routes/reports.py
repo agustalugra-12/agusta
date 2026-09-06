@@ -900,6 +900,11 @@ async def report_rooms(from_date: str = Query(...), to_date: str = Query(...),
         fbid = c.get("from_booking_id")
         payment_option = asal_bookings.get(fbid, {}).get("payment_option") if fbid else None
         c["detail_pembayaran"] = _detail_pembayaran_checkin(c, payment_option)
+        # "tipe" (2026-09-07, permintaan Agus - "jenis kamar yang laku day use berapa,
+        # menginap berapa") - db.checkins SELALU Day Use (checkin_from_booking Menginap
+        # TIDAK PERNAH bikin dokumen checkins terpisah, lihat catatan lengkap di
+        # routes/bookings.py) - hardcode aman, bukan tebakan.
+        c["tipe"] = "day_use"
     booking_items = [{
         "id": b["id"], "trx_no": b.get("kode"),
         "nama_tamu": b.get("nama_tamu"), "room_nomor": b.get("room_nomor"), "room_tipe": b.get("room_tipe"),
@@ -908,6 +913,7 @@ async def report_rooms(from_date: str = Query(...), to_date: str = Query(...),
         "tarif_dasar": b.get("subtotal", 0), "biaya_tambahan": 0, "total": b.get("total", 0),
         "petugas_checkout": b.get("created_by") or b.get("source"),
         "source": b.get("source"),
+        "tipe": b.get("tipe"),
         "detail_pembayaran": detail_map.get(b["id"], []),
     } for b in bk]
     all_items = sorted(items + booking_items, key=lambda x: x.get("jam_checkout") or "", reverse=True)
@@ -1084,6 +1090,60 @@ async def report_shift(from_date: str = Query(...), to_date: str = Query(...),
     }
 
 
+async def _detail_selisih_kas_pendapatan(from_date: str, to_date: str, property_id: str) -> List[Dict[str, Any]]:
+    """Rincian TAMU SIAPA yang bikin selisih Pendapatan (akrual) vs Total Uang Masuk
+    (cash basis) (2026-09-07, permintaan Agus - "laporan ini diciptakan utk owner yang
+    malas cari tahu, jadi buatkan selengkap mungkin... detail selisihnya bisa diberikan
+    detil tamu siapa"). 2 arah kontribusi:
+    1. `masuk` - uang BENAR-BENAR diterima (payment_log settlement) periode ini, TAPI
+       booking-nya menginap (jam_mulai) di LUAR periode ini - kontribusi POSITIF ke
+       selisih (Total Uang Masuk > Pendapatan).
+    2. `keluar` - booking menginap (jam_mulai, diakui sbg Pendapatan) periode ini, TAPI
+       `paid_at`-nya di LUAR periode ini (sudah dibayar sebelum/sesudah periode) -
+       kontribusi NEGATIF ke selisih (Pendapatan > Total Uang Masuk periode ini).
+    Granularitas per-BOOKING (bukan per-malam) - cukup utk "siapa tamunya", tidak perlu
+    presisi sampai ke pecahan malam lintas bulan (beda tujuan dari _hitung_pendapatan_
+    harian yg memang harus presisi per-malam utk total akrualnya)."""
+    start, end = wita_date_range_to_utc(from_date, to_date)
+    hasil: List[Dict[str, Any]] = []
+
+    logs = await db.payment_log.find(scoped({
+        "transaction_status": {"$in": ["settlement", "capture"]},
+        "updated_at": {"$gte": start, "$lte": end},
+        "booking_id": {"$exists": True, "$ne": None},
+    }, property_id), {"_id": 0, "booking_id": 1, "gross_amount": 1, "updated_at": 1}).to_list(2000)
+    booking_ids = list({l["booking_id"] for l in logs})
+    bmap: Dict[str, Any] = {}
+    if booking_ids:
+        docs = await db.bookings.find({"id": {"$in": booking_ids}}, {"_id": 0, "id": 1, "kode": 1, "nama_tamu": 1, "jam_mulai": 1}).to_list(2000)
+        bmap = {d["id"]: d for d in docs}
+    for l in logs:
+        b = bmap.get(l["booking_id"])
+        jm = b.get("jam_mulai") if b else None
+        if b and jm and not (start <= jm <= end):
+            hasil.append({
+                "arah": "masuk", "tanggal": (l["updated_at"] or "")[:10], "kode": b.get("kode"),
+                "nama_tamu": b.get("nama_tamu") or "-", "nominal": int(float(l.get("gross_amount") or 0)),
+                "keterangan": f"Dibayar periode ini, menginap {jm[:10]}",
+            })
+
+    bks = await db.bookings.find(scoped({
+        "payment_status": "paid", "status": {"$ne": "cancelled"},
+        "jam_mulai": {"$gte": start, "$lte": end},
+        "ota_harga_dikonfirmasi": {"$ne": False},
+        "checkin_id": {"$exists": False},
+    }, property_id), {"_id": 0, "kode": 1, "nama_tamu": 1, "jam_mulai": 1, "paid_at": 1, "total": 1}).to_list(2000)
+    for b in bks:
+        pa = b.get("paid_at")
+        if pa and not (start <= pa <= end):
+            hasil.append({
+                "arah": "keluar", "tanggal": (b["jam_mulai"] or "")[:10], "kode": b.get("kode"),
+                "nama_tamu": b.get("nama_tamu") or "-", "nominal": int(b.get("total") or 0),
+                "keterangan": f"Menginap periode ini, dibayar {pa[:10]}",
+            })
+    return sorted(hasil, key=lambda x: x["tanggal"])
+
+
 @api.get("/reports/financial-summary/pdf")
 async def report_financial_summary_pdf(from_date: str = Query(...), to_date: str = Query(...),
                                         user: dict = Depends(get_current_user),
@@ -1099,6 +1159,7 @@ async def report_financial_summary_pdf(from_date: str = Query(...), to_date: str
     filosofi seluruh modul laporan keuangan (data akuntansi harus reproducible)."""
     from reports_pdf import build_financial_report_pdf
     from routes.laporan_analitik import laporan_performa_saluran, laporan_tren_okupansi
+    from routes.expenses import list_expenses
     from fastapi.responses import Response
 
     nama = await nama_properti(property_id)
@@ -1113,10 +1174,17 @@ async def report_financial_summary_pdf(from_date: str = Query(...), to_date: str
     # tamunya?") - reuse report_rooms (sudah py nama_tamu/room_nomor/detail_pembayaran
     # per transaksi), bukan query baru.
     rooms_data = await report_rooms(from_date=from_date, to_date=to_date, user=user, property_id=property_id)
+    # Detail pengeluaran (2026-09-07, permintaan Agus - "laporan ini tidak ada detil
+    # pengeluaran, dan 5 terbesar") - reuse list_expenses.
+    expenses_rows = await list_expenses(from_date=from_date, to_date=to_date, user=user, property_id=property_id)
+    # Detail siapa yg bikin selisih Pendapatan vs Total Uang Masuk (2026-09-07,
+    # permintaan Agus - "laporan utk owner yang malas cari tahu, buatkan selengkap
+    # mungkin, detail selisihnya tamu siapa").
+    selisih_detail = await _detail_selisih_kas_pendapatan(from_date, to_date, property_id)
 
     pdf_bytes = build_financial_report_pdf(
         nama, from_date, to_date, daily_rows, arus_kas_rows, service_data, saluran_rows, cancel_data, okupansi_avg,
-        rooms_items=rooms_data.get("items"),
+        rooms_items=rooms_data.get("items"), expenses_rows=expenses_rows, selisih_detail=selisih_detail,
     )
     filename = f"Laporan_Keuangan_{nama.replace(' ', '_')}_{from_date}_{to_date}.pdf"
     return Response(
