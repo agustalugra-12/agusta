@@ -1611,4 +1611,14 @@ async def parse_reddoorz_pdf(file: UploadFile = File(...), user: dict = Depends(
             "jumlah_kamar": cocok["jumlah_kamar"] if cocok else None,
             "estimasi_total": cocok["estimasi_total"] if cocok else None,
         })
+    # Log hasil lengkap (2026-09-08, permintaan Agus - "buat kamu bisa akses data itu
+    # gimana caranya") - endpoint ini sengaja stateless (tidak tulis DB, cuma balas ke
+    # browser staf, lihat docstring), jadi SEBELUM ini tidak ada cara audit/debug hasil
+    # baca PDF tanpa staf forward manual (screenshot/copas, gampang kepotong - kejadian
+    # nyata hari ini). Log INFO (bukan warning) - ini bukan error, murni jejak audit biar
+    # bisa dicek lewat journalctl kapan saja tanpa nunggu staf kirim ulang.
+    logging.getLogger("otomasi_email").info(
+        f"parse_reddoorz_pdf oleh {user.get('nama')}: file={file.filename!r}, "
+        f"{len(items)} baris dibaca, {sum(1 for o in out if o['matched'])} cocok. Detail: {out}"
+    )
     return {"items": out, "total_dibaca": len(items), "total_cocok": sum(1 for o in out if o["matched"])}
