@@ -972,6 +972,8 @@ function LaporanOtaPrepaid() {
     }
   };
 
+  const [terapkanSemuaLoading, setTerapkanSemuaLoading] = useState(false);
+
   const terapkan = async (row) => {
     setTerapkanId(row.booking_id);
     try {
@@ -986,9 +988,37 @@ function LaporanOtaPrepaid() {
     }
   };
 
+  // Terapkan Semua (2026-09-08, permintaan Agus "coba cocokan semuanya" - sebelumnya
+  // cuma bisa 1-per-1, tidak praktis kalau PDF settlement isinya puluhan baris). SENGAJA
+  // HANYA baris `cocokRows` TANPA `selisih_signifikan` - baris yang nominal PDF-nya beda
+  // jauh dari estimasi tetap wajib direview manual (peringatan kuning yang sudah ada),
+  // jangan ikut di-apply massal tanpa tinjau. Sekuensial (bukan Promise.all) supaya toast
+  // error per-baris tetap jelas & 1 baris gagal tidak menghentikan yang lain.
+  const terapkanSemua = async () => {
+    const rows = cocokRows.filter((r) => !r.selisih_signifikan);
+    if (rows.length === 0) return;
+    if (!window.confirm(`Terapkan ${rows.length} baris yang cocok sekaligus? Baris dengan selisih signifikan (ditandai kuning) TIDAK ikut - itu tetap perlu ditinjau manual satu-satu.`)) return;
+    setTerapkanSemuaLoading(true);
+    let sukses = 0, gagal = 0;
+    for (const row of rows) {
+      try {
+        await api.post(`/bookings/${row.booking_id}/konfirmasi-harga-ota`, { total_nominal: row.extracted_nominal });
+        sukses++;
+        setHasil((h) => ({ ...h, items: h.items.filter((it) => it.booking_id !== row.booking_id) }));
+      } catch (err) {
+        gagal++;
+        toast.error(`${row.kode}: ${err?.response?.data?.detail || "gagal diterapkan"}`);
+      }
+    }
+    setTerapkanSemuaLoading(false);
+    if (sukses > 0) toast.success(`${sukses} booking berhasil dikonfirmasi${gagal > 0 ? `, ${gagal} gagal` : ""}`);
+    load();
+  };
+
   const cocokRows = (hasil?.items || []).filter((it) => it.matched);
   const ambiguousRows = (hasil?.items || []).filter((it) => !it.matched && it.ambiguous_count > 0);
   const tidakCocokRows = (hasil?.items || []).filter((it) => !it.matched && !it.ambiguous_count);
+  const cocokAmanRows = cocokRows.filter((r) => !r.selisih_signifikan);
 
   return (
     <div className="space-y-4">
@@ -1041,8 +1071,16 @@ function LaporanOtaPrepaid() {
       {hasil && cocokRows.length + tidakCocokRows.length > 0 && (
         <Card className="border-slate-200">
           <CardContent className="p-4 sm:p-5">
-            <h3 className="font-bold mb-1">Hasil Baca PDF ({hasil.total_dibaca} baris, {hasil.total_cocok} cocok)</h3>
-            <p className="text-xs text-slate-500 mb-3">Review dulu sebelum menerapkan - klik "Terapkan" per baris untuk konfirmasi nominal settlement-nya ke booking yang cocok.</p>
+            <div className="flex items-start justify-between flex-wrap gap-3 mb-1">
+              <h3 className="font-bold">Hasil Baca PDF ({hasil.total_dibaca} baris, {hasil.total_cocok} cocok)</h3>
+              {cocokAmanRows.length > 1 && (
+                <Button size="sm" variant="outline" data-testid="ota-terapkan-semua"
+                  disabled={terapkanSemuaLoading} onClick={terapkanSemua}>
+                  {terapkanSemuaLoading ? "Menerapkan…" : `Terapkan Semua yang Cocok (${cocokAmanRows.length})`}
+                </Button>
+              )}
+            </div>
+            <p className="text-xs text-slate-500 mb-3">Review dulu sebelum menerapkan - klik "Terapkan" per baris, atau "Terapkan Semua" utk baris yang cocok pasti sekaligus (baris selisih signifikan tetap wajib satu-satu).</p>
             {cocokRows.length > 0 && (
               <table className="w-full text-sm mb-4">
                 <thead>
