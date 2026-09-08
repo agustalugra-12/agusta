@@ -1530,7 +1530,13 @@ async def _daftar_ota_belum_dikonfirmasi() -> list:
             }
         grup[key]["jumlah_kamar"] += 1
         grup[key]["estimasi_total"] += int(b.get("total") or 0)
-    return sorted(grup.values(), key=lambda g: g.get("jam_mulai") or "", reverse=True)
+    # str() (2026-09-08, bug nyata - endpoint ini 500 tiap dipanggil, termasuk upload PDF
+    # settlement RedDoorz krn dipanggil sesudahnya): jam_mulai TIDAK konsisten tipenya di
+    # DB - mayoritas string ISO, tapi ditemukan 1 booking tersimpan sbg datetime object
+    # (BKO-20260820195012-64E2) - Python tidak bisa bandingkan datetime dgn str, sort
+    # crash TypeError begitu keduanya ketemu di 1 daftar yg sama. str() aman utk KEDUANYA
+    # (datetime.__str__ tetap urut sama seperti ISO string, cukup utk sorting tampilan).
+    return sorted(grup.values(), key=lambda g: str(g.get("jam_mulai") or ""), reverse=True)
 
 
 @api.get("/otomasi-email/ota-belum-dikonfirmasi")
