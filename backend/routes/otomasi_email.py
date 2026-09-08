@@ -1615,10 +1615,15 @@ async def parse_reddoorz_pdf(file: UploadFile = File(...), user: dict = Depends(
     # gimana caranya") - endpoint ini sengaja stateless (tidak tulis DB, cuma balas ke
     # browser staf, lihat docstring), jadi SEBELUM ini tidak ada cara audit/debug hasil
     # baca PDF tanpa staf forward manual (screenshot/copas, gampang kepotong - kejadian
-    # nyata hari ini). Log INFO (bukan warning) - ini bukan error, murni jejak audit biar
-    # bisa dicek lewat journalctl kapan saja tanpa nunggu staf kirim ulang.
-    logging.getLogger("otomasi_email").info(
+    # nyata hari ini). SATU BARIS PER ITEM (bukan 1 baris raksasa berisi semua item) -
+    # bug nyata ditemukan SENDIRI di upload pertama sesudah fix ini: PDF 155 baris bikin
+    # 1 baris log jadi >49KB, journald MEMOTONGNYA duluan sebelum sampai item terakhir -
+    # log INFO (bukan warning) - ini bukan error, murni jejak audit.
+    _log = logging.getLogger("otomasi_email")
+    _log.info(
         f"parse_reddoorz_pdf oleh {user.get('nama')}: file={file.filename!r}, "
-        f"{len(items)} baris dibaca, {sum(1 for o in out if o['matched'])} cocok. Detail: {out}"
+        f"{len(items)} baris dibaca, {sum(1 for o in out if o['matched'])} cocok"
     )
+    for _i, _it in enumerate(out):
+        _log.info(f"  [{_i+1}/{len(out)}] {_it}")
     return {"items": out, "total_dibaca": len(items), "total_cocok": sum(1 for o in out if o["matched"])}
