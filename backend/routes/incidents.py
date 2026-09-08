@@ -352,6 +352,70 @@ async def background_business_truth_scan_loop():
         await asyncio.sleep(INTERVAL_SEC)
 
 
+async def background_pending_booking_approval_scan_loop():
+    """Scan berkala booking_requests status="waiting_approval" yang sudah lama menunggu
+    (2026-09-08 - ditemukan lewat investigasi keluhan Agus "AI chat tidak kirim link
+    payment": 2 tamu nyata [Meca, Gung de] booking Day Use jam custom [<12:00 WITA,
+    jam_checkin_perlu_review=True] sempat 6-12 JAM menunggu tanpa link pembayaran -
+    ternyata BUKAN bug AI sama sekali, booking-nya SUDAH benar dibuat & menunggu
+    keputusan terima/tolak staf (kebijakan Agus sendiri, lihat booking_requests.py) -
+    yang hilang cuma pengingatnya. `buat_booking_request` SUDAH kirim 1x push notification
+    ("Permintaan Booking Baru") begitu request dibuat (lihat routes/push.py), TAPI kalau
+    push itu terlewat (HP mati/notif ke-dismiss/PWA belum terbuka) TIDAK ADA jaring
+    pengaman lain - booking bisa nyangkut tanpa batas waktu. Sama kelas bug dgn
+    "escalate_stale_handovers.py" yang sudah diperbaiki di ai-chat-bot hari ini (1x alert
+    tanpa reminder susulan) - di sini fix-nya pakai Incident Engine yang SUDAH ADA
+    (severity="urgent" -> Action Center Telegram, lihat create_incident) drpd bikin
+    mekanisme notifikasi baru lagi.
+
+    AMBANG_MENIT = 60 - booking Day Use butuh keputusan CEPAT (tamu sering datang hari
+    yang sama/besok, beda dari Collection Required yang isu back-office). Auto-resolve
+    begitu status berubah dari "waiting_approval" (staf sudah approve/reject, apa pun
+    hasilnya - bukan tugas loop ini menilai keputusannya benar/salah)."""
+    INTERVAL_SEC = 900  # 15 menit, sama dgn collection_required (urgensi sebanding)
+    AMBANG_MENIT = 60
+    while True:
+        try:
+            batas = (datetime.now(timezone.utc) - timedelta(minutes=AMBANG_MENIT)).isoformat()
+            pending = await db.booking_requests.find(
+                {"status": "waiting_approval", "created_at": {"$lt": batas}},
+                {"_id": 0, "id": 1, "kode": 1, "nama_tamu": 1, "no_hp": 1, "tipe": 1, "room_tipe": 1,
+                 "tanggal_checkin": 1, "jam_checkin": 1, "jam_checkin_perlu_review": 1, "property_id": 1,
+                 "created_at": 1},
+            ).to_list(200)
+            for b in pending:
+                dedup_key = f"pending_booking_approval:{b['id']}"
+                lama_menit = int((datetime.now(timezone.utc) - datetime.fromisoformat(b["created_at"])).total_seconds() / 60)
+                alasan = " (jam check-in di bawah kebijakan minimum, butuh keputusan manual)" if b.get("jam_checkin_perlu_review") else ""
+                await create_incident(
+                    event_type="pending_booking_approval", severity="urgent", source="pms",
+                    property_id=b.get("property_id"), dedup_key=dedup_key,
+                    title=f"Booking {b.get('kode')} belum diputuskan ({lama_menit} menit){alasan}",
+                    detail=f"{b.get('nama_tamu') or '-'} ({b.get('no_hp') or '-'}) · {b.get('tipe')} "
+                           f"{b.get('room_tipe')} · check-in {b.get('tanggal_checkin')} {b.get('jam_checkin') or ''} - "
+                           f"tamu kemungkinan masih menunggu link pembayaran, cek halaman Booking Requests.",
+                    meta={"booking_request_id": b["id"], "kode": b.get("kode")},
+                )
+
+            # Auto-resolve - dedup_key masih dianggap "milik" booking_request yang SEKARANG
+            # statusnya BUKAN waiting_approval lagi (approved/rejected), incident open lama
+            # utk id itu ditutup otomatis.
+            open_incidents = await db.incidents.find(
+                {"event_type": "pending_booking_approval", "status": "open"},
+                {"_id": 0, "id": 1, "meta": 1},
+            ).to_list(200)
+            for inc in open_incidents:
+                brid = (inc.get("meta") or {}).get("booking_request_id")
+                if not brid:
+                    continue
+                current = await db.booking_requests.find_one({"id": brid}, {"_id": 0, "status": 1})
+                if not current or current.get("status") != "waiting_approval":
+                    await resolve_incident(inc["id"], resolved_by="system:auto-approved-or-rejected")
+        except Exception as e:
+            logging.getLogger("incidents").warning(f"Gagal scan Pending Booking Approval: {e}")
+        await asyncio.sleep(INTERVAL_SEC)
+
+
 @api.get("/incidents")
 async def list_incidents_endpoint(user: dict = Depends(require_owner)):
     """Verifikasi/debug tanpa Telegram (2026-08-12) - list incident open, sumber kebenaran
