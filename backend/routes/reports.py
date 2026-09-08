@@ -206,7 +206,17 @@ async def report_service_revenue(from_date: str = Query(...), to_date: str = Que
             # settlement asli, lihat routes/bookings.py) tapi KELEWAT di sini - service_fee
             # booking OTA yg masih estimasi ikut terhitung sbg pendapatan service fee asli,
             # padahal angkanya bisa berubah begitu staf konfirmasi harga sungguhan.
-            "ota_harga_dikonfirmasi": {"$ne": False},
+            #
+            # DIPERBAIKI LAGI (2026-09-08, bug nyata ditemukan lewat cross-check manual PDF
+            # settlement RedDoorz Agustus - 18 dari 76 booking OTA yang dicek ternyata field
+            # `ota_harga_dikonfirmasi`-nya UNDEFINED [bukan False eksplisit], kemungkinan dari
+            # jalur tulis lama/berbeda yg belum sempat diaudit - `{"$ne": False}` LOLOS utk
+            # undefined [undefined !== false secara Mongo], jadi 18 booking estimasi ini
+            # DIAM-DIAM ikut terhitung sbg pendapatan final, padahal belum pernah dikonfirmasi
+            # sama sekali). Ganti ke $or eksplisit - field ini HANYA relevan utk source="ota"
+            # (non-OTA tidak pernah diisi field ini sama sekali, WAJIB tetap lolos apa adanya):
+            # bukan booking OTA (field tidak relevan) ATAU booking OTA yg SUDAH true.
+            "$or": [{"source": {"$ne": "ota"}}, {"ota_harga_dikonfirmasi": True}],
             "checkin_id": {"$exists": False},
         }, property_id),
         {"_id": 0}
@@ -519,7 +529,10 @@ async def _hitung_pendapatan_harian(from_date: str, to_date: str, property_id: s
         "status": {"$ne": "cancelled"},
         "jam_mulai": {"$lte": end},
         "jam_selesai": {"$gte": start},
-        "ota_harga_dikonfirmasi": {"$ne": False},
+        # $or drpd $ne:False (2026-09-08, sama fix dgn _hitung_pendapatan_harian di
+        # atas - lihat catatan lengkap di sana) - field ini undefined utk booking
+        # non-OTA, JANGAN exclude booking non-OTA yg kebetulan field ini kosong.
+        "$or": [{"source": {"$ne": "ota"}}, {"ota_harga_dikonfirmasi": True}],
         "checkin_id": {"$exists": False},
     }, property_id), {"_id": 0, "total": 1, "jam_mulai": 1, "jam_selesai": 1, "tipe": 1}).to_list(5000)
     ks = await db.kasir.find(scoped({"timestamp": {"$gte": start, "$lte": end}}, property_id), {"_id": 0}).to_list(5000)
@@ -912,7 +925,10 @@ async def report_rooms(from_date: str = Query(...), to_date: str = Query(...),
         "payment_status": "paid",
         "status": {"$ne": "cancelled"},
         "jam_mulai": {"$gte": start, "$lte": end},
-        "ota_harga_dikonfirmasi": {"$ne": False},
+        # $or drpd $ne:False (2026-09-08, sama fix dgn _hitung_pendapatan_harian di
+        # atas - lihat catatan lengkap di sana) - field ini undefined utk booking
+        # non-OTA, JANGAN exclude booking non-OTA yg kebetulan field ini kosong.
+        "$or": [{"source": {"$ne": "ota"}}, {"ota_harga_dikonfirmasi": True}],
         "checkin_id": {"$exists": False},
     }, property_id), {"_id": 0}).to_list(5000)
     # Booking asal utk checkins yang berasal dari booking (perlu payment_option-nya
@@ -1173,7 +1189,10 @@ async def _detail_selisih_kas_pendapatan(from_date: str, to_date: str, property_
     bks = await db.bookings.find(scoped({
         "payment_status": "paid", "status": {"$ne": "cancelled"},
         "jam_mulai": {"$gte": start, "$lte": end},
-        "ota_harga_dikonfirmasi": {"$ne": False},
+        # $or drpd $ne:False (2026-09-08, sama fix dgn _hitung_pendapatan_harian di
+        # atas - lihat catatan lengkap di sana) - field ini undefined utk booking
+        # non-OTA, JANGAN exclude booking non-OTA yg kebetulan field ini kosong.
+        "$or": [{"source": {"$ne": "ota"}}, {"ota_harga_dikonfirmasi": True}],
         "checkin_id": {"$exists": False},
     }, property_id), {"_id": 0, "kode": 1, "nama_tamu": 1, "jam_mulai": 1, "paid_at": 1, "total": 1}).to_list(2000)
     for b in bks:

@@ -1515,9 +1515,18 @@ async def _ekstrak_settlement_dari_pdf(pdf_bytes: bytes) -> list:
 async def _daftar_ota_belum_dikonfirmasi() -> list:
     """Kelompokkan booking OTA yang masih menunggu konfirmasi nominal settlement per
     ota_reservation_no (booking tanpa nomor itu dianggap grup sendiri) - representasi yang
-    sama dipakai halaman Laporan Keuangan & hasil pencocokan PDF, satu sumber kebenaran."""
+    sama dipakai halaman Laporan Keuangan & hasil pencocokan PDF, satu sumber kebenaran.
+
+    Filter `ota_harga_dikonfirmasi != True` (BUKAN `== False`) - 2026-09-08, bug nyata
+    ditemukan lewat cross-check manual PDF settlement RedDoorz Agustus: 18 dari 76 booking
+    OTA yang dicek ternyata field ini UNDEFINED (bukan False eksplisit) di database -
+    filter `== False` lama TIDAK PERNAH menangkap booking begini, jadi diam-diam invisible
+    dari daftar "menunggu konfirmasi" INI JUGA (selain dari laporan pendapatan, lihat fix
+    sama di reports.py/laporan_analitik.py) - staf tidak pernah lihat mereka perlu
+    dikonfirmasi, & hasil pencocokan PDF salah lapor "tidak ketemu" padahal booking-nya
+    ADA & memang belum dikonfirmasi."""
     pending = await db.bookings.find({
-        "source": "ota", "ota_harga_dikonfirmasi": False,
+        "source": "ota", "ota_harga_dikonfirmasi": {"$ne": True},
     }, {"_id": 0}).sort("created_at", -1).to_list(500)
     grup: Dict[str, dict] = {}
     for b in pending:

@@ -48,7 +48,11 @@ async def laporan_pendapatan(from_date: str = Query(...), to_date: str = Query(.
         "status": {"$ne": "cancelled"},
         "jam_mulai": {"$lte": end},
         "jam_selesai": {"$gte": start},
-        "ota_harga_dikonfirmasi": {"$ne": False},
+        # $or drpd $ne:False (2026-09-08, bug nyata - lihat catatan lengkap di
+        # reports.py _hitung_pendapatan_harian) - field ini undefined utk booking
+        # non-OTA, & sebagian booking OTA lama tersimpan undefined bukan False
+        # eksplisit ($ne:False lama meloloskannya keliru sbg "sudah dikonfirmasi").
+        "$or": [{"source": {"$ne": "ota"}}, {"ota_harga_dikonfirmasi": True}],
     }, property_id), {"_id": 0, "total": 1, "jam_mulai": 1, "jam_selesai": 1}).to_list(5000)
     by_day: Dict[str, int] = {}
     for b in bks:
@@ -84,7 +88,11 @@ async def laporan_performa_saluran(channel: str = Query("Semua"),
         "source": {"$in": sources},
         "payment_status": "paid",
         "status": {"$ne": "cancelled"},
-        "ota_harga_dikonfirmasi": {"$ne": False},
+        # $or drpd $ne:False (2026-09-08, bug nyata - lihat catatan lengkap di
+        # reports.py _hitung_pendapatan_harian) - field ini undefined utk booking
+        # non-OTA, & sebagian booking OTA lama tersimpan undefined bukan False
+        # eksplisit ($ne:False lama meloloskannya keliru sbg "sudah dikonfirmasi").
+        "$or": [{"source": {"$ne": "ota"}}, {"ota_harga_dikonfirmasi": True}],
     }, property_id), {"_id": 0, "source": 1, "total": 1}).to_list(10000)
     agg = {k: {"booking": 0, "pendapatan": 0} for k in keys}
     for b in bks:
