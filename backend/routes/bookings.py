@@ -636,7 +636,13 @@ async def konfirmasi_harga_ota(bid: str, body: KonfirmasiHargaOtaBody, user: dic
         raise HTTPException(404, "Booking tidak ditemukan")
     if b.get("source") != "ota":
         raise HTTPException(400, "Endpoint ini hanya untuk booking dari OTA")
-    if b.get("ota_harga_dikonfirmasi") is not False:
+    # `is not False` -> `is True` (2026-09-08, bug nyata - sama akar dgn fix
+    # ota_harga_dikonfirmasi undefined di reports.py/otomasi_email.py hari ini): booking
+    # dgn field ini UNDEFINED [bukan False eksplisit] SEHARUSNYA tetap boleh dikonfirmasi
+    # (belum pernah dikonfirmasi = sama kondisinya dgn False) - guard lama `is not False`
+    # salah menolaknya (undefined is not False -> True -> HTTPException), staf tidak akan
+    # bisa klik "Terapkan" sama sekali utk ke-18 booking yg field-nya undefined itu.
+    if b.get("ota_harga_dikonfirmasi") is True:
         raise HTTPException(400, "Booking ini tidak sedang menunggu konfirmasi nominal")
     if body.total_nominal <= 0:
         raise HTTPException(400, "Nominal harus lebih dari 0")
