@@ -80,7 +80,7 @@ async def create_booking(body: BookingCreate, user: dict = Depends(get_current_u
                 # Sederhanakan: tarif × ceil(hours/24)
                 days = max(1, -(-hours // 24))
                 subtotal = unit_tarif * days
-            service_fee = round(subtotal * SERVICE_FEE_PCT)
+            service_fee = hitung_service_fee(subtotal, body.pungut_service_fee)
 
             # Program Loyalitas Kedatangan (diskon member, dikonfirmasi user 2026-07-19) - reuse
             # fungsi yang sama dipakai create_reservation supaya diskonnya konsisten lintas
@@ -108,6 +108,7 @@ async def create_booking(body: BookingCreate, user: dict = Depends(get_current_u
                 "catatan": body.catatan, "status": "aktif",
                 "dengan_sarapan": dengan_sarapan_efektif if body.tipe == "menginap" else False,
                 "subtotal": subtotal, "service_fee": service_fee, "total": total,
+                "pungut_service_fee": body.pungut_service_fee,
                 "diskon_member_persen": diskon_persen, "diskon_member_rp": diskon_rp, "kedatangan_ke": kedatangan_ke,
                 "source": "walk_in",
                 "created_at": now_iso(), "created_by": user["nama"],
@@ -653,11 +654,20 @@ async def konfirmasi_harga_ota(bid: str, body: KonfirmasiHargaOtaBody, user: dic
         }, property_id), {"_id": 0, "id": 1}).to_list(50)
         if b.get("ota_reservation_no") else [{"id": b["id"]}]
     )
-    per_kamar = round(body.total_nominal / max(1, len(grup)))
+    # subtotal = nominal settlement ASLI dibagi rata per kamar; service_fee dihitung dari
+    # hitung_service_fee() (2026-09-09, checklist "pungut biaya service?" - SAMA fungsi &
+    # SAMA field yang dipakai walk-in Quick Book, bukan 2 fitur terpisah). Default False
+    # = perilaku LAMA (total_nominal langsung jadi total, service_fee=0, backward
+    # compatible utk semua konfirmasi sebelum fitur ini ada).
+    subtotal_per_kamar = round(body.total_nominal / max(1, len(grup)))
+    service_fee_per_kamar = hitung_service_fee(subtotal_per_kamar, body.pungut_service_fee)
+    total_per_kamar = subtotal_per_kamar + service_fee_per_kamar
     now = now_iso()
     for gb in grup:
         await db.bookings.update_one({"id": gb["id"]}, {"$set": {
-            "subtotal": per_kamar, "total": per_kamar, "amount_due": per_kamar,
+            "subtotal": subtotal_per_kamar, "service_fee": service_fee_per_kamar,
+            "total": total_per_kamar, "amount_due": total_per_kamar,
+            "pungut_service_fee": body.pungut_service_fee,
             "ota_harga_dikonfirmasi": True, "harga_dikonfirmasi_oleh": user["nama"],
             "harga_dikonfirmasi_at": now, "updated_at": now,
         }})

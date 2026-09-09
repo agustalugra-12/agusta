@@ -93,6 +93,10 @@ const emptyQuickForm = (tarif, defaultTipe) => ({
   // (2026-08-21, Harmoni-only) - owner boleh sengaja tumpuk Day Use + Menginap di kamar
   // sama. Backend validasi: role owner + properti Harmoni, selain itu ditolak/diabaikan.
   izinkanTumpuk: false,
+  // Checklist biaya service 3% (2026-09-09, permintaan Agus) - SAMA field/logika dgn
+  // konfirmasi harga OTA di DaftarReservasi.jsx (hitung_service_fee di backend), bukan
+  // fitur terpisah. Default true = perilaku LAMA (walk-in selalu kena 3%).
+  pungutServiceFee: true,
 });
 
 export default function Dashboard() {
@@ -150,13 +154,14 @@ export default function Dashboard() {
 
   const quickEst = useMemo(() => {
     const harga = Number(quickForm.harga) || 0;
+    const pungut = quickForm.pungutServiceFee !== false;
     if (quickForm.tipe === "menginap") {
       const nights = Math.max(1, Number(quickForm.malam) || 1);
       const subtotal = harga * nights;
-      const svc = Math.round(subtotal * 0.03);
+      const svc = pungut ? Math.round(subtotal * 0.03) : 0;
       return { subtotal, service_fee: svc, total: subtotal + svc, nights };
     }
-    const svc = Math.round(harga * 0.03);
+    const svc = pungut ? Math.round(harga * 0.03) : 0;
     return { subtotal: harga, service_fee: svc, total: harga + svc, nights: 1 };
   }, [quickForm]);
 
@@ -234,6 +239,7 @@ export default function Dashboard() {
             jumlah_tamu: Number(quickForm.jumlah_tamu) || 1, catatan: quickForm.catatan,
             jam_mulai: jamIso, tarif_override: harga, izinkan_tumpuk: !!quickForm.izinkanTumpuk,
             pembayaran: [{ metode: quickForm.metode_bayar, jumlah: totalPerKamar }],
+            pungut_service_fee: quickForm.pungutServiceFee !== false,
           });
           const bks = isGroup ? data.bookings : [data];
           toast.success(isGroup ? `Day Use lunas untuk ${bks.length} kamar, dijadwalkan check-in ${quickForm.jam_checkin.slice(0, 10)}` : `Day Use lunas, dijadwalkan check-in ${quickForm.jam_checkin.slice(0, 10)}`);
@@ -246,6 +252,7 @@ export default function Dashboard() {
           jumlah_tamu: Number(quickForm.jumlah_tamu) || 1, catatan: quickForm.catatan,
           jam_checkin: jamIso, tarif_override: harga,
           pembayaran: [{ metode: quickForm.metode_bayar, jumlah: totalPerKamar * roomIds.length }],
+          pungut_service_fee: quickForm.pungutServiceFee !== false,
         });
         toast.success(isGroup ? `Check-in berhasil untuk ${data.checkins.length} kamar` : `Check-in berhasil • ${data.trx_no}`);
       } else {
@@ -293,6 +300,7 @@ export default function Dashboard() {
           jam_mulai: start.toISOString(), jam_selesai: end.toISOString(), tarif_override: harga,
           izinkan_tumpuk: !!quickForm.izinkanTumpuk,
           pembayaran: [{ metode: quickForm.metode_bayar, jumlah: totalPerKamarMenginap }],
+          pungut_service_fee: quickForm.pungutServiceFee !== false,
         });
         const bks = isGroup ? data.bookings : [data];
         // Lunas sudah tercatat sekalian saat create (di atas) - check-in SUNGGUHAN (kamar
@@ -1509,6 +1517,21 @@ export default function Dashboard() {
             <div className="col-span-2">
               <Label>{quickForm.tipe === "day_use" ? "Harga (per 6 jam)" : "Harga per Malam"}{quickBookRooms.length > 1 ? " — per kamar" : ""}</Label>
               <Input data-testid="q-harga" type="number" min="0" value={quickForm.harga} onChange={(e) => setQuickForm(f => ({ ...f, harga: e.target.value }))} />
+            </div>
+            {/* Checklist biaya service 3% (2026-09-09, permintaan Agus) - SAMA field/logika
+                dgn konfirmasi harga OTA di DaftarReservasi.jsx (hitung_service_fee di
+                backend), bukan fitur terpisah. Default dipungut = perilaku lama. */}
+            <div className="col-span-2 flex items-start gap-1.5 text-xs text-slate-600">
+              <input id="q-pungut-service-fee" data-testid="q-pungut-service-fee" type="checkbox"
+                checked={quickForm.pungutServiceFee !== false}
+                onChange={(e) => setQuickForm(f => ({ ...f, pungutServiceFee: e.target.checked }))}
+                className="mt-0.5" />
+              <label htmlFor="q-pungut-service-fee">
+                Pungut biaya service 3%
+                {quickForm.pungutServiceFee !== false
+                  ? <span className="text-slate-400"> (+{fmtRp(quickEst.service_fee)} → total {fmtRp(quickEst.total)})</span>
+                  : <span className="text-slate-400"> (tidak dipungut, total {fmtRp(quickEst.total)})</span>}
+              </label>
             </div>
             <div className="col-span-2"><Label>Catatan</Label><Textarea value={quickForm.catatan} onChange={(e) => setQuickForm(f => ({ ...f, catatan: e.target.value }))} rows={2} /></div>
             {/* (2026-07-31, keputusan bisnis Agus "bayar di depan semua") - berlaku Day Use

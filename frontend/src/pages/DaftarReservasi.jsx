@@ -5,6 +5,7 @@ import api, { fmtDateTime, fmtRp, bookingConfirmationWaLink, statusBayarOf, STAT
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Search, X, Ban, CreditCard, MessageCircle } from "lucide-react";
@@ -47,6 +48,7 @@ export default function DaftarReservasi() {
   const [editMode, setEditMode] = useState(false);
   const [editForm, setEditForm] = useState({ jam_mulai: "", jam_selesai: "", room_id: "" });
   const [nominalOta, setNominalOta] = useState("");
+  const [pungutServiceFeeOta, setPungutServiceFeeOta] = useState(false);
   const [konfirmasiSaving, setKonfirmasiSaving] = useState(false);
   const [rooms, setRooms] = useState([]);
 
@@ -106,9 +108,11 @@ export default function DaftarReservasi() {
     if (!nominal || nominal <= 0) { toast.error("Isi nominal yang valid"); return; }
     setKonfirmasiSaving(true);
     try {
-      await api.post(`/bookings/${selected.id}/konfirmasi-harga-ota`, { total_nominal: nominal });
+      await api.post(`/bookings/${selected.id}/konfirmasi-harga-ota`, {
+        total_nominal: nominal, pungut_service_fee: pungutServiceFeeOta,
+      });
       toast.success(`Nominal OTA untuk ${selected.kode} dikonfirmasi`);
-      setNominalOta(""); setSelected(null); load();
+      setNominalOta(""); setPungutServiceFeeOta(false); setSelected(null); load();
     } catch (e) { toast.error(e?.response?.data?.detail || "Gagal"); }
     finally { setKonfirmasiSaving(false); }
   };
@@ -169,7 +173,7 @@ export default function DaftarReservasi() {
                 <tr key={r.id} data-testid={`reservasi-row-${r.kode}`} onClick={() => setSelected(r)} className="border-t border-slate-100 cursor-pointer hover:bg-slate-50">
                   <td className="p-3 font-bold">
                     {r.kode}
-                    {r.ota_harga_dikonfirmasi === false && (
+                    {r.source === "ota" && r.ota_harga_dikonfirmasi !== true && (
                       <span title="Nominal OTA belum dikonfirmasi" className="ml-1.5 inline-block w-2 h-2 rounded-full bg-amber-500 align-middle" />
                     )}
                   </td>
@@ -214,7 +218,7 @@ export default function DaftarReservasi() {
                   <span data-testid="reservasi-detail-status-bayar" className={`text-[10px] uppercase font-bold px-2 py-1 rounded ${STATUS_BAYAR_BADGE_CLASS[sb.status_bayar]}`}>{STATUS_BAYAR_LABEL[sb.status_bayar]}</span>
                 ); })()}
                 <span className={`text-[10px] uppercase font-bold px-2 py-1 rounded ${SOURCE_BADGE[selected.source] || "bg-slate-100 text-slate-700"}`}>{SOURCE_LABEL[selected.source] || "Walk-in"}</span>
-                {selected.ota_harga_dikonfirmasi === false && (
+                {selected.source === "ota" && selected.ota_harga_dikonfirmasi !== true && (
                   <span data-testid="reservasi-harga-belum-dikonfirmasi" className="text-[10px] uppercase font-bold px-2 py-1 rounded bg-amber-100 text-amber-800">Nominal Belum Dikonfirmasi</span>
                 )}
               </div>
@@ -258,7 +262,7 @@ export default function DaftarReservasi() {
                   </div>
                 );
               })()}
-              {selected.ota_harga_dikonfirmasi === false && (
+              {selected.source === "ota" && selected.ota_harga_dikonfirmasi !== true && (
                 <div className="bg-amber-50 border border-amber-200 rounded p-2 mt-2 text-xs space-y-2" data-testid="reservasi-konfirmasi-harga-ota">
                   <p className="text-amber-800">
                     Nominal di atas ({fmtRp(selected.total)}) masih <b>estimasi</b> dari tarif publik PMS — email OTA "Prepaid"
@@ -277,6 +281,19 @@ export default function DaftarReservasi() {
                       Konfirmasi
                     </Button>
                   </div>
+                  {/* Checklist biaya service 3% (2026-09-09) - SAMA field/logika dgn Quick
+                      Book walk-in (pungut_service_fee), bukan fitur terpisah. Tidak
+                      dicentang = nominal di atas jadi total apa adanya (perilaku lama). */}
+                  <label className="flex items-center gap-1.5 text-amber-800 cursor-pointer">
+                    <Checkbox data-testid="checkbox-pungut-service-ota"
+                      checked={pungutServiceFeeOta} onCheckedChange={(v) => setPungutServiceFeeOta(!!v)} />
+                    Pungut biaya service 3%
+                    {pungutServiceFeeOta && nominalOta && !isNaN(parseInt(nominalOta, 10)) && (
+                      <span className="text-slate-500">
+                        (+{fmtRp(Math.round(parseInt(nominalOta, 10) * 0.03))} → total {fmtRp(parseInt(nominalOta, 10) + Math.round(parseInt(nominalOta, 10) * 0.03))})
+                      </span>
+                    )}
+                  </label>
                 </div>
               )}
               {selected.catatan && <div className="italic text-slate-600">&ldquo;{selected.catatan}&rdquo;</div>}

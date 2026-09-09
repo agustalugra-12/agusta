@@ -99,7 +99,7 @@ async def create_checkin(body: CheckinCreate, user: dict = Depends(get_current_u
         for r in rooms:
             tarif_dasar = body.tarif_override if body.tarif_override else r["tarif"]
             base_subtotal = int(tarif_dasar)
-            base_service_fee = round(base_subtotal * SERVICE_FEE_PCT)
+            base_service_fee = hitung_service_fee(base_subtotal, body.pungut_service_fee)
             base_per_room.append({"tarif_dasar": tarif_dasar, "subtotal": base_subtotal, "service_fee": base_service_fee, "total": base_subtotal + base_service_fee})
         total_base_needed = sum(x["total"] for x in base_per_room)
         total_dibayar = sum(int(p.get("jumlah", 0)) for p in body.pembayaran)
@@ -148,6 +148,7 @@ async def create_checkin(body: CheckinCreate, user: dict = Depends(get_current_u
                 # sudah lunas dibayar di depan (bukan 0 lagi) - checkout nanti menghitung ULANG
                 # dari calc_tagihan (termasuk overtime kalau ada) & menagih SELISIHnya saja.
                 "subtotal": base["subtotal"], "service_fee": base["service_fee"], "total": base["total"],
+                "pungut_service_fee": body.pungut_service_fee,
                 "status": "aktif",
                 "catatan": body.catatan,
                 "foto_identitas_url": body.foto_identitas_url or "",
@@ -230,7 +231,7 @@ async def get_checkin(checkin_id: str, user: dict = Depends(get_current_user),
     if c["status"] == "aktif":
         now = datetime.now(timezone.utc)
         ci = datetime.fromisoformat(c["jam_checkin"])
-        calc = calc_tagihan(c["tarif_dasar"], ci, now)
+        calc = calc_tagihan(c["tarif_dasar"], ci, now, pungut_service_fee=c.get("pungut_service_fee", True))
         # (2026-07-31) tarif dasar sudah lunas dibayar saat check-in - "sisa" di sini HANYA
         # extend/overtime yang belum dibayar, bukan tagihan penuh lagi.
         sudah_dibayar = sum(int(p.get("jumlah", 0)) for p in c.get("pembayaran", []))
@@ -258,7 +259,7 @@ async def checkout(checkin_id: str, body: CheckoutIn, user: dict = Depends(get_c
     ci = datetime.fromisoformat(c["jam_checkin"])
     if now < ci:
         raise HTTPException(400, "Jam check-out tidak boleh sebelum jam check-in")
-    calc = calc_tagihan(c["tarif_dasar"], ci, now, body.overtime_manual)
+    calc = calc_tagihan(c["tarif_dasar"], ci, now, body.overtime_manual, pungut_service_fee=c.get("pungut_service_fee", True))
     # (2026-07-31, keputusan bisnis Agus) - tarif dasar SUDAH lunas dibayar saat check-in
     # (lihat create_checkin), jadi di checkout cuma tagih SELISIHnya - biasanya = biaya
     # extend/overtime kalau ada, atau Rp0 kalau tamu pulang tepat waktu (tidak perlu bayar

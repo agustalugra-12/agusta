@@ -81,6 +81,17 @@ VAPID_CLAIM_EMAIL = os.environ.get("VAPID_CLAIM_EMAIL", "mailto:booking@pelangih
 
 # ---- Constants ----
 SERVICE_FEE_PCT = 0.03  # 3% service fee diaplikasikan ke checkin & booking
+
+def hitung_service_fee(subtotal: int, pungut: bool) -> int:
+    """Satu sumber kebenaran perhitungan biaya service 3% (2026-09-09, permintaan Agus -
+    "checklist dipungut atau tidak, kalau dipungut biaya service otomatis dihitung &
+    diisi") - dipakai SAMA PERSIS di create_booking (walk-in Quick Book) & konfirmasi_
+    harga_ota (OTA), BUKAN 2 implementasi terpisah (Agus eksplisit: "jangan buat 2 fitur
+    sama, cukup 1"). Sebelumnya walk-in SELALU kena 3% (tidak bisa dimatikan) & OTA
+    SELALU 0% (hardcode) - sekarang staf yang menentukan lewat 1 checkbox yang sama,
+    default beda per jalur (walk-in default dipungut=True biar backward-compatible,
+    OTA default dipungut=False sama alasannya) tapi logikanya SAMA."""
+    return round(subtotal * SERVICE_FEE_PCT) if pungut else 0
 EXTRA_BED_PRICE = 50000  # per extra bed, flat (PRD: "Extra Bed Rp 50.000 berlaku untuk kedua jenis layanan")
 EXTRA_BED_MAX = 2  # maksimal per kamar (sama seperti ExtraBedSelector di frontend)
 BREAKFAST_PRICE = 25000  # per malam, opsional, hanya berlaku untuk tipe menginap
@@ -713,8 +724,12 @@ async def push_sync_event(data_type: str, detail: str) -> None:
         "ok": True, "waktu": now_iso(),
     })
 
-def calc_tagihan(tarif_dasar: int, jam_checkin: datetime, jam_checkout: datetime, overtime_manual: Optional[int] = None):
-    """Hitung tagihan check-out: 6 jam pertama = tarif dasar, sisanya Rp 20.000/jam (ceiling)."""
+def calc_tagihan(tarif_dasar: int, jam_checkin: datetime, jam_checkout: datetime, overtime_manual: Optional[int] = None, pungut_service_fee: bool = True):
+    """Hitung tagihan check-out: 6 jam pertama = tarif dasar, sisanya Rp 20.000/jam (ceiling).
+
+    `pungut_service_fee` (2026-09-09, permintaan Agus - checklist dipungut/tidak, sama
+    field & sama fungsi hitung_service_fee() dgn create_booking/konfirmasi_harga_ota,
+    bukan fitur terpisah) - default True = perilaku LAMA (selalu 3%)."""
     delta = jam_checkout - jam_checkin
     hours = delta.total_seconds() / 3600
     durasi = max(0.0, hours)
@@ -725,7 +740,7 @@ def calc_tagihan(tarif_dasar: int, jam_checkin: datetime, jam_checkout: datetime
         over = max(0, int(overtime_manual))
     biaya_over = over * 20000
     subtotal = int(tarif_dasar) + biaya_over
-    service_fee = round(subtotal * SERVICE_FEE_PCT)
+    service_fee = hitung_service_fee(subtotal, pungut_service_fee)
     total = subtotal + service_fee
     return {
         "durasi_jam": round(durasi, 2), "overtime_jam": over,
@@ -959,6 +974,10 @@ class CheckinCreate(BaseModel):
     # extend/overtime") - tarif dasar (6 jam) WAJIB dibayar lunas saat check-in, sama pola
     # shape dgn CheckoutIn.pembayaran [{"metode":"tunai","jumlah":100000}].
     pembayaran: List[Dict[str, Any]] = []
+    # Checklist biaya service 3% (2026-09-09) - SAMA field/logika dgn BookingCreate
+    # (walk-in Menginap) & KonfirmasiHargaOtaBody (OTA), bukan fitur terpisah - lihat
+    # hitung_service_fee(). Default True = perilaku LAMA (Day Use selalu kena 3%).
+    pungut_service_fee: bool = True
 
 class CheckoutIn(BaseModel):
     pembayaran: List[Dict[str, Any]] = []  # [{"metode":"tunai","jumlah":100000}]
@@ -1054,6 +1073,11 @@ class BookingCreate(BaseModel):
     catatan: str = ""
     tarif_override: Optional[int] = None  # staf boleh set harga custom per malam/per sesi, beda dari tarif dasar kamar
     dengan_sarapan: bool = False  # hanya berlaku tipe menginap, diabaikan kalau tarif_override diisi (staf sudah tentukan harga akhir sendiri)
+    # Checklist biaya service 3% (2026-09-09, permintaan Agus) - default True = perilaku
+    # LAMA (walk-in Quick Book selalu kena 3%, backward compatible utk klien lama yang
+    # belum kirim field ini). Lihat hitung_service_fee() - 1 sumber kebenaran yang sama
+    # dipakai konfirmasi_harga_ota (OTA), bukan 2 implementasi terpisah.
+    pungut_service_fee: bool = True
     # (2026-07-31, keputusan bisnis Agus "bayar di depan semua") - Quick Book (walk-in)
     # sekarang WAJIB kumpulkan pembayaran lunas begitu booking dibuat, sama kayak Day Use
     # di /checkins. Field ini opsional (bukan wajib diisi) supaya endpoint ini TETAP bisa
@@ -1129,6 +1153,12 @@ class ManualMarkPaidBody(BaseModel):
 class KonfirmasiHargaOtaBody(BaseModel):
     total_nominal: int  # nominal settlement ASLI dari OTA (mis. laporan RedDoorz), untuk SEMUA
                          # kamar dalam 1 reservasi OTA ini (dibagi rata jika grup >1 kamar)
+    # Checklist biaya service 3% (2026-09-09) - default False = perilaku LAMA (OTA
+    # sebelumnya selalu hardcode service_fee=0). Kalau True, `total_nominal` diperlakukan
+    # sbg subtotal (harga kamar net RedDoorz), 3% DITAMBAHKAN di atasnya - lihat
+    # hitung_service_fee(), SAMA fungsi yang dipakai BookingCreate (walk-in), bukan 2
+    # implementasi terpisah.
+    pungut_service_fee: bool = False
 
 class CollectBalanceBody(BaseModel):
     nominal: int
