@@ -222,6 +222,33 @@ async def list_checkins(
     items = await db.checkins.find(scoped(q, property_id), {"_id": 0}).sort("jam_checkin", -1).to_list(1000)
     return items
 
+@api.patch("/checkins/{checkin_id}/service-fee")
+async def update_checkin_service_fee(checkin_id: str, body: ServiceFeeUpdateBody, user: dict = Depends(get_current_user),
+                                     property_id: str = Depends(get_active_property)):
+    """Ubah checklist "pungut biaya service 3%?" utk checkin yang SUDAH ADA (2026-09-09,
+    permintaan Agus - checkbox baru cuma ada di form check-in, tidak ada cara mengubahnya
+    lagi utk tamu yang sudah tercatat sebelum fitur ini ada). Kalau checkin masih "aktif"
+    (belum checkout), cukup simpan flag-nya - checkout() SUDAH baca field ini (lihat
+    `c.get("pungut_service_fee", True)`), otomatis kepakai tanpa perlu recompute di sini.
+    Kalau SUDAH "selesai" (checkout final, subtotal/service_fee/total sudah tetap
+    selamanya), recompute pakai durasi_jam/overtime_jam/biaya_tambahan yang SUDAH TERCATAT
+    (bukan hitung ulang dari jam - itu bisa beda kalau ada koreksi manual overtime)."""
+    c = await db.checkins.find_one(scoped({"id": checkin_id}, property_id))
+    if not c:
+        raise HTTPException(404, "Check-in tidak ditemukan")
+    update: Dict[str, Any] = {"pungut_service_fee": body.pungut_service_fee, "updated_at": now_iso()}
+    if c["status"] != "aktif":
+        subtotal = int(c.get("tarif_dasar") or 0) + int(c.get("biaya_tambahan") or 0)
+        service_fee = hitung_service_fee(subtotal, body.pungut_service_fee)
+        update.update({"subtotal": subtotal, "service_fee": service_fee, "total": subtotal + service_fee})
+    await db.checkins.update_one({"id": checkin_id}, {"$set": update})
+    await log_activity(
+        user, "update_service_fee",
+        f"Ubah biaya service {c.get('trx_no')}: {'dipungut' if body.pungut_service_fee else 'tidak dipungut'}",
+        entity=c.get("room_nomor", ""),
+    )
+    return await db.checkins.find_one(scoped({"id": checkin_id}, property_id), {"_id": 0})
+
 @api.get("/checkins/{checkin_id}")
 async def get_checkin(checkin_id: str, user: dict = Depends(get_current_user),
                       property_id: str = Depends(get_active_property)):

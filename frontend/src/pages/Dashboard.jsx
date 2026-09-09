@@ -952,6 +952,25 @@ export default function Dashboard() {
     } catch (e) { toast.error(e?.response?.data?.detail || "Gagal mengubah status"); }
   };
 
+  // Ubah checklist "pungut biaya service 3%?" utk booking/checkin yang SUDAH ADA
+  // (2026-09-09, permintaan Agus - "tidak bisa menambahkan service 3% di dashboard utama
+  // untuk tamu yang sudah terdata dari kemarin") - SATU fungsi dipakai dari 2 tempat
+  // (checkin aktif & booking Menginap di dialog ini), sama pola dgn 1-checkbox-2-form
+  // yang sudah ada.
+  const ubahPungutServiceFee = async (jenis, id, checked) => {
+    try {
+      const path = jenis === "checkin" ? `/checkins/${id}/service-fee` : `/bookings/${id}/service-fee`;
+      const { data } = await api.patch(path, { pungut_service_fee: checked });
+      toast.success(`Biaya service ${checked ? "ditambahkan" : "dihapus"} - total baru ${fmtRp(data.total)}`);
+      load();
+      if (jenis === "checkin") {
+        setActionRoom((r) => r?._checkin ? { ...r, _checkin: { ...r._checkin, ...data } } : r);
+      } else {
+        setBookingDetail((b) => b ? { ...b, ...data } : b);
+      }
+    } catch (e) { toast.error(e?.response?.data?.detail || "Gagal"); }
+  };
+
   const housekeepingDone = async () => {
     if (!hkPetugas.trim()) { toast.error("Nama petugas wajib diisi"); return; }
     try {
@@ -1617,6 +1636,12 @@ export default function Dashboard() {
                 <div><span className="text-slate-500">HP:</span> {actionRoom._checkin.no_hp || "-"}</div>
                 <div><span className="text-slate-500">Check-in:</span> {new Date(actionRoom._checkin.jam_checkin).toLocaleString("id-ID")}</div>
                 <div><span className="text-slate-500">Trx:</span> {actionRoom._checkin.trx_no}</div>
+                <label className="flex items-center gap-1.5 text-xs text-slate-600 pt-1">
+                  <input type="checkbox" data-testid="ar-pungut-service-fee"
+                    checked={actionRoom._checkin.pungut_service_fee !== false}
+                    onChange={(e) => ubahPungutServiceFee("checkin", actionRoom._checkin.id, e.target.checked)} />
+                  Pungut biaya service 3%
+                </label>
               </>
             )}
             {actionRoom?.status === "menginap" && (
@@ -1759,7 +1784,15 @@ export default function Dashboard() {
                 return (
                   <div className="bg-slate-50 border border-slate-200 rounded p-2 text-xs space-y-1 mt-2" data-testid="booking-detail-status-pembayaran">
                     <div className="flex justify-between"><span className="text-slate-500">Subtotal</span><b>{fmtRp(bookingDetail.subtotal || 0)}</b></div>
-                    <div className="flex justify-between"><span className="text-slate-500">Service Fee 3%</span><b>{fmtRp(bookingDetail.service_fee || 0)}</b></div>
+                    <div className="flex justify-between items-center">
+                      <label className="flex items-center gap-1.5 text-slate-500 cursor-pointer">
+                        <input type="checkbox" data-testid="bd-pungut-service-fee"
+                          checked={bookingDetail.pungut_service_fee !== false}
+                          onChange={(e) => ubahPungutServiceFee("booking", bookingDetail.id, e.target.checked)} />
+                        Service Fee 3%
+                      </label>
+                      <b>{fmtRp(bookingDetail.service_fee || 0)}</b>
+                    </div>
                     <div className="flex justify-between border-t pt-1 mt-1"><span className="font-bold">Total Booking</span><b className="text-blue-700">{fmtRp(bookingDetail.total)}</b></div>
                     <div className="flex justify-between"><span className="text-slate-500">Status Pembayaran</span><b>{STATUS_BAYAR_LABEL[sb.status_bayar]}</b></div>
                     {sb.jumlah_dibayar > 0 && <div className="flex justify-between"><span className="text-slate-500">Sudah Dibayar</span><b className="text-emerald-700">{fmtRp(sb.jumlah_dibayar)}</b></div>}

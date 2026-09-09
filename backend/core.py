@@ -1160,6 +1160,17 @@ class KonfirmasiHargaOtaBody(BaseModel):
     # implementasi terpisah.
     pungut_service_fee: bool = False
 
+class ServiceFeeUpdateBody(BaseModel):
+    """Ubah checklist "pungut biaya service 3%?" utk booking/checkin yang SUDAH ADA
+    (2026-09-09, permintaan Agus - "tidak bisa menambahkan service 3% untuk tamu yang
+    sudah terdata dari kemarin"): checkbox yang ditambahkan hari ini cuma ada di form
+    BUAT BARU, tidak ada cara mengubahnya lagi utk record yang sudah dibuat sebelum
+    fitur ini ada. Endpoint ini HANYA sentuh service_fee & total (recompute dari
+    subtotal yang SUDAH ADA, tidak diubah) - `amount_due`/pembayaran yang sudah tercatat
+    TIDAK disentuh (uang yang sudah diterima tetap apa adanya, sisa tagihan akan
+    otomatis menyesuaikan lewat status_bayar_booking, bukan endpoint ini yang menghitung)."""
+    pungut_service_fee: bool
+
 class CollectBalanceBody(BaseModel):
     nominal: int
     metode: str = "cash"  # cash / qris

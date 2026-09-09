@@ -801,6 +801,26 @@ async def get_booking(bid: str, user: dict = Depends(get_current_user),
         ]
     return b
 
+@api.patch("/bookings/{bid}/service-fee")
+async def update_booking_service_fee(bid: str, body: ServiceFeeUpdateBody, user: dict = Depends(get_current_user),
+                                     property_id: str = Depends(get_active_property)):
+    b = await db.bookings.find_one(scoped({"id": bid}, property_id))
+    if not b:
+        raise HTTPException(404, "Booking tidak ditemukan")
+    subtotal = int(b.get("subtotal") or 0)
+    service_fee = hitung_service_fee(subtotal, body.pungut_service_fee)
+    total = subtotal + service_fee
+    await db.bookings.update_one({"id": bid}, {"$set": {
+        "service_fee": service_fee, "total": total, "pungut_service_fee": body.pungut_service_fee,
+        "updated_at": now_iso(), "updated_by": user["nama"],
+    }})
+    await log_activity(
+        user, "update_service_fee",
+        f"Ubah biaya service {b.get('kode')}: {'dipungut' if body.pungut_service_fee else 'tidak dipungut'} (total baru Rp{total:,})".replace(",", "."),
+        entity=b.get("room_nomor", ""),
+    )
+    return await db.bookings.find_one(scoped({"id": bid}, property_id), {"_id": 0})
+
 @api.put("/bookings/{bid}")
 async def update_booking(bid: str, body: BookingCreate, user: dict = Depends(get_current_user),
                          property_id: str = Depends(get_active_property)):
