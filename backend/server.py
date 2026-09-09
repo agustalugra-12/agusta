@@ -24,7 +24,7 @@ from routes.otomasi_email import background_gmail_fetch_loop
 from routes.telegram_bot import background_telegram_daily_report_loop
 from routes.rekening import background_smart_rule_loop
 from routes.ai_grow import background_ai_grow_cache_loop
-from routes.incidents import background_collection_required_scan_loop, background_business_truth_scan_loop, background_pending_booking_approval_scan_loop
+from routes.incidents import background_collection_required_scan_loop, background_business_truth_scan_loop, background_pending_booking_approval_scan_loop, background_stuck_housekeeping_scan_loop
 from routes.bookings import background_auto_close_ota_stays_loop
 from routes.claude_fix import reconcile_stale_claude_runs
 
@@ -249,6 +249,11 @@ async def startup():
     # kalau push notification pertama pas booking dibuat terlewat, lihat routes/
     # incidents.py utk detail insiden nyata yang memicu ini (Meca/Gung de nunggu jam).
     asyncio.create_task(background_pending_booking_approval_scan_loop())
+
+    # Stuck Housekeeping blocking check-in (2026-09-09) - kamar perlu_dibersihkan lama
+    # padahal ada tamu bayar menunggu, lihat routes/incidents.py utk kasus nyata pemicunya
+    # (kamar 12, tamu Day Use Kadek Adi Saputra kehilangan seluruh jendela bookingnya).
+    asyncio.create_task(background_stuck_housekeeping_scan_loop())
 
     # Auto-Close OTA Stays (2026-09-09) - booking Menginap OTA "aktif" basi (jam_selesai
     # sudah lewat >6 jam) ditutup ke "checked_out" tiap 1 jam - root cause audit Agus,

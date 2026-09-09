@@ -416,6 +416,73 @@ async def background_pending_booking_approval_scan_loop():
         await asyncio.sleep(INTERVAL_SEC)
 
 
+async def background_stuck_housekeeping_scan_loop():
+    """Scan berkala kamar status="perlu_dibersihkan" yang menyangkut > AMBANG_MENIT sementara
+    ada booking Day Use yang SUDAH BAYAR menunggu kamar itu tepat sekarang.
+
+    (2026-09-09 - ditemukan lewat investigasi Agus "room 12 Day Use tidak bisa dicekin
+    padahal kamar sudah checkout": staf tidak sengaja ubah status kamar 12 ke perlu_dibersihkan
+    5 detik setelah check-in tamu Menginap [side-effect change_room_status yang otomatis
+    checkout booking Menginap terkait - lihat rooms.py] - kamar itu lalu menyangkut dibersihkan
+    HAMPIR 10 JAM krn tak ada yang klik "Selesai Dibersihkan", sementara tamu Day Use lain
+    [sudah bayar QRIS] menunggu kamar yang SAMA utk jendela waktu yang sudah lewat sebelum
+    housekeeping selesai. Tidak ada jaring pengaman apa pun sebelum ini - sama kelas bug dgn
+    pending_booking_approval di atas (1x notifikasi awal tanpa reminder susulan), fix pakai
+    Incident Engine yang sama.
+
+    AMBANG_MENIT = 60, sama dgn pending_booking_approval (Day Use butuh keputusan cepat).
+    Auto-resolve begitu kamar tidak lagi perlu_dibersihkan (housekeeping selesai/status lain)."""
+    INTERVAL_SEC = 900
+    AMBANG_MENIT = 60
+    MENUNGGU_STATUS = ["booking_paid", "aktif", "booking_pending"]
+    while True:
+        try:
+            batas = (datetime.now(timezone.utc) - timedelta(minutes=AMBANG_MENIT)).isoformat()
+            kamar_kotor = await db.rooms.find(
+                {"status": "perlu_dibersihkan"},
+                {"_id": 0, "id": 1, "nomor": 1, "property_id": 1},
+            ).to_list(500)
+            now = datetime.now(timezone.utc).isoformat()
+            for r in kamar_kotor:
+                log = await db.housekeeping_log.find_one(
+                    {"room_id": r["id"], "status": {"$in": ["pending", "cleaning"]}},
+                    sort=[("tanggal", -1)],
+                )
+                if not log or log["tanggal"] >= batas:
+                    continue
+                menunggu = await db.bookings.find_one({
+                    "room_id": r["id"], "status": {"$in": MENUNGGU_STATUS},
+                    "jam_mulai": {"$lte": now},
+                }, {"_id": 0, "id": 1, "kode": 1, "nama_tamu": 1, "jam_mulai": 1, "jam_selesai": 1})
+                if not menunggu:
+                    continue
+                lama_menit = int((datetime.now(timezone.utc) - datetime.fromisoformat(log["tanggal"])).total_seconds() / 60)
+                await create_incident(
+                    event_type="stuck_housekeeping_blocking_checkin", severity="urgent", source="pms",
+                    property_id=r.get("property_id"), dedup_key=f"stuck_housekeeping:{r['id']}",
+                    title=f"Kamar {r.get('nomor')} nyangkut dibersihkan {lama_menit} menit - ada tamu menunggu",
+                    detail=f"{menunggu.get('nama_tamu') or '-'} (booking {menunggu.get('kode')}) menunggu kamar "
+                           f"{r.get('nomor')} sejak {menunggu.get('jam_mulai')}, tapi kamar masih Perlu Dibersihkan "
+                           f"- klik Selesai Dibersihkan di Housekeeping kalau kamar sebenarnya sudah siap.",
+                    meta={"room_id": r["id"], "booking_id": menunggu["id"]},
+                )
+
+            open_incidents = await db.incidents.find(
+                {"event_type": "stuck_housekeeping_blocking_checkin", "status": "open"},
+                {"_id": 0, "id": 1, "meta": 1},
+            ).to_list(500)
+            for inc in open_incidents:
+                rid = (inc.get("meta") or {}).get("room_id")
+                if not rid:
+                    continue
+                room = await db.rooms.find_one({"id": rid}, {"_id": 0, "status": 1})
+                if not room or room.get("status") != "perlu_dibersihkan":
+                    await resolve_incident(inc["id"], resolved_by="system:housekeeping-selesai")
+        except Exception as e:
+            logging.getLogger("incidents").warning(f"Gagal scan Stuck Housekeeping: {e}")
+        await asyncio.sleep(INTERVAL_SEC)
+
+
 @api.get("/incidents")
 async def list_incidents_endpoint(user: dict = Depends(require_owner)):
     """Verifikasi/debug tanpa Telegram (2026-08-12) - list incident open, sumber kebenaran
