@@ -566,6 +566,37 @@ async def buat_reservasi_otomatis(log_id: str, data: dict, sumber: str, subjek: 
 
     jumlah_kamar = max(1, min(int(data.get("jumlah_kamar") or 1), 20))  # batas atas jaga-jaga dari data OTA yang tidak masuk akal
 
+    # Guard anti-duplikat re-import (2026-09-09, bug nyata ditemukan lewat audit Agus:
+    # batch `ai_email_parser` 2026-09-07 memproses ULANG email RedDoorz lama & membuat
+    # duplikat utk reservasi yang SUDAH ADA di PMS - mis. Alexey Zavelskii res 692736127
+    # KAMAR 1 dibuat DUA KALI [23 Agu + 7 Sep], I Putu Suarmana & Merlin Pebriyana serupa).
+    # Dedup lama (_cocokkan_booking_pending_reddoorz) HANYA mengecek booking source=
+    # whatsapp_request yang menunggu sinkron - TIDAK menangkap booking OTA yang sudah pernah
+    # diimport parser sendiri ATAU diinput manual owner. Kalau `no_reservasi` ini SUDAH punya
+    # >= jumlah_kamar booking non-cancelled, berarti reservasi ini sudah diimport penuh -
+    # JANGAN buat lagi. Reservasi multi-kamar GENUINE tetap aman: saat import PERTAMA
+    # existing=0, SEMUA kamar dibuat dalam 1 run ini (mis. bagus wira res 444266137243156
+    # kamar 13+14 - itu 2 kamar sah, BUKAN duplikat); baru re-import BERIKUTNYA yang ke-skip.
+    # Kasus parsial (existing 1..n-1, jarang) diserahkan ke staf lewat Manual_Required drpd
+    # menebak jumlah kekurangan & berisiko nambah duplikat lagi.
+    no_reservasi_dedup = data.get("no_reservasi")
+    if no_reservasi_dedup:
+        sudah_ada = await db.bookings.count_documents(scoped({
+            "ota_reservation_no": no_reservasi_dedup, "status": {"$ne": "cancelled"},
+        }, property_id))
+        if sudah_ada >= jumlah_kamar:
+            await db.email_logs.update_one({"id": log_id}, {"$set": {
+                "status": "Manual_Required",
+                "alasan": (
+                    f"Reservasi OTA no. {no_reservasi_dedup} SUDAH ada di PMS ({sudah_ada} kamar "
+                    f"non-batal, email ini minta {jumlah_kamar} kamar) - kemungkinan email "
+                    f"konfirmasi diproses ulang atau dikirim ulang oleh OTA. TIDAK dibuat "
+                    f"reservasi baru otomatis untuk mencegah duplikat. Cek Daftar Reservasi "
+                    f"kalau ada kamar yang belum tersinkron."
+                ),
+            }})
+            return
+
     # Tahap 2 Modul Reservasi (2026-07-17): kalau ini email konfirmasi RedDoorz untuk booking
     # yang SUDAH dibuat & lunas lewat Booking Request (AI WhatsApp -> approval -> Tripay),
     # jangan buat reservasi baru (jadi duplikat) — tandai booking yang sudah ada sebagai
