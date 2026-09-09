@@ -866,3 +866,62 @@ async def cancel_booking(bid: str, user: dict = Depends(get_current_user),
     await log_availability_change(b["room_id"], b.get("room_tipe", ""), 1, "booking_dibatalkan", b.get("property_id"), booking_id=b["id"])
     await log_activity(user, "cancel_booking", f"Batalkan booking {b['kode']} kamar {b['room_nomor']}")
     return {"ok": True}
+
+
+async def background_auto_close_ota_stays_loop():
+    """Tutup otomatis booking Menginap OTA yang status="aktif" tapi jam_selesai sudah lewat
+    (2026-09-09, root cause ditemukan lewat audit Agus - 35 booking "aktif" basi ditemukan,
+    beberapa dari batch duplikat ai_email_parser). Digali sampai akar: `buat_reservasi_
+    otomatis` (routes/otomasi_email.py) SELALU bikin status="aktif" apa pun tanggal stay-nya
+    - TIDAK ADA proses lain (otomatis maupun manual baku) yang pernah menutupnya jadi
+    "checked_out" setelah tamu selesai menginap. 1 contoh nyata yang sudah "checked_out"
+    ternyata dikoreksi MANUAL oleh Agus sendiri ("staf lupa cekin/cekoutkan") - bukan fitur
+    sistem. Tanpa loop ini, jumlahnya akan terus bertambah tiap bulan.
+
+    Dampak nyata booking "aktif" basi (BUKAN cuma kosmetik): "aktif" termasuk di
+    BOOKING_AKTIF_STATUS/BOOKING_TERKONFIRMASI_STATUS/ACTIVE_BOOKING_STATUSES (scheduling_
+    engine.py/routes/ketersediaan.py) - dipakai check_room_available utk tentukan kamar
+    kosong/tidak. Booking basi ini bisa salah menganggap kamar "terisi" utk tanggal yang
+    sebenarnya sudah lama lewat & kamarnya jelas kosong.
+
+    HANYA source="ota" (2026-09-09) - booking dari checkin fisik (from_booking_id via
+    db.checkins) SUDAH punya jalur penutupan sendiri yang benar (checkins.py baris ~376,
+    checked_out_at diisi presisi jam checkout riil) - loop ini JANGAN ikut campur di situ,
+    cukup skip kalau ADA checkin aktif yang mengklaim booking ini (jaga-jaga, walau
+    booking OTA murni harusnya tidak pernah punya checkin terkait).
+
+    AMBANG_JAM = 6 (buffer sesudah jam_selesai terjadwal, bukan langsung persis lewat) -
+    RedDoorz dkk kadang checkout aktual meleset beberapa jam dari jam_selesai standar
+    (12:00) tanpa itu jadi masalah nyata, jangan tutup terlalu agresif."""
+    INTERVAL_SEC = 3600  # 1 jam - ini isu back-office (akurasi ketersediaan), bukan urgensi tamu
+    AMBANG_JAM = 6
+    while True:
+        try:
+            batas = (datetime.now(timezone.utc) - timedelta(hours=AMBANG_JAM)).isoformat()
+            properti_aktif = await db.properties.find({"aktif": True}, {"_id": 0, "id": 1}).to_list(50)
+            for p in properti_aktif:
+                pid = p["id"]
+                basi = await db.bookings.find(scoped({
+                    "status": "aktif", "tipe": "menginap", "source": "ota",
+                    "jam_selesai": {"$lt": batas},
+                }, pid), {"_id": 0, "id": 1, "kode": 1}).to_list(500)
+                ditutup = 0
+                for b in basi:
+                    checkin_aktif = await db.checkins.find_one({
+                        "from_booking_id": b["id"], "status": "aktif",
+                    })
+                    if checkin_aktif:
+                        continue  # dijaga jalur checkins.py sendiri, jangan diganggu
+                    await db.bookings.update_one({"id": b["id"]}, {"$set": {
+                        "status": "checked_out",
+                        "checked_out_at": now_iso(),
+                        "checked_out_by": "system:auto_close_ota_stays (jam_selesai terlewat)",
+                    }})
+                    ditutup += 1
+                if ditutup:
+                    logging.getLogger("bookings").info(
+                        f"[auto_close_ota_stays] property={pid}: {ditutup} booking OTA basi ditutup ke checked_out"
+                    )
+        except Exception as e:
+            logging.getLogger("bookings").warning(f"Gagal auto_close_ota_stays: {e}")
+        await asyncio.sleep(INTERVAL_SEC)
