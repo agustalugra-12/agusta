@@ -97,6 +97,16 @@ const emptyQuickForm = (tarif, defaultTipe) => ({
   // konfirmasi harga OTA di DaftarReservasi.jsx (hitung_service_fee di backend), bukan
   // fitur terpisah. Default true = perilaku LAMA (walk-in selalu kena 3%).
   pungutServiceFee: true,
+  // UI DP (2026-09-11, permintaan Agus - kasus nyata Suastika Yasa: tamu booking DARI
+  // JAUH lewat AI chat, bukan walk-in, sudah TF DP tapi staf terpaksa pakai Quick Book yg
+  // SELALU minta lunas krn tidak ada opsi DP di form ini - backend (`/bookings`) SUDAH
+  // mendukung partial payment sejak lama [`sudah_lunas = dibayar >= total`], form ini yang
+  // belum py cara memasukkannya selain mengetik manual nominal berbeda tanpa panduan.
+  // HANYA relevan utk booking TANGGAL LAIN (lewat /bookings) - Day Use/Menginap HARI INI
+  // (lewat /checkins, tamu sudah di lokasi) TETAP wajib lunas, tidak terpengaruh field ini
+  // (lihat guard di submitQuickBook).
+  bayarDp: false,
+  nominalDp: "",
 });
 
 export default function Dashboard() {
@@ -165,6 +175,19 @@ export default function Dashboard() {
     return { subtotal: harga, service_fee: svc, total: harga + svc, nights: 1 };
   }, [quickForm]);
 
+  // UI DP (2026-09-11) - opsi DP HANYA relevan kalau tamu belum di lokasi sekarang (booking
+  // utk nanti/tanggal lain, lewat /bookings yang backend-nya SUDAH support partial payment).
+  // Day Use/Menginap yang check-in-nya LITERAL SEKARANG (lewat /checkins) tetap wajib lunas
+  // (keputusan bisnis 2026-07-31, endpoint itu sendiri menolak pembayaran kurang - lihat
+  // routes/checkins.py) - dihitung sama persis dgn `dayUseIsToday`/`isInstant` di
+  // submitQuickBook supaya UI & submit konsisten.
+  const quickBayarInstan = useMemo(() => {
+    if (quickForm.tipe === "day_use") {
+      return quickForm.jam_checkin && quickForm.jam_checkin.slice(0, 10) === todayLocal();
+    }
+    return quickForm.tanggal_mulai === todayLocal() && !(quickForm.jam_checkin_menginap || "").trim();
+  }, [quickForm.tipe, quickForm.jam_checkin, quickForm.tanggal_mulai, quickForm.jam_checkin_menginap]);
+
   // Scheduling Engine — cek advisory tiap kamar yang dipilih kalau tipe Day Use & jam
   // check-in terisi, supaya resepsionis tahu lebih dulu kalau kamar ini ada tamu menginap
   // yang akan check-in tidak lama lagi (murni info, tidak pernah memblokir submit — PRD
@@ -215,6 +238,16 @@ export default function Dashboard() {
     if (!quickForm.nama_tamu.trim()) { toast.error("Nama tamu wajib diisi"); return; }
     const harga = Number(quickForm.harga) || 0;
     if (harga <= 0) { toast.error("Harga harus lebih dari 0"); return; }
+    // UI DP (2026-09-11) - validasi nominal SEBELUM submit, sama pola dgn validasi harga di
+    // atas. quickBayarInstan dicek ulang di sini (bukan cuma di render) supaya tidak ada
+    // celah kalau state berubah antara render & klik submit.
+    const dpAktif = !quickBayarInstan && quickForm.bayarDp;
+    const nominalDp = Number(quickForm.nominalDp) || 0;
+    if (dpAktif && nominalDp <= 0) { toast.error("Nominal DP harus lebih dari 0"); return; }
+    if (dpAktif && nominalDp >= quickEst.total) {
+      toast.error("Nominal DP harus lebih kecil dari total - kalau sudah lunas penuh, matikan opsi DP");
+      return;
+    }
     const roomIds = quickBookRooms.map((r) => r.id);
     const isGroup = roomIds.length > 1;
     try {
@@ -233,16 +266,20 @@ export default function Dashboard() {
         // lihat checkin_from_booking di routes/bookings.py).
         const dayUseIsToday = quickForm.jam_checkin && quickForm.jam_checkin.slice(0, 10) === todayLocal();
         if (!dayUseIsToday) {
+          // UI DP (2026-09-11) - jumlah dikirim = nominal DP kalau opsi aktif, else total
+          // penuh (perilaku lama tidak berubah kalau checkbox tidak dicentang).
+          const jumlahDibayar = dpAktif ? nominalDp : totalPerKamar;
           const { data } = await api.post("/bookings", {
             room_ids: roomIds, tipe: "day_use", nama_tamu: quickForm.nama_tamu, no_hp: quickForm.no_hp,
             no_identitas: quickForm.no_identitas, kendaraan: quickForm.kendaraan,
             jumlah_tamu: Number(quickForm.jumlah_tamu) || 1, catatan: quickForm.catatan,
             jam_mulai: jamIso, tarif_override: harga, izinkan_tumpuk: !!quickForm.izinkanTumpuk,
-            pembayaran: [{ metode: quickForm.metode_bayar, jumlah: totalPerKamar }],
+            pembayaran: [{ metode: quickForm.metode_bayar, jumlah: jumlahDibayar }],
             pungut_service_fee: quickForm.pungutServiceFee !== false,
           });
           const bks = isGroup ? data.bookings : [data];
-          toast.success(isGroup ? `Day Use lunas untuk ${bks.length} kamar, dijadwalkan check-in ${quickForm.jam_checkin.slice(0, 10)}` : `Day Use lunas, dijadwalkan check-in ${quickForm.jam_checkin.slice(0, 10)}`);
+          const label = dpAktif ? `DP ${fmtRp(nominalDp)} diterima` : "Day Use lunas";
+          toast.success(isGroup ? `${label} untuk ${bks.length} kamar, dijadwalkan check-in ${quickForm.jam_checkin.slice(0, 10)}` : `${label}, dijadwalkan check-in ${quickForm.jam_checkin.slice(0, 10)}`);
           setQuickBookRooms([]); cancelMultiSelect(); load();
           return;
         }
@@ -293,13 +330,16 @@ export default function Dashboard() {
         // quickEst.total (belum tentu final persis kalau ada diskon member - sama
         // keterbatasan yg sudah diterima di jalur Day Use, staf sesuaikan fisik kalau beda).
         const totalPerKamarMenginap = quickEst.total;
+        // UI DP (2026-09-11) - `isInstant` di atas SAMA RUMUS dgn `quickBayarInstan`
+        // (tamu sudah datang literal sekarang -> tetap wajib lunas, konsisten dgn Day Use).
+        const jumlahDibayarMenginap = (dpAktif && !isInstant) ? nominalDp : totalPerKamarMenginap;
         const { data } = await api.post("/bookings", {
           room_ids: roomIds, tipe: "menginap", nama_tamu: quickForm.nama_tamu, no_hp: quickForm.no_hp,
           no_identitas: quickForm.no_identitas, kendaraan: quickForm.kendaraan,
           jumlah_tamu: Number(quickForm.jumlah_tamu) || 1, catatan: quickForm.catatan,
           jam_mulai: start.toISOString(), jam_selesai: end.toISOString(), tarif_override: harga,
           izinkan_tumpuk: !!quickForm.izinkanTumpuk,
-          pembayaran: [{ metode: quickForm.metode_bayar, jumlah: totalPerKamarMenginap }],
+          pembayaran: [{ metode: quickForm.metode_bayar, jumlah: jumlahDibayarMenginap }],
           pungut_service_fee: quickForm.pungutServiceFee !== false,
         });
         const bks = isGroup ? data.bookings : [data];
@@ -312,12 +352,13 @@ export default function Dashboard() {
             await api.post(`/bookings/${bk.id}/checkin`, { no_hp: quickForm.no_hp });
           }
         }
+        const labelBayarMenginap = (dpAktif && !isInstant) ? `DP ${fmtRp(nominalDp)} diterima` : "Menginap lunas";
         toast.success(
           isInstant
             ? (isGroup ? `Menginap lunas + check-in untuk ${bks.length} kamar` : "Menginap lunas, tamu sudah check-in")
             : isToday
-              ? (isGroup ? `Reservasi lunas untuk ${bks.length} kamar, check-in nanti jam ${jamNantiRaw}` : `Reservasi lunas, check-in nanti jam ${jamNantiRaw}`)
-              : (isGroup ? `Menginap lunas untuk ${bks.length} kamar, dijadwalkan check-in ${quickForm.tanggal_mulai}` : `Menginap lunas, dijadwalkan check-in ${quickForm.tanggal_mulai}`)
+              ? (isGroup ? `Reservasi (${labelBayarMenginap}) untuk ${bks.length} kamar, check-in nanti jam ${jamNantiRaw}` : `Reservasi (${labelBayarMenginap}), check-in nanti jam ${jamNantiRaw}`)
+              : (isGroup ? `${labelBayarMenginap} untuk ${bks.length} kamar, dijadwalkan check-in ${quickForm.tanggal_mulai}` : `${labelBayarMenginap}, dijadwalkan check-in ${quickForm.tanggal_mulai}`)
         );
       }
       setQuickBookRooms([]); cancelMultiSelect(); load();
@@ -1553,10 +1594,41 @@ export default function Dashboard() {
               </label>
             </div>
             <div className="col-span-2"><Label>Catatan</Label><Textarea value={quickForm.catatan} onChange={(e) => setQuickForm(f => ({ ...f, catatan: e.target.value }))} rows={2} /></div>
+            {/* UI DP (2026-09-11) - hanya muncul kalau BUKAN check-in instan (lihat
+                quickBayarInstan) - tamu yg sudah di lokasi sekarang tetap wajib lunas. */}
+            {!quickBayarInstan && (
+              <div className="col-span-2 flex items-start gap-1.5 text-xs text-slate-600">
+                <input id="q-bayar-dp" data-testid="q-bayar-dp" type="checkbox"
+                  checked={!!quickForm.bayarDp}
+                  onChange={(e) => {
+                    const checked = e.target.checked;
+                    setQuickForm(f => ({
+                      ...f, bayarDp: checked,
+                      nominalDp: checked && !f.nominalDp ? String(Math.round(quickEst.total / 2)) : f.nominalDp,
+                    }));
+                  }}
+                  className="mt-0.5" />
+                <label htmlFor="q-bayar-dp">
+                  Tamu bayar DP saja (belum lunas)
+                  <span className="text-slate-400"> - utk booking dari jauh yg sudah transfer sebagian, sisanya dilunasi nanti</span>
+                </label>
+              </div>
+            )}
+            {!quickBayarInstan && quickForm.bayarDp && (
+              <div className="col-span-2">
+                <Label>Nominal DP Diterima</Label>
+                <Input data-testid="q-nominal-dp" type="number" min="0" max={quickEst.total}
+                  value={quickForm.nominalDp}
+                  onChange={(e) => setQuickForm(f => ({ ...f, nominalDp: e.target.value }))} />
+                <p className="text-[10px] text-slate-500 mt-1">
+                  Default 50% dari total ({fmtRp(Math.round(quickEst.total / 2))}) - boleh diubah sesuai nominal yang BENAR-BENAR diterima.
+                </p>
+              </div>
+            )}
             {/* (2026-07-31, keputusan bisnis Agus "bayar di depan semua") - berlaku Day Use
                 MAUPUN Menginap walk-in via Quick Book sekarang, bukan cuma Day Use lagi. */}
             <div className="col-span-2">
-              <Label>Metode Bayar (wajib lunas sekarang)</Label>
+              <Label>Metode Bayar{(!quickBayarInstan && quickForm.bayarDp) ? " (DP)" : " (wajib lunas sekarang)"}</Label>
               <select data-testid="q-metode-bayar" value={quickForm.metode_bayar} onChange={(e) => setQuickForm(f => ({ ...f, metode_bayar: e.target.value }))} className="w-full h-10 rounded-md border border-slate-300 px-3 bg-white mt-1.5">
                 <option value="tunai">Tunai</option>
                 <option value="qris">QRIS</option>
@@ -1579,9 +1651,15 @@ export default function Dashboard() {
               <div className="flex justify-between"><span className="text-slate-600">Subtotal{quickForm.tipe === "menginap" ? ` (${quickEst.nights} malam)` : ""}{quickBookRooms.length > 1 ? " / kamar" : ""}</span><b>{fmtRp(quickEst.subtotal)}</b></div>
               <div className="flex justify-between"><span className="text-slate-600">Service Fee (3%){quickBookRooms.length > 1 ? " / kamar" : ""}</span><b>{fmtRp(quickEst.service_fee)}</b></div>
               <div className="flex justify-between text-base pt-1 border-t border-blue-200 mt-1">
-                <span className="font-bold">Dibayar Sekarang{quickBookRooms.length > 1 ? " / kamar" : ""}</span>
-                <b className="text-blue-700">{fmtRp(quickEst.total)}</b>
+                <span className="font-bold">{(!quickBayarInstan && quickForm.bayarDp) ? "DP Diterima" : "Dibayar Sekarang"}{quickBookRooms.length > 1 ? " / kamar" : ""}</span>
+                <b className="text-blue-700">{fmtRp((!quickBayarInstan && quickForm.bayarDp) ? (Number(quickForm.nominalDp) || 0) : quickEst.total)}</b>
               </div>
+              {!quickBayarInstan && quickForm.bayarDp && (
+                <div className="flex justify-between text-xs text-amber-700">
+                  <span>Sisa belum lunas</span>
+                  <b>{fmtRp(Math.max(0, quickEst.total - (Number(quickForm.nominalDp) || 0)))}</b>
+                </div>
+              )}
               {quickBookRooms.length > 1 && (
                 <div className="flex justify-between text-base pt-1 border-t border-blue-300 mt-1"><span className="font-bold">Total {quickBookRooms.length} Kamar</span><b className="text-blue-800">{fmtRp(quickEst.total * quickBookRooms.length)}</b></div>
               )}
