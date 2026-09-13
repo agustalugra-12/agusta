@@ -1616,6 +1616,72 @@ async def skenario_ota_manual_required_retry_otomatis_setelah_housekeeping() -> 
     return ("ota_manual_required_retry_otomatis_setelah_housekeeping", status)
 
 
+# --- Availability publik / Booking Engine Traveloka-style (Phase 2, 2026-09-13) ---
+# Mengunci perilaku setelah gate STATUS FISIK dibuang (commit 69de564): availability
+# publik HARUS murni date/booking-based. Tanpa test ini, gate `q["status"]="kosong"`
+# bisa diam-diam masuk lagi & memunculkan "kamar penuh padahal kosong" (keluhan nyata
+# Agus 2026-09) tanpa ketahuan. Ingat: 04:00 UTC = 12:00 WITA, 06:00 UTC = 14:00 WITA.
+
+async def skenario_availability_hari_ini_hanya_sembunyikan_maintenance() -> tuple:
+    from routes.public import public_availability
+    from core import db
+    property_id = _property_id_test()
+    today = datetime.now(timezone.utc).astimezone(timezone(timedelta(hours=8))).date().isoformat()
+    r_kotor = await _bikin_kamar_test(db, property_id, "AV1")
+    await db.rooms.update_one({"id": r_kotor}, {"$set": {"status": "perlu_dibersihkan"}})
+    r_maint = await _bikin_kamar_test(db, property_id, "AV2")
+    await db.rooms.update_one({"id": r_maint}, {"$set": {"status": "maintenance"}})
+    res = await public_availability(tanggal=today, property_id_override=property_id)
+    ids = {x["id"] for x in res["rooms"]}
+    ok = r_kotor in ids and r_maint not in ids
+    return ("availability_hari_ini_hanya_sembunyikan_maintenance",
+            "PASS" if ok else f"FAIL - kotor_muncul={r_kotor in ids}(harus True), maintenance_muncul={r_maint in ids}(harus False)")
+
+
+async def skenario_availability_tanggal_depan_abaikan_status_fisik() -> tuple:
+    from routes.public import public_availability
+    from core import db
+    property_id = _property_id_test()
+    r = await _bikin_kamar_test(db, property_id, "AV3")
+    await db.rooms.update_one({"id": r}, {"$set": {"status": "menginap"}})  # fisik terisi SEKARANG, tapi tak ada booking di masa depan
+    depan = (datetime.now(timezone.utc).astimezone(timezone(timedelta(hours=8))).date() + timedelta(days=3)).isoformat()
+    res = await public_availability(tanggal=depan, property_id_override=property_id)
+    ok = r in {x["id"] for x in res["rooms"]}
+    return ("availability_tanggal_depan_abaikan_status_fisik",
+            "PASS" if ok else "FAIL - kamar status fisik=menginap tak muncul di tanggal 3 hari lagi (harus muncul, status realtime tak relevan utk masa depan)")
+
+
+async def skenario_availability_dayuse_presisi_jam_setelah_checkout() -> tuple:
+    # Regresi bug Vina (public.py:199): kamar yg checkout menginap jam 12:00 HARUS bisa
+    # dibooking Day Use jam 13:00 hari yg sama, tapi TIDAK jam 10:00 (masih terisi). Pakai
+    # BESOK supaya bebas dari jam-dinding & guard "masa lalu".
+    from routes.public import public_availability
+    from core import db
+    property_id = _property_id_test()
+    r = await _bikin_kamar_test(db, property_id, "AV4")
+    hari_ini = datetime.now(timezone.utc).astimezone(timezone(timedelta(hours=8))).date()
+    besok = (hari_ini + timedelta(days=1)).isoformat()
+    hari_ini_iso = hari_ini.isoformat()
+    # menginap: check-in hari ini 14:00 WITA (06:00 UTC), checkout BESOK 12:00 WITA (04:00 UTC)
+    await db.bookings.insert_one({
+        "id": str(uuid.uuid4()), "property_id": property_id, "room_id": r, "room_nomor": "AV4",
+        "room_tipe": "Standard", "kode": "AVTEST", "tipe": "menginap", "status": "booking_paid",
+        "payment_status": "paid", "nama_tamu": "Test Av", "no_hp": _wa_unik(),
+        "jam_mulai": f"{hari_ini_iso}T06:00:00+00:00", "jam_selesai": f"{besok}T04:00:00+00:00",
+        "tanggal_checkin": hari_ini_iso, "tanggal_checkout": besok,
+        "total": 150000, "created_at": datetime.now(timezone.utc).isoformat(),
+    })
+    # tipe di endpoint = filter TIPE KAMAR (Standard/Cottage), bukan day_use/menginap;
+    # presisi Day Use ditentukan jam_checkin. Kirim tipe=Standard (sesuai kamar test).
+    res_bebas = await public_availability(tanggal=besok, tipe="Standard", jam_checkin="13:00", property_id_override=property_id)
+    res_terisi = await public_availability(tanggal=besok, tipe="Standard", jam_checkin="10:00", property_id_override=property_id)
+    muncul_13 = r in {x["id"] for x in res_bebas["rooms"]}
+    muncul_10 = r in {x["id"] for x in res_terisi["rooms"]}
+    ok = muncul_13 and not muncul_10
+    return ("availability_dayuse_presisi_jam_setelah_checkout",
+            "PASS" if ok else f"FAIL - jam13(bebas setelah checkout 12:00)={muncul_13}(harus True), jam10(masih terisi)={muncul_10}(harus False)")
+
+
 async def main():
     unit_tests = [
         test_tanggal_wita_dini_hari_geser_ke_hari_berikutnya,
@@ -1662,6 +1728,9 @@ async def main():
         skenario_services_list_tanggal_penuh_timestamp,
         skenario_ota_jam_geser_tembus_tengah_malam_ditolak_otomatis,
         skenario_ota_manual_required_retry_otomatis_setelah_housekeeping,
+        skenario_availability_hari_ini_hanya_sembunyikan_maintenance,
+        skenario_availability_tanggal_depan_abaikan_status_fisik,
+        skenario_availability_dayuse_presisi_jam_setelah_checkout,
     ]
 
     print("--- Unit test (murni, tanpa DB) ---")
