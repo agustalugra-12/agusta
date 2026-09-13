@@ -208,15 +208,10 @@ async def public_availability(tanggal: str, tipe: Optional[str] = None, checkout
     # diminta - bukan cuma status sesaat waktu query. Tanpa jam_checkin (belum tahu jam
     # spesifik), tetap pakai gate lama (konservatif, aman) supaya tidak menjanjikan kamar
     # yang belum tentu kosong di jam yang tamu belum sebutkan.
-    # (2026-09-13, keputusan Agus) Availability BOOKING-SAJA: ketersediaan berkurang HANYA
-    # saat ada booking overlap (dicek check_room_available di bawah), TIDAK lagi di-gate oleh
-    # status FISIK kamar (day_use/menginap/perlu_dibersihkan) untuk hari ini. Masalah nyata:
-    # kamar tampil penuh di booking engine padahal kosong (mis. Cottage status day_use/
-    # perlu_dibersihkan tanpa booking apa pun ikut ter-exclude oleh gate lama). Alasan aman
-    # dari double-booking: walk-in selalu tercatat sebagai booking di PMS (via RedDoorz→PMS),
-    # jadi tetap mengurangi ketersediaan lewat overlap booking di bawah. 'maintenance' (kamar
-    # rusak, bukan soal okupansi) TETAP dikecualikan.
-    q["status"] = {"$ne": "maintenance"}
+    if is_today and not jam_checkin:
+        q["status"] = "kosong"
+    else:
+        q["status"] = {"$ne": "maintenance"}
     rooms = await db.rooms.find(scoped(q, property_id), {"_id": 0}).to_list(500)
     # Filter rooms yang punya booking overlap di tanggal tsb — [d_start, d_end) di sini
     # sudah berupa rentang TANGGAL (bukan cuma pre-filter kasar), jadi hari check-out booking
