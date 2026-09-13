@@ -12,7 +12,7 @@ import { bookingConfirmationWaLink, waLink, STATUS_BAYAR_LABEL } from "@/lib/api
 import { ExtraBedSelector } from "@/components/ExtraBedSelector";
 import {
   BedDouble, Wifi, Snowflake, Tv, Droplets, Bath, Trees, CheckCircle2, XCircle,
-  Calendar, Clock, User, Phone, IdCard, Car, Users as UsersIcon, Building2, ArrowRight, Mail, Ban, AlertTriangle,
+  Calendar, Clock, User, Phone, Car, Users as UsersIcon, Building2, ArrowRight, Mail, Ban, AlertTriangle,
   FileText,
 } from "lucide-react";
 
@@ -79,7 +79,7 @@ function BookingForm() {
   const [step, setStep] = useState(1);            // 1 = pilih kamar, 2 = form
   const [selectedRooms, setSelectedRooms] = useState([]); // [{id, nomor, tipe, tarif, tarif_menginap}, ...] — bisa >1 kamar sekaligus
   const [form, setForm] = useState({
-    nama_tamu: "", no_hp: "", email: "", no_identitas: "", jumlah_tamu: 1, kendaraan: "",
+    nama_tamu: "", no_hp: "", jumlah_tamu: 1, kendaraan: "",
     jam_checkin: "13:00", catatan: "",
   });
   const [extraBedQty, setExtraBedQty] = useState(0);
@@ -190,14 +190,8 @@ function BookingForm() {
   };
 
   const submit = async () => {
-    if (!form.nama_tamu.trim() || !form.no_hp.trim() || !form.no_identitas.trim()) {
-      toast.error("Lengkapi nama, no HP, dan no identitas");
-      return;
-    }
-    const emailTrimmed = form.email.trim();
-    const emailValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailTrimmed);
-    if (!emailTrimmed || !emailValid) {
-      toast.error("Email wajib diisi dengan format yang valid — untuk menerima bukti pembayaran");
+    if (!form.nama_tamu.trim() || !form.no_hp.trim()) {
+      toast.error("Lengkapi nama dan no HP");
       return;
     }
     if (selectedRooms.length === 0) { toast.error("Pilih kamar dulu"); return; }
@@ -210,8 +204,6 @@ function BookingForm() {
       const { data: resp } = await PUBLIC_API.post("/public/bookings", {
         nama_tamu: form.nama_tamu.trim(),
         no_hp: form.no_hp.trim(),
-        email: emailTrimmed,
-        no_identitas: form.no_identitas.trim(),
         jumlah_tamu: Number(form.jumlah_tamu) || 1,
         kendaraan: form.kendaraan.trim(),
         room_ids: selectedRooms.map((r) => r.id),
@@ -451,25 +443,6 @@ function BookingForm() {
                 <h2 className="font-display text-2xl font-bold text-teal-deep">Data Tamu</h2>
                 <FieldIcon icon={User} label="Nama Lengkap"><Input data-testid="pb-nama" value={form.nama_tamu} onChange={(e) => setForm(f => ({ ...f, nama_tamu: e.target.value }))} className="h-12" /></FieldIcon>
                 <FieldIcon icon={Phone} label="Nomor WhatsApp"><Input data-testid="pb-hp" placeholder="08xxxxxxxxxx" value={form.no_hp} onChange={(e) => setForm(f => ({ ...f, no_hp: e.target.value }))} className="h-12" /></FieldIcon>
-                <div>
-                  <FieldIcon icon={Mail} label="Email">
-                    <Input
-                      data-testid="pb-email"
-                      type="email"
-                      inputMode="email"
-                      autoComplete="email"
-                      placeholder="nama@email.com"
-                      value={form.email}
-                      onChange={(e) => setForm(f => ({ ...f, email: e.target.value }))}
-                      className="h-12"
-                      required
-                    />
-                  </FieldIcon>
-                  <p className="mt-1.5 text-[11px] text-mustard-deep bg-mustard/10 border border-mustard/30 rounded-md px-2.5 py-1.5">
-                    <span className="font-bold">Wajib diisi</span> — bukti pembayaran & konfirmasi booking akan dikirim ke email ini.
-                  </p>
-                </div>
-                <FieldIcon icon={IdCard} label="Nomor Identitas (KTP/Paspor)"><Input data-testid="pb-ktp" value={form.no_identitas} onChange={(e) => setForm(f => ({ ...f, no_identitas: e.target.value }))} className="h-12" /></FieldIcon>
                 <div className="grid grid-cols-2 gap-3">
                   <FieldIcon icon={UsersIcon} label="Jumlah Tamu"><Input data-testid="pb-jumlah" type="number" min="1" value={form.jumlah_tamu} onChange={(e) => setForm(f => ({ ...f, jumlah_tamu: e.target.value }))} className="h-12" /></FieldIcon>
                   <FieldIcon icon={Car} label="Kendaraan"><Input data-testid="pb-kendaraan" placeholder="Mis: B 1234 ABC" value={form.kendaraan} onChange={(e) => setForm(f => ({ ...f, kendaraan: e.target.value }))} className="h-12" /></FieldIcon>

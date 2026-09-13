@@ -356,10 +356,12 @@ async def public_create_booking(body: PublicBookingCreate, properti: Optional[st
         # berubah. Frontend (PublicBook.jsx) sudah tidak menawarkan opsi ini lagi ke tamu —
         # guard ini cuma jaga-jaga endpoint dipanggil langsung (mis. request lama ter-cache).
         raise HTTPException(400, "Booking Menginap sekarang lewat WhatsApp — silakan hubungi admin kami untuk reservasi menginap")
-    # Validasi email wajib (untuk kirim bukti pembayaran)
+    # Email opsional (2026-09-13, field dihapus dari form publik) — bukti bayar dikirim via
+    # WhatsApp. Kalau tamu tetap mengisi email valid, tetap dipakai; kalau kosong, Tripay
+    # memakai email internal default (customer_email fallback di tripay_create_transaction).
     email = (body.email or "").strip().lower()
-    if not email or "@" not in email or "." not in email.split("@")[-1]:
-        raise HTTPException(400, "Email wajib diisi dengan format yang valid (untuk menerima bukti pembayaran)")
+    if email and ("@" not in email or "." not in email.split("@")[-1]):
+        raise HTTPException(400, "Format email tidak valid")
     # Parse tanggal + jam check-in (WITA +08:00 - Bedugul/Bali, lihat catatan perbaikan
     # 2026-08-07 di reservation_service.py)
     try:

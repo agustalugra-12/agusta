@@ -1111,8 +1111,8 @@ class BookingUpdate(BaseModel):
 class PublicBookingCreate(BaseModel):
     nama_tamu: str
     no_hp: str
-    email: str  # Wajib — untuk kirim bukti pembayaran
-    no_identitas: str = ""
+    email: str = ""  # Opsional (2026-09-13, Agus: field email dihapus dari form) — bukti bayar via WhatsApp; kalau kosong Tripay pakai email internal default
+    no_identitas: str = ""  # Opsional — field dihapus dari form publik (2026-09-13)
     jumlah_tamu: int = 1
     kendaraan: str = ""
     room_id: Optional[str] = None  # 1 kamar (alur lama) — diabaikan kalau room_ids diisi
