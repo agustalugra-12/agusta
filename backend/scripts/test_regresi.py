@@ -1682,6 +1682,101 @@ async def skenario_availability_dayuse_presisi_jam_setelah_checkout() -> tuple:
             "PASS" if ok else f"FAIL - jam13(bebas setelah checkout 12:00)={muncul_13}(harus True), jam10(masih terisi)={muncul_10}(harus False)")
 
 
+async def skenario_pms_confirm_settlement_idempoten_sekali_per_grup() -> tuple:
+    """(Phase 6 Booking Engine, 2026-09-13) PMS-confirm = tripay_callback settlement. Kunci
+    2 invariant PATH UANG (regresi bug Jadid 4-kamar + retry webhook Tripay):
+    (1) posting pemasukan ke rekening SEKALI per GRUP (bukan per kamar);
+    (2) IDEMPOTEN — Tripay boleh kirim callback settlement yang sama BERKALI-KALI; callback
+        kedua TIDAK boleh double-post uang / double-kirim voucher (guard `was_paid`).
+    Semua sender eksternal (voucher PDF/email/WA, push, alert Telegram owner) di-patch jadi
+    no-op supaya test TIDAK mengirim apa pun ke tamu/Agus (auto_posting tetap nyata → tulis
+    ke rekening_transaksi test, dibersihkan)."""
+    import json as _json, hashlib as _hashlib, hmac as _hmac
+    from core import db, now_iso
+    import routes.tripay as tp
+
+    if not tp.TRIPAY_PRIVATE_KEY:
+        return ("pms_confirm_settlement_idempoten_sekali_per_grup", "PASS")  # key tak diset di env ini → skip aman
+
+    property_id = _property_id_test()
+    r1 = await _bikin_kamar_test(db, property_id, "PC1")
+    r2 = await _bikin_kamar_test(db, property_id, "PC2")
+    await db.rekening.insert_one({"id": str(uuid.uuid4()), "property_id": property_id, "nama": "Test Op",
+                                  "default_operasional": True, "status": "aktif", "saldo": 0, "created_at": now_iso()})
+    group_id = str(uuid.uuid4())
+    order_id = f"TEST-PC-{uuid.uuid4().hex[:6].upper()}"
+    kodes = []
+    for rid, nomor, total in [(r1, "PC1", 200000), (r2, "PC2", 300000)]:
+        kode = f"TEST-PC-{uuid.uuid4().hex[:6].upper()}"
+        kodes.append(kode)
+        await db.bookings.insert_one({
+            "id": str(uuid.uuid4()), "kode": kode, "property_id": property_id, "group_id": group_id,
+            "room_id": rid, "room_nomor": nomor, "room_tipe": "Standard", "tipe": "menginap",
+            "status": "booking_pending", "payment_status": "pending", "source": "online",
+            "nama_tamu": "Test Confirm", "no_hp": _wa_unik(), "invoice_id": order_id,
+            "jam_mulai": now_iso(), "jam_selesai": now_iso(),
+            "subtotal": total, "service_fee": 0, "total": total, "amount_due": total, "created_at": now_iso(),
+        })
+    total_grup = 500000
+    await db.payment_log.insert_one({
+        "id": str(uuid.uuid4()), "property_id": property_id, "booking_id": (await db.bookings.find_one({"group_id": group_id}))["id"],
+        "group_id": group_id, "order_id": order_id, "gateway": "tripay", "transaction_status": "pending",
+        "payment_type": "QRIS", "payment_option": "full", "gross_amount": str(total_grup), "created_at": now_iso(),
+    })
+
+    # --- patch semua sender eksternal (aman: tak kirim ke tamu/Agus) ---
+    voucher_calls = {"n": 0}
+    orig = {k: getattr(tp, k) for k in
+            ("send_voucher_email", "kirim_voucher_wa", "send_push", "kirim_alert_owner", "generate_voucher_pdf", "get_property_branding")}
+
+    async def _count_voucher(*a, **k):
+        voucher_calls["n"] += 1
+
+    async def _noop_async(*a, **k):
+        pass
+
+    async def _branding(*a, **k):
+        return {}
+
+    tp.send_voucher_email = _count_voucher
+    tp.kirim_voucher_wa = _noop_async
+    tp.send_push = _noop_async
+    tp.kirim_alert_owner = _noop_async
+    tp.get_property_branding = _branding
+    tp.generate_voucher_pdf = lambda *a, **k: b"PDF"  # sync (dipanggil via to_thread)
+
+    class _FakeReq:
+        def __init__(self, raw, sig):
+            self._raw = raw
+            self.headers = {"X-Callback-Signature": sig, "X-Callback-Event": "payment_status"}
+        async def body(self):
+            return self._raw
+        async def json(self):
+            return _json.loads(self._raw)
+
+    def _req():
+        payload = {"merchant_ref": order_id, "reference": "T-REF", "status": "PAID",
+                   "total_amount": total_grup, "payment_method": "QRIS"}
+        raw = _json.dumps(payload).encode()
+        sig = _hmac.new(tp.TRIPAY_PRIVATE_KEY.encode(), raw, _hashlib.sha256).hexdigest()
+        return _FakeReq(raw, sig)
+
+    try:
+        await tp.tripay_callback(_req())   # settlement pertama
+        await tp.tripay_callback(_req())   # RETRY settlement (harus idempoten)
+        paid = await db.bookings.count_documents({"group_id": group_id, "status": "booking_paid", "payment_status": "paid"})
+        posting = await db.rekening_transaksi.count_documents({"property_id": property_id, "jenis": "pemasukan"})
+        ok = (paid == 2) and (posting == 1) and (voucher_calls["n"] == 1)
+        status = ("PASS" if ok else
+                  f"FAIL - paid={paid}(harus 2), posting_pemasukan={posting}(harus 1 sekali per grup), voucher={voucher_calls['n']}(harus 1, retry tak dobel)")
+    finally:
+        for k, v in orig.items():
+            setattr(tp, k, v)
+        for kode in kodes:
+            await db.audit_log.delete_many({"detail": {"$regex": kode}})
+    return ("pms_confirm_settlement_idempoten_sekali_per_grup", status)
+
+
 async def main():
     unit_tests = [
         test_tanggal_wita_dini_hari_geser_ke_hari_berikutnya,
@@ -1731,6 +1826,7 @@ async def main():
         skenario_availability_hari_ini_hanya_sembunyikan_maintenance,
         skenario_availability_tanggal_depan_abaikan_status_fisik,
         skenario_availability_dayuse_presisi_jam_setelah_checkout,
+        skenario_pms_confirm_settlement_idempoten_sekali_per_grup,
     ]
 
     print("--- Unit test (murni, tanpa DB) ---")
