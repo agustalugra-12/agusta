@@ -25,7 +25,7 @@ from routes.telegram_bot import background_telegram_daily_report_loop
 from routes.rekening import background_smart_rule_loop
 from routes.ai_grow import background_ai_grow_cache_loop
 from routes.incidents import background_collection_required_scan_loop, background_business_truth_scan_loop, background_pending_booking_approval_scan_loop, background_stuck_housekeeping_scan_loop
-from routes.bookings import background_auto_close_ota_stays_loop
+from routes.bookings import background_auto_close_ota_stays_loop, background_expire_holds_loop
 from routes.claude_fix import reconcile_stale_claude_runs
 
 app = FastAPI(title="Pelangi Homestay API")
@@ -259,6 +259,7 @@ async def startup():
     # sudah lewat >6 jam) ditutup ke "checked_out" tiap 1 jam - root cause audit Agus,
     # lihat routes/bookings.py utk detail lengkap kenapa ini tidak pernah terjadi otomatis.
     asyncio.create_task(background_auto_close_ota_stays_loop())
+    asyncio.create_task(background_expire_holds_loop())
 
     # Fase 4 Claude Code Control (2026-08-13) - restart-safety: run yang masih "in
     # progress" saat backend restart ditandai error, jangan nyangkut lock/status

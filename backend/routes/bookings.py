@@ -955,3 +955,44 @@ async def background_auto_close_ota_stays_loop():
         except Exception as e:
             logging.getLogger("bookings").warning(f"Gagal auto_close_ota_stays: {e}")
         await asyncio.sleep(INTERVAL_SEC)
+
+
+async def background_expire_holds_loop():
+    """(Phase 5 Booking Engine Traveloka-style, 2026-09-13) Lepas INVENTORY HOLD kadaluarsa:
+    booking ONLINE status=booking_pending yang BELUM dibayar & hold_expires_at sudah lewat →
+    cancelled (kamar dilepas). Mencegah kamar terkunci selamanya kalau tamu tutup tab di layar
+    pilih pembayaran (gap kritis PRD). TTL hold di-set create_reservation (public=15 menit).
+
+    FILTER SANGAT KETAT supaya TIDAK PERNAH membatalkan booking valid: HANYA
+    source=online + status=booking_pending + payment_status != paid + hold_expires_at < now.
+    Booking staf/walk-in/OTA/checkin/yang sudah paid TIDAK tersentuh (hold_expires_at mereka
+    null). Dibungkus room_locks + RE-CHECK di dalam lock (hindari race: kalau pembayaran baru
+    masuk di celah waktu, jangan dibatalkan)."""
+    INTERVAL_SEC = 60  # cek tiap 1 menit - kamar cepat kembali bisa dijual
+    while True:
+        try:
+            now = datetime.now(timezone.utc).isoformat()
+            basi = await db.bookings.find({
+                "status": "booking_pending",
+                "source": "online",
+                "payment_status": {"$ne": "paid"},
+                "hold_expires_at": {"$ne": None, "$lt": now},
+            }, {"_id": 0, "id": 1, "room_id": 1, "room_tipe": 1, "property_id": 1, "kode": 1}).to_list(500)
+            dilepas = 0
+            for b in basi:
+                async with room_locks(b["room_id"]):
+                    fresh = await db.bookings.find_one({"id": b["id"]}, {"_id": 0, "status": 1, "payment_status": 1})
+                    if not fresh or fresh.get("status") != "booking_pending" or fresh.get("payment_status") == "paid":
+                        continue  # berubah di celah (mis. baru dibayar) - JANGAN sentuh
+                    await db.bookings.update_one({"id": b["id"]}, {"$set": {
+                        "status": "cancelled", "cancelled_at": now_iso(),
+                        "cancelled_by": "system:hold_expired",
+                    }})
+                    await log_availability_change(b["room_id"], b.get("room_tipe", ""), 1,
+                                                  "booking_hold_expired_dilepas", b.get("property_id"), booking_id=b["id"])
+                    dilepas += 1
+            if dilepas:
+                logging.getLogger("bookings").info(f"[expire_holds] {dilepas} hold booking online kadaluarsa dilepas")
+        except Exception as e:
+            logging.getLogger("bookings").warning(f"Gagal expire_holds: {e}")
+        await asyncio.sleep(INTERVAL_SEC)

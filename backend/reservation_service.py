@@ -168,7 +168,8 @@ async def check_room_available(room_id: str, mulai: datetime, selesai: datetime,
 async def create_reservation(data: Dict[str, Any], property_id: str, source: str = "public",
                               harga_override: Optional[Dict[str, Any]] = None,
                               diskon_ai_persen: int = 0,
-                              izinkan_tumpuk: bool = False) -> Dict[str, Any]:
+                              izinkan_tumpuk: bool = False,
+                              hold_menit: int = 0) -> Dict[str, Any]:
     """Buat reservasi/booking baru. Dipakai oleh public_create_booking (source="online");
     disiapkan agar sumber lain (mis. OTA) bisa memakai alur yang sama lewat harga_override.
 
@@ -272,6 +273,10 @@ async def create_reservation(data: Dict[str, Any], property_id: str, source: str
         "subtotal": subtotal, "service_fee": service_fee, "total": total, "dp_min": dp_min,
         "diskon_member_persen": diskon_persen, "diskon_member_rp": diskon_rp, "kedatangan_ke": kedatangan_ke,
         "source": source,                      # online | walk_in
+        # (Phase 5 Booking Engine, 2026-09-13) Inventory hold: booking_pending yang belum bayar
+        # otomatis dibatalkan (kamar dilepas) setelah hold_expires_at lewat — dicek loop
+        # background_expire_holds_loop. hold_menit=0/None -> tak ada hold (mis. walk-in staf).
+        "hold_expires_at": (datetime.now(timezone.utc) + timedelta(minutes=hold_menit)).isoformat() if hold_menit and hold_menit > 0 else None,
         "invoice_id": None, "payment_id": None,
         "created_at": now_iso(), "created_by": data["created_by"],
         "property_id": property_id,
