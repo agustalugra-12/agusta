@@ -207,10 +207,14 @@ async def public_availability(tanggal: str, tipe: Optional[str] = None, checkout
     # diminta - bukan cuma status sesaat waktu query. Tanpa jam_checkin (belum tahu jam
     # spesifik), tetap pakai gate lama (konservatif, aman) supaya tidak menjanjikan kamar
     # yang belum tentu kosong di jam yang tamu belum sebutkan.
-    if is_today and not jam_checkin:
-        q["status"] = "kosong"
-    else:
-        q["status"] = {"$ne": "maintenance"}
+    # (Phase 1 Booking Engine Traveloka-style, 2026-09-13, keputusan Agus #4) Availability MURNI
+    # DATE-BASED: ketersediaan dihitung dari overlap booking (check_room_available di bawah),
+    # TIDAK lagi di-gate status FISIK kamar untuk hari ini. Gate lama `q["status"]="kosong"`
+    # menyembunyikan kamar yang status fisiknya basi (day_use/menginap/perlu_dibersihkan TANPA
+    # booking) → bikin "kamar penuh padahal kosong". Kebenaran anti-double-book TETAP dijaga
+    # guard fisik di create_reservation (reservation_service.py) sebagai jaring akhir saat booking
+    # benar-benar dibuat. 'maintenance' (kamar rusak, bukan okupansi) tetap dikecualikan.
+    q["status"] = {"$ne": "maintenance"}
     rooms = await db.rooms.find(scoped(q, property_id), {"_id": 0}).to_list(500)
     # Filter rooms yang punya booking overlap di tanggal tsb — [d_start, d_end) di sini
     # sudah berupa rentang TANGGAL (bukan cuma pre-filter kasar), jadi hari check-out booking
