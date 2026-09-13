@@ -3,7 +3,6 @@ from core import *
 from reservation_service import check_room_available, create_reservation, room_locks
 from email_service import generate_voucher_pdf, send_voucher_email, get_property_branding
 from routes.push import send_push
-from routes.telegram_bot import kirim_alert_owner
 from scheduling_engine import slot_dayuse_aman, DAYUSE_DURASI_JAM, WITA
 import httpx
 import io
@@ -327,35 +326,6 @@ async def public_rekomendasi_dayuse(room_id: str, jam_mulai: str, properti: Opti
     }
 
 @api.post("/public/bookings")
-async def _jam_checkin_min_max(tanggal_checkin: str, room_ids: list, property_id: str, tipe: str):
-    """Aturan jam check-in (2026-09-12, keputusan Agus) — berlaku Menginap & Day Use.
-    Return (min_hour, max_hour_exclusive) dalam jam WITA.
-    - Check-in hari MINGGU → min 12:00 (apa pun kondisi).
-    - Senin–Sabtu → kalau ADA kamar terpilih yang malam SEBELUMNYA (H-1) TERISI → min 12:00
-      (nunggu tamu sebelumnya checkout jam 12); kalau semua kamar KOSONG malam H-1 → min 08:00.
-    - Day Use → max eksklusif 18:00 (check-in <18:00; +6 jam ≤ 24:00 supaya tak terhitung menginap).
-      Menginap → tak ada batas atas (24).
-    Cek H-1: kamar dianggap terisi kalau tidak available di rentang malam H-1
-    (H-1 13:00 WITA → H 11:00 WITA) — `check_room_available` raise HTTPException kalau bentrok."""
-    base = datetime.fromisoformat(f"{tanggal_checkin}T00:00:00+08:00")
-    if base.weekday() == 6:  # Minggu
-        min_h = 12
-    else:
-        prev_date = (base.date() - timedelta(days=1)).isoformat()
-        pv_in = datetime.fromisoformat(f"{prev_date}T13:00:00+08:00").astimezone(timezone.utc)
-        pv_out = datetime.fromisoformat(f"{tanggal_checkin}T11:00:00+08:00").astimezone(timezone.utc)
-        h1_terisi = False
-        for rid in room_ids:
-            try:
-                await check_room_available(rid, pv_in, pv_out, property_id)
-            except HTTPException:
-                h1_terisi = True
-                break
-        min_h = 12 if h1_terisi else 8
-    max_h = 18 if tipe == "day_use" else 24
-    return min_h, max_h
-
-
 async def public_create_booking(body: PublicBookingCreate, properti: Optional[str] = None):
     """Booking publik (tanpa login) — 1 kamar (`room_id`, alur lama) atau beberapa kamar
     sekaligus dalam 1 transaksi (`room_ids`, mis. rombongan) dengan tanggal/tipe/data tamu
@@ -375,17 +345,17 @@ async def public_create_booking(body: PublicBookingCreate, properti: Optional[st
         raise HTTPException(400, "room_id atau room_ids wajib diisi")
     if body.tipe not in ("day_use", "menginap"):
         raise HTTPException(400, "Tipe booking tidak valid")
-    # (2026-09-12, keputusan Agus A) Menginap publik online DIBUKA KEMBALI (membalik keputusan
-    # 2026-07-17 yg mematikannya). Menginap kini bisa create+bayar online seperti Day Use;
-    # jalur WhatsApp existing TETAP tersedia sbg alternatif. Safeguard overbooking OTA =
-    # note + notif Telegram sync RedDoorz (lihat set flag `perlu_sync_reddoorz` di bawah).
-    # Email (2026-09-12): tak lagi wajib dari tamu — bukti bayar via WhatsApp. Kalau tamu tidak
-    # isi email, pakai email default internal supaya Tripay (yang butuh customer_email) tetap jalan.
+    if body.tipe == "menginap":
+        # Keputusan bisnis user 2026-07-17: booking Menginap publik instan DIMATIKAN — tamu
+        # diarahkan chat WhatsApp dulu (alur Booking Request → approval → link Tripay, lihat
+        # backend/routes/booking_requests.py). Day Use TETAP instan seperti biasa, tidak
+        # berubah. Frontend (PublicBook.jsx) sudah tidak menawarkan opsi ini lagi ke tamu —
+        # guard ini cuma jaga-jaga endpoint dipanggil langsung (mis. request lama ter-cache).
+        raise HTTPException(400, "Booking Menginap sekarang lewat WhatsApp — silakan hubungi admin kami untuk reservasi menginap")
+    # Validasi email wajib (untuk kirim bukti pembayaran)
     email = (body.email or "").strip().lower()
-    if email and ("@" not in email or "." not in email.split("@")[-1]):
-        raise HTTPException(400, "Format email tidak valid")
-    if not email:
-        email = DEFAULT_INTERNAL_EMAIL
+    if not email or "@" not in email or "." not in email.split("@")[-1]:
+        raise HTTPException(400, "Email wajib diisi dengan format yang valid (untuk menerima bukti pembayaran)")
     # Parse tanggal + jam check-in (WITA +08:00 - Bedugul/Bali, lihat catatan perbaikan
     # 2026-08-07 di reservation_service.py)
     try:
@@ -393,16 +363,6 @@ async def public_create_booking(body: PublicBookingCreate, properti: Optional[st
     except Exception:
         raise HTTPException(400, "Format tanggal/jam tidak valid")
     start = local_in.astimezone(timezone.utc)
-
-    # Aturan jam check-in (2026-09-12, Agus) — Minggu 12:00 / Sen-Sab conditional H-1 / Day Use <18:00.
-    _min_h, _max_h = await _jam_checkin_min_max(body.tanggal, room_ids, property_id, body.tipe)
-    if local_in.hour < _min_h:
-        _alasan = ("hari Minggu" if local_in.weekday() == 6
-                   else "kamar sudah terisi malam sebelumnya" if _min_h == 12
-                   else "kebijakan check-in")
-        raise HTTPException(400, f"Check-in paling awal jam {_min_h:02d}:00 untuk tanggal ini ({_alasan}). Silakan pilih jam mulai {_min_h:02d}:00.")
-    if body.tipe == "day_use" and local_in.hour >= _max_h:
-        raise HTTPException(400, "Day Use check-in paling malam sebelum jam 18:00 (agar check-out 6 jam kemudian tidak melewati tengah malam / terhitung menginap).")
 
     nights = 1
     local_out = None
@@ -459,7 +419,6 @@ async def public_create_booking(body: PublicBookingCreate, properti: Optional[st
                 "room_id": r["id"],
                 "nama_tamu": body.nama_tamu, "no_hp": body.no_hp,
                 "email": email,
-                "tanggal_lahir": body.tanggal_lahir,
                 "no_identitas": body.no_identitas, "kendaraan": body.kendaraan,
                 "jumlah_tamu": body.jumlah_tamu, "extra_bed_qty": body.extra_bed_qty,
                 "jam_mulai": start, "jam_selesai": end,
@@ -491,34 +450,6 @@ async def public_create_booking(body: PublicBookingCreate, properti: Optional[st
                 b.get("property_id"), booking_id=b["id"],
             )
         raise
-
-    # (2026-09-13, keputusan Agus) Booking MENGINAP online wajib disinkronkan manual ke
-    # RedDoorz (channel OTA) supaya tak overbooking. REUSE sistem RedDoorz sync existing:
-    # set `sync_status="waiting_reddoorz_input"` (sama pola approve di booking_requests.py:953)
-    # supaya booking muncul di Dashboard (badge sync_status) & bisa ditandai selesai lewat
-    # endpoint `reddoorz-input-selesai` — TIDAK bikin flag baru. Plus alert owner via Telegram
-    # (bot alert Pelangi). HANYA menginap & HANYA properti yang pakai RedDoorz.
-    # Alert non-fatal: kegagalan Telegram tak boleh menggagalkan booking tamu.
-    if body.tipe == "menginap":
-        _butuh_rd = await property_butuh_reddoorz(property_id)
-        _sync = "waiting_reddoorz_input" if _butuh_rd else "not_required"
-        for b in created:
-            await db.bookings.update_one({"id": b["id"]}, {"$set": {"sync_status": _sync}})
-            b["sync_status"] = _sync
-        if _butuh_rd:
-          try:
-            _kamar = ", ".join(f"{b.get('room_tipe','')} {b.get('room_nomor','-')}" for b in created)
-            _total = f"Rp{sum(int(b.get('total', 0)) for b in created):,}".replace(",", ".")
-            await kirim_alert_owner(
-                "🏨 BOOKING MENGINAP BARU — WAJIB SINKRON KE REDDOORZ\n"
-                f"Tamu: {body.nama_tamu} ({body.no_hp})\n"
-                f"Kamar: {_kamar}\n"
-                f"Check-in: {body.tanggal} → Check-out: {body.tanggal_checkout}\n"
-                f"Total: {_total}\n"
-                "⚠️ Segera blokir tanggal ini di RedDoorz agar tidak double-booking."
-            )
-          except Exception:
-            pass  # alert Telegram non-fatal — jangan ganggu alur booking tamu
 
     if len(created) == 1:
         total_rp = f"Rp{int(created[0].get('total', 0)):,}".replace(",", ".")

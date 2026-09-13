@@ -79,7 +79,7 @@ function BookingForm() {
   const [step, setStep] = useState(1);            // 1 = pilih kamar, 2 = form
   const [selectedRooms, setSelectedRooms] = useState([]); // [{id, nomor, tipe, tarif, tarif_menginap}, ...] — bisa >1 kamar sekaligus
   const [form, setForm] = useState({
-    nama_tamu: "", no_hp: "", tanggal_lahir: "", jumlah_tamu: 1, kendaraan: "",
+    nama_tamu: "", no_hp: "", email: "", no_identitas: "", jumlah_tamu: 1, kendaraan: "",
     jam_checkin: "13:00", catatan: "",
   });
   const [extraBedQty, setExtraBedQty] = useState(0);
@@ -190,8 +190,14 @@ function BookingForm() {
   };
 
   const submit = async () => {
-    if (!form.nama_tamu.trim() || !form.no_hp.trim()) {
-      toast.error("Lengkapi nama dan no HP");
+    if (!form.nama_tamu.trim() || !form.no_hp.trim() || !form.no_identitas.trim()) {
+      toast.error("Lengkapi nama, no HP, dan no identitas");
+      return;
+    }
+    const emailTrimmed = form.email.trim();
+    const emailValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailTrimmed);
+    if (!emailTrimmed || !emailValid) {
+      toast.error("Email wajib diisi dengan format yang valid — untuk menerima bukti pembayaran");
       return;
     }
     if (selectedRooms.length === 0) { toast.error("Pilih kamar dulu"); return; }
@@ -204,7 +210,8 @@ function BookingForm() {
       const { data: resp } = await PUBLIC_API.post("/public/bookings", {
         nama_tamu: form.nama_tamu.trim(),
         no_hp: form.no_hp.trim(),
-        tanggal_lahir: form.tanggal_lahir || "",
+        email: emailTrimmed,
+        no_identitas: form.no_identitas.trim(),
         jumlah_tamu: Number(form.jumlah_tamu) || 1,
         kendaraan: form.kendaraan.trim(),
         room_ids: selectedRooms.map((r) => r.id),
@@ -445,37 +452,30 @@ function BookingForm() {
                 <FieldIcon icon={User} label="Nama Lengkap"><Input data-testid="pb-nama" value={form.nama_tamu} onChange={(e) => setForm(f => ({ ...f, nama_tamu: e.target.value }))} className="h-12" /></FieldIcon>
                 <FieldIcon icon={Phone} label="Nomor WhatsApp"><Input data-testid="pb-hp" placeholder="08xxxxxxxxxx" value={form.no_hp} onChange={(e) => setForm(f => ({ ...f, no_hp: e.target.value }))} className="h-12" /></FieldIcon>
                 <div>
-                  <FieldIcon icon={IdCard} label="Tanggal Lahir">
+                  <FieldIcon icon={Mail} label="Email">
                     <Input
-                      data-testid="pb-tgl-lahir"
-                      type="date"
-                      value={form.tanggal_lahir}
-                      onChange={(e) => setForm(f => ({ ...f, tanggal_lahir: e.target.value }))}
+                      data-testid="pb-email"
+                      type="email"
+                      inputMode="email"
+                      autoComplete="email"
+                      placeholder="nama@email.com"
+                      value={form.email}
+                      onChange={(e) => setForm(f => ({ ...f, email: e.target.value }))}
                       className="h-12"
+                      required
                     />
                   </FieldIcon>
-                  <p className="mt-1.5 text-[11px] text-teal-deep/60">
-                    Bukti pembayaran & konfirmasi booking dikirim via WhatsApp ke nomor di atas.
+                  <p className="mt-1.5 text-[11px] text-mustard-deep bg-mustard/10 border border-mustard/30 rounded-md px-2.5 py-1.5">
+                    <span className="font-bold">Wajib diisi</span> — bukti pembayaran & konfirmasi booking akan dikirim ke email ini.
                   </p>
                 </div>
+                <FieldIcon icon={IdCard} label="Nomor Identitas (KTP/Paspor)"><Input data-testid="pb-ktp" value={form.no_identitas} onChange={(e) => setForm(f => ({ ...f, no_identitas: e.target.value }))} className="h-12" /></FieldIcon>
                 <div className="grid grid-cols-2 gap-3">
                   <FieldIcon icon={UsersIcon} label="Jumlah Tamu"><Input data-testid="pb-jumlah" type="number" min="1" value={form.jumlah_tamu} onChange={(e) => setForm(f => ({ ...f, jumlah_tamu: e.target.value }))} className="h-12" /></FieldIcon>
                   <FieldIcon icon={Car} label="Kendaraan"><Input data-testid="pb-kendaraan" placeholder="Mis: B 1234 ABC" value={form.kendaraan} onChange={(e) => setForm(f => ({ ...f, kendaraan: e.target.value }))} className="h-12" /></FieldIcon>
                 </div>
                 <FieldIcon icon={Clock} label="Jam Check-In">
-                  <Input
-                    data-testid="pb-jam"
-                    type="time"
-                    min={tanggal && new Date(tanggal + "T00:00:00").getDay() === 0 ? "12:00" : "08:00"}
-                    max={bookingTipe === "day_use" ? "17:59" : undefined}
-                    value={form.jam_checkin}
-                    onChange={(e) => setForm(f => ({ ...f, jam_checkin: e.target.value }))}
-                    className="h-12"
-                  />
-                  <p className="mt-1.5 text-[11px] text-teal-deep/55">
-                    Check-in mulai jam <b>08:00</b> — jadi <b>12:00</b> bila hari Minggu atau kamar terisi malam sebelumnya.
-                    {bookingTipe === "day_use" && " Day Use paling malam mulai sebelum jam 18:00."}
-                  </p>
+                  <Input data-testid="pb-jam" type="time" value={form.jam_checkin} onChange={(e) => setForm(f => ({ ...f, jam_checkin: e.target.value }))} className="h-12" />
                   {dayuseHints.map((h) => (
                     <div key={h.room_nomor} data-testid={`pb-dayuse-hint-${h.room_nomor}`} className="mt-2 flex items-start gap-2 text-xs text-mustard-deep bg-mustard/10 border border-mustard/30 rounded-md p-2.5">
                       <AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
@@ -550,10 +550,22 @@ function BookingForm() {
                   <div className="flex justify-between"><span className="text-teal-deep/70">Service Fee (3%)</span><b className="text-teal-deep" data-testid="pb-service-fee">{fmtRp(summary.service_fee)}</b></div>
                   <div className="flex justify-between text-base pt-1.5 border-t border-teal-deep/15 mt-1.5"><span className="font-bold text-teal-deep">Total</span><b className="text-mustard-deep" data-testid="pb-total">{fmtRp(summary.total)}</b></div>
                 </div>
-                {/* Pembayaran online — Day Use & Menginap (2026-09-13, keputusan Agus A).
-                    Menginap kini bisa bayar online (DP/lunas via Tripay) sama seperti Day Use;
-                    CTA "Chat Admin WhatsApp" tetap tersedia sebagai alternatif di bawah blok ini. */}
-                <>
+                {bookingTipe === "menginap" ? (
+                  <div className="border-t border-teal-deep/10 pt-3 space-y-3">
+                    <div className="bg-mustard/10 border border-mustard/30 rounded-lg p-3 text-xs text-teal-deep/80">
+                      Untuk booking <b>Menginap</b>, chat admin kami dulu via WhatsApp — kami cek ketersediaan lalu kirimkan link pembayaran. Perkiraan total: <b>{fmtRp(summary.total)}</b>.
+                    </div>
+                    <Button asChild data-testid="pb-menginap-wa" className="w-full h-12 rounded-full bg-teal-deep hover:bg-teal-deep/90 text-cream text-base font-bold">
+                      <a
+                        href={waLink(csWhatsappFor(propertySlug), `Halo, saya ingin booking Menginap.\nKamar: ${selectedRooms.length === 1 ? `${selectedRooms[0].tipe} (Kamar ${selectedRooms[0].nomor})` : `${selectedRooms.length} kamar (${selectedRooms.map(r => r.tipe).join(", ")})`}\nCheck-in: ${tanggal}\nCheck-out: ${checkoutDate}\nJumlah tamu: ${form.jumlah_tamu}${denganSarapan ? "\nDengan sarapan" : ""}\nNama: ${form.nama_tamu || "-"}`)}
+                        target="_blank" rel="noreferrer"
+                      >
+                        Chat Admin via WhatsApp <ArrowRight className="w-4 h-4 ml-2" />
+                      </a>
+                    </Button>
+                  </div>
+                ) : (
+                  <>
                     <div className="border-t border-teal-deep/10 pt-3">
                       <Label className="text-xs font-semibold uppercase tracking-wider text-teal-deep/60">Opsi Pembayaran</Label>
                       <div className="grid grid-cols-2 gap-2 mt-2">
@@ -607,18 +619,6 @@ function BookingForm() {
                       {submitting ? "Memproses..." : "Bayar Sekarang"} <ArrowRight className="w-4 h-4 ml-2" />
                     </Button>
                   </>
-                {bookingTipe === "menginap" && (
-                  <div className="border-t border-teal-deep/10 pt-3 space-y-2">
-                    <p className="text-[11px] text-center text-teal-deep/50">Atau untuk Menginap, kamu juga bisa chat admin dulu (cek ketersediaan + link bayar manual):</p>
-                    <Button asChild data-testid="pb-menginap-wa" variant="outline" className="w-full h-12 rounded-full border-2 border-teal-deep/25 text-teal-deep hover:bg-teal-deep/5 text-base font-bold">
-                      <a
-                        href={waLink(csWhatsappFor(propertySlug), `Halo, saya ingin booking Menginap.\nKamar: ${selectedRooms.length === 1 ? `${selectedRooms[0].tipe} (Kamar ${selectedRooms[0].nomor})` : `${selectedRooms.length} kamar (${selectedRooms.map(r => r.tipe).join(", ")})`}\nCheck-in: ${tanggal}\nCheck-out: ${checkoutDate}\nJumlah tamu: ${form.jumlah_tamu}${denganSarapan ? "\nDengan sarapan" : ""}\nNama: ${form.nama_tamu || "-"}`)}
-                        target="_blank" rel="noreferrer"
-                      >
-                        Chat Admin via WhatsApp <ArrowRight className="w-4 h-4 ml-2" />
-                      </a>
-                    </Button>
-                  </div>
                 )}
                 <p className="text-[10px] text-center text-teal-deep/50">
                   {bookingTipe === "menginap"

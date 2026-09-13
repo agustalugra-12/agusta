@@ -66,10 +66,6 @@ OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
 # ---- Brevo (Pengiriman Voucher Otomatis — email transaksional) ----
 BREVO_API_KEY = os.environ.get("BREVO_API_KEY", "")
 BREVO_FROM_EMAIL = os.environ.get("BREVO_FROM_EMAIL", "")
-# (2026-09-12) Email default internal untuk transaksi Tripay saat tamu tak isi email
-# (booking publik kini pakai Tanggal Lahir, bukti bayar via WhatsApp). Tripay butuh
-# customer_email valid — pakai ini kalau tamu tidak memberi email.
-DEFAULT_INTERNAL_EMAIL = os.environ.get("DEFAULT_INTERNAL_EMAIL", "") or BREVO_FROM_EMAIL or "pelangihomestay9@gmail.com"
 BREVO_FROM_NAME = os.environ.get("BREVO_FROM_NAME", "Pelangi Homestay")
 
 # ---- Telegram Bot (owner: laporan ringkas, staff: kirim pengeluaran foto+teks) ----
@@ -1110,8 +1106,7 @@ class BookingUpdate(BaseModel):
 class PublicBookingCreate(BaseModel):
     nama_tamu: str
     no_hp: str
-    email: str = ""  # (2026-09-12) opsional — bukti bayar via WhatsApp; Tripay pakai email default internal kalau kosong
-    tanggal_lahir: str = ""  # (2026-09-12) ganti field email di form booking publik (YYYY-MM-DD)
+    email: str  # Wajib — untuk kirim bukti pembayaran
     no_identitas: str = ""
     jumlah_tamu: int = 1
     kendaraan: str = ""
