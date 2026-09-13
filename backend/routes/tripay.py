@@ -3,8 +3,17 @@ from core import *
 from email_service import generate_voucher_pdf, send_voucher_email, kirim_voucher_wa, get_property_branding
 from routes.push import send_push
 from routes.telegram_bot import kirim_alert_owner
+from collections import defaultdict
 import hmac
 import httpx
+
+# Lock in-process per idempotency-key (group_id / booking_id) untuk create-transaction:
+# 2 klik "Bayar" cepat mengirim 2 POST dalam window round-trip Tripay (~1.5s) -> tanpa lock
+# keduanya lolos cek "sudah ada pending?" lalu bikin 2 transaksi Tripay ASLI (uang/tagihan
+# dobel). Lock ini men-serialkan-nya: klik kedua nunggu, lalu ketemu pending klik pertama &
+# reuse checkout_url-nya. ponytail: in-process lock, sama batasan room_locks (1 proses saja;
+# multi-worker perlu lock DB) - konsisten dgn keputusan multi-worker=tidak.
+_payment_locks: Dict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
 
 # Tripay pakai vocab status sendiri (uppercase); payment_log.transaction_status
 # dinormalisasi ke gaya Midtrans (lowercase) supaya satu field bisa dipakai lintas
@@ -59,81 +68,103 @@ async def tripay_create_transaction(body: TripayCreateTransactionBody):
     if b.get("status") not in ("booking_pending", "aktif") or b.get("payment_status") == "paid":
         raise HTTPException(400, f"Booking tidak dapat dibayar (status: {b.get('status')}, sudah lunas: {b.get('payment_status') == 'paid'})")
 
-    group_bookings = [b]
-    if b.get("group_id"):
-        group_bookings = await db.bookings.find({"group_id": b["group_id"]}, {"_id": 0}).to_list(20)
+    idem_key = b.get("group_id") or b["id"]
+    log_filter = {"group_id": b["group_id"]} if b.get("group_id") else {"booking_id": b["id"]}
+    async with _payment_locks[idem_key]:
+        # Idempotency: kalau sudah ada transaksi Tripay PENDING utk booking/grup ini dgn
+        # method + payment_option SAMA & belum kedaluwarsa -> reuse checkout_url yg sama
+        # (JANGAN bikin transaksi Tripay baru = cegah tagihan dobel dari double-click/retry).
+        # Ganti method atau opsi (dp50<->full) atau yg lama sudah expired -> lanjut buat baru.
+        existing = await db.payment_log.find_one({
+            **log_filter, "gateway": "tripay", "transaction_status": "pending",
+            "payment_type": body.method, "payment_option": body.payment_option,
+        }, sort=[("created_at", -1)])
+        if existing:
+            etrx = existing.get("tripay_response") or {}
+            if (etrx.get("expired_time") or 0) > int(datetime.now(timezone.utc).timestamp()):
+                return {
+                    "booking_id": b["id"], "group_id": b.get("group_id"), "order_id": existing["order_id"],
+                    "reference": etrx.get("reference"), "checkout_url": etrx.get("checkout_url"),
+                    "qr_url": etrx.get("qr_url"), "pay_code": etrx.get("pay_code"),
+                    "amount": int(existing.get("gross_amount") or 0), "expired_time": etrx.get("expired_time"),
+                    "instructions": etrx.get("instructions"), "reused": True,
+                }
+
+        group_bookings = [b]
+        if b.get("group_id"):
+            group_bookings = await db.bookings.find({"group_id": b["group_id"]}, {"_id": 0}).to_list(20)
+            for gb in group_bookings:
+                if gb.get("status") not in ("booking_pending", "aktif") or gb.get("payment_status") == "paid":
+                    raise HTTPException(400, f"Booking {gb['kode']} dalam grup ini tidak dapat dibayar (status: {gb.get('status')})")
+
+        total_group = sum(int(gb.get("total", 0)) for gb in group_bookings)
+        dp_min_group = sum(int(gb.get("dp_min") or round(int(gb.get("total", 0)) * 0.5)) for gb in group_bookings)
+        if body.payment_option == "dp50":
+            amount = dp_min_group
+        elif body.payment_option == "full":
+            amount = total_group
+        else:
+            raise HTTPException(400, "payment_option harus 'dp50' atau 'full'")
+
+        merchant_ref = f"{b['kode']}-{datetime.now().strftime('%H%M%S')}{uuid.uuid4().hex[:3].upper()}"
+        signature = hmac.new(
+            TRIPAY_PRIVATE_KEY.encode(),
+            f"{TRIPAY_MERCHANT_CODE}{merchant_ref}{amount}".encode(),
+            hashlib.sha256,
+        ).hexdigest()
+        payload = {
+            "method": body.method,
+            "merchant_ref": merchant_ref,
+            "amount": amount,
+            "customer_name": b.get("nama_tamu") or "Tamu",
+            "customer_email": b.get("email") or "tamu@pelangihomestay.com",
+            "customer_phone": b.get("no_hp") or "",
+            "order_items": [{
+                "sku": gb["room_id"], "name": f"Kamar {gb['room_nomor']} ({gb['room_tipe']}) - {gb['kode']}",
+                "price": (round(amount * int(gb.get("total", 0)) / total_group) if total_group else 0), "quantity": 1,
+            } for gb in group_bookings],
+            "return_url": f"{os.environ.get('FRONTEND_URL', '')}/book/sukses/{b['id']}",
+            "expired_time": int(datetime.now(timezone.utc).timestamp()) + 24 * 3600,
+            "signature": signature,
+        }
+        async with httpx.AsyncClient(timeout=15) as http:
+            try:
+                r = await http.post(
+                    f"{TRIPAY_BASE_URL}/transaction/create", json=payload,
+                    headers={"Authorization": f"Bearer {TRIPAY_API_KEY}"},
+                )
+            except httpx.HTTPError as e:
+                raise HTTPException(502, f"Gagal menghubungi Tripay: {e}")
+        resp = r.json()
+        if r.status_code != 200 or not resp.get("success"):
+            raise HTTPException(502, f"Tripay error: {resp.get('message', r.text)}")
+        trx = resp["data"]
+
         for gb in group_bookings:
-            if gb.get("status") not in ("booking_pending", "aktif") or gb.get("payment_status") == "paid":
-                raise HTTPException(400, f"Booking {gb['kode']} dalam grup ini tidak dapat dibayar (status: {gb.get('status')})")
-
-    total_group = sum(int(gb.get("total", 0)) for gb in group_bookings)
-    dp_min_group = sum(int(gb.get("dp_min") or round(int(gb.get("total", 0)) * 0.5)) for gb in group_bookings)
-    if body.payment_option == "dp50":
-        amount = dp_min_group
-    elif body.payment_option == "full":
-        amount = total_group
-    else:
-        raise HTTPException(400, "payment_option harus 'dp50' atau 'full'")
-
-    merchant_ref = f"{b['kode']}-{datetime.now().strftime('%H%M%S')}{uuid.uuid4().hex[:3].upper()}"
-    signature = hmac.new(
-        TRIPAY_PRIVATE_KEY.encode(),
-        f"{TRIPAY_MERCHANT_CODE}{merchant_ref}{amount}".encode(),
-        hashlib.sha256,
-    ).hexdigest()
-    payload = {
-        "method": body.method,
-        "merchant_ref": merchant_ref,
-        "amount": amount,
-        "customer_name": b.get("nama_tamu") or "Tamu",
-        "customer_email": b.get("email") or "tamu@pelangihomestay.com",
-        "customer_phone": b.get("no_hp") or "",
-        "order_items": [{
-            "sku": gb["room_id"], "name": f"Kamar {gb['room_nomor']} ({gb['room_tipe']}) - {gb['kode']}",
-            "price": (round(amount * int(gb.get("total", 0)) / total_group) if total_group else 0), "quantity": 1,
-        } for gb in group_bookings],
-        "return_url": f"{os.environ.get('FRONTEND_URL', '')}/book/sukses/{b['id']}",
-        "expired_time": int(datetime.now(timezone.utc).timestamp()) + 24 * 3600,
-        "signature": signature,
-    }
-    async with httpx.AsyncClient(timeout=15) as http:
-        try:
-            r = await http.post(
-                f"{TRIPAY_BASE_URL}/transaction/create", json=payload,
-                headers={"Authorization": f"Bearer {TRIPAY_API_KEY}"},
-            )
-        except httpx.HTTPError as e:
-            raise HTTPException(502, f"Gagal menghubungi Tripay: {e}")
-    resp = r.json()
-    if r.status_code != 200 or not resp.get("success"):
-        raise HTTPException(502, f"Tripay error: {resp.get('message', r.text)}")
-    trx = resp["data"]
-
-    for gb in group_bookings:
-        gb_amount = round(amount * int(gb.get("total", 0)) / total_group) if total_group else 0
-        await db.bookings.update_one({"id": gb["id"]}, {"$set": {
-            "invoice_id": merchant_ref, "payment_option": body.payment_option,
-            "amount_due": gb_amount, "amount_paid_min": gb_amount,
-            "updated_at": now_iso(),
-        }})
-    await db.payment_log.insert_one({
-        "id": str(uuid.uuid4()), "property_id": b.get("property_id"), "booking_id": b["id"], "booking_kode": b["kode"],
-        "group_id": b.get("group_id"),
-        "order_id": merchant_ref, "gateway": "tripay",
-        "reference": trx.get("reference"), "checkout_url": trx.get("checkout_url"),
-        "gross_amount": str(amount), "payment_option": body.payment_option,
-        "transaction_status": "pending", "status_code": None,
-        "payment_type": body.method, "fraud_status": None,
-        "created_at": now_iso(), "updated_at": now_iso(),
-        "tripay_response": trx,
-    })
-    return {
-        "booking_id": b["id"], "group_id": b.get("group_id"), "order_id": merchant_ref,
-        "reference": trx.get("reference"), "checkout_url": trx.get("checkout_url"),
-        "qr_url": trx.get("qr_url"), "pay_code": trx.get("pay_code"),
-        "amount": amount, "expired_time": trx.get("expired_time"),
-        "instructions": trx.get("instructions"),
-    }
+            gb_amount = round(amount * int(gb.get("total", 0)) / total_group) if total_group else 0
+            await db.bookings.update_one({"id": gb["id"]}, {"$set": {
+                "invoice_id": merchant_ref, "payment_option": body.payment_option,
+                "amount_due": gb_amount, "amount_paid_min": gb_amount,
+                "updated_at": now_iso(),
+            }})
+        await db.payment_log.insert_one({
+            "id": str(uuid.uuid4()), "property_id": b.get("property_id"), "booking_id": b["id"], "booking_kode": b["kode"],
+            "group_id": b.get("group_id"),
+            "order_id": merchant_ref, "gateway": "tripay",
+            "reference": trx.get("reference"), "checkout_url": trx.get("checkout_url"),
+            "gross_amount": str(amount), "payment_option": body.payment_option,
+            "transaction_status": "pending", "status_code": None,
+            "payment_type": body.method, "fraud_status": None,
+            "created_at": now_iso(), "updated_at": now_iso(),
+            "tripay_response": trx,
+        })
+        return {
+            "booking_id": b["id"], "group_id": b.get("group_id"), "order_id": merchant_ref,
+            "reference": trx.get("reference"), "checkout_url": trx.get("checkout_url"),
+            "qr_url": trx.get("qr_url"), "pay_code": trx.get("pay_code"),
+            "amount": amount, "expired_time": trx.get("expired_time"),
+            "instructions": trx.get("instructions"),
+        }
 
 @api.get("/payments/tripay/config")
 async def get_tripay_config(user: dict = Depends(get_current_user)):
