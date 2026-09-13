@@ -279,6 +279,41 @@ async def public_availability(tanggal: str, tipe: Optional[str] = None, checkout
         if not bk:
             out.append({"id": r["id"], "nomor": r["nomor"], "tipe": r["tipe"], "tarif": r["tarif"], "tarif_menginap": r["tarif_menginap"]})
 
+    # (2026-09-13, permintaan Agus) Kamar yang SEDANG dipakai tamu Day Use/walk-in di PMS
+    # tercatat di db.checkins (status "aktif") TANPA selalu punya booking record (walk-in
+    # murni cuma db.checkins + room.status="day_use", lihat checkins.py create_checkin) - jadi
+    # filter booking di atas TIDAK menangkapnya sejak Phase 1 membuang gate status fisik.
+    # Untuk path DATE-ONLY (tamu belum sebut jam), sembunyikan kamar yg punya checkin aktif
+    # yg overlap tanggal diminta - konsisten dgn check_room_available (submit) yg sudah cek
+    # db.checkins. Path jam_checkin TIDAK perlu ini (filter presisi di bawah sudah cek checkin
+    # pada jam diminta; day-use selesai 12:00 tak boleh blokir booking jam 13:00). Setelah
+    # staf checkout (checkin -> "selesai") kamar muncul lagi otomatis. ponytail: cermin logika
+    # checkin-overlap reservation_service.py:127-164 (walk-in murni estimasi +6 jam; kalau
+    # dari booking pakai jam_selesai booking-nya).
+    if not jam_checkin and out:
+        win_mulai = d_start.replace(tzinfo=WITA)
+        win_selesai = d_end.replace(tzinfo=WITA)
+        bebas = []
+        for r in out:
+            ci = await db.checkins.find_one(scoped({"room_id": r["id"], "status": "aktif"}, property_id))
+            terpakai = False
+            if ci and ci.get("jam_checkin"):
+                try:
+                    ci_mulai = datetime.fromisoformat(ci["jam_checkin"])
+                    ci_selesai = None
+                    if ci.get("from_booking_id"):
+                        bk_asal = await db.bookings.find_one(scoped({"id": ci["from_booking_id"], "jam_selesai": {"$ne": None}}, property_id))
+                        if bk_asal and bk_asal.get("jam_selesai"):
+                            ci_selesai = datetime.fromisoformat(bk_asal["jam_selesai"])
+                    if ci_selesai is None:
+                        ci_selesai = ci_mulai + timedelta(hours=6)
+                    terpakai = ci_mulai < win_selesai and win_mulai < ci_selesai
+                except (ValueError, TypeError):
+                    terpakai = False  # data jam rusak - jangan sembunyikan (submit tetap dijaga check_room_available)
+            if not terpakai:
+                bebas.append(r)
+        out = bebas
+
     # Filter presisi jam (2026-08-01 utk Day Use, diperluas 2026-08-02 utk Menginap dgn
     # jam_checkin kustom - lihat catatan jam_checkin di docstring). Pakai check_room_available
     # yang SAMA persis dgn hard validator submit sungguhan - kalau lolos di sini, dijamin

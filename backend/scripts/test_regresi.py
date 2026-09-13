@@ -1873,6 +1873,35 @@ async def skenario_pms_confirm_pembayaran_telat_kamar_diambil_tidak_revive() -> 
     return ("pms_confirm_pembayaran_telat_kamar_diambil_tidak_revive", status)
 
 
+async def skenario_availability_kamar_dayuse_checkin_aktif_tak_muncul() -> tuple:
+    """(2026-09-13, permintaan Agus) Kamar yg SEDANG dipakai Day Use/walk-in di PMS (checkin
+    aktif TANPA booking record) TIDAK boleh muncul di booking engine — dan MUNCUL lagi setelah
+    staf checkout (checkin -> selesai). Regresi kebocoran Phase 1 (gate status fisik dibuang;
+    query availability cuma baca db.bookings, walk-in Day Use cuma di db.checkins)."""
+    from routes.public import public_availability
+    from core import db, now_iso
+    property_id = _property_id_test()
+    rid = await _bikin_kamar_test(db, property_id, "DU1")
+    await db.rooms.update_one({"id": rid}, {"$set": {"status": "day_use"}})
+    today = datetime.now(timezone.utc).astimezone(timezone(timedelta(hours=8))).date().isoformat()
+    ci_id = str(uuid.uuid4())
+    # walk-in Day Use MURNI (tanpa from_booking_id) - checkin barusan, estimasi +6 jam
+    await db.checkins.insert_one({
+        "id": ci_id, "property_id": property_id, "room_id": rid, "room_nomor": "DU1", "room_tipe": "Standard",
+        "nama_tamu": "Walk-in Day Use", "no_hp": _wa_unik(), "status": "aktif",
+        "jam_checkin": datetime.now(timezone.utc).isoformat(), "jam_checkout": None, "created_at": now_iso(),
+    })
+    res_dipakai = await public_availability(tanggal=today, property_id_override=property_id)
+    muncul_saat_dipakai = rid in {x["id"] for x in res_dipakai["rooms"]}
+    # staf checkout -> checkin selesai
+    await db.checkins.update_one({"id": ci_id}, {"$set": {"status": "selesai", "jam_checkout": now_iso()}})
+    res_bebas = await public_availability(tanggal=today, property_id_override=property_id)
+    muncul_setelah_checkout = rid in {x["id"] for x in res_bebas["rooms"]}
+    ok = (not muncul_saat_dipakai) and muncul_setelah_checkout
+    return ("availability_kamar_dayuse_checkin_aktif_tak_muncul",
+            "PASS" if ok else f"FAIL - saat_dipakai_muncul={muncul_saat_dipakai}(harus False), setelah_checkout_muncul={muncul_setelah_checkout}(harus True)")
+
+
 async def main():
     unit_tests = [
         test_tanggal_wita_dini_hari_geser_ke_hari_berikutnya,
@@ -1924,6 +1953,7 @@ async def main():
         skenario_availability_dayuse_presisi_jam_setelah_checkout,
         skenario_pms_confirm_settlement_idempoten_sekali_per_grup,
         skenario_pms_confirm_pembayaran_telat_kamar_diambil_tidak_revive,
+        skenario_availability_kamar_dayuse_checkin_aktif_tak_muncul,
     ]
 
     print("--- Unit test (murni, tanpa DB) ---")
