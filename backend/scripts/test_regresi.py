@@ -1902,6 +1902,38 @@ async def skenario_availability_kamar_dayuse_checkin_aktif_tak_muncul() -> tuple
             "PASS" if ok else f"FAIL - saat_dipakai_muncul={muncul_saat_dipakai}(harus False), setelah_checkout_muncul={muncul_setelah_checkout}(harus True)")
 
 
+async def skenario_walkin_dayuse_mirror_booking_tak_dobel_hitung() -> tuple:
+    """(2026-09-13) Walk-in Day Use kini bikin mirror-booking (checkin_id di-set). Booking
+    ber-checkin_id WAJIB dikecualikan dari pendapatan booking (_hitung_pendapatan_harian filter
+    checkin_id:$exists:False) supaya pendapatan tetap dihitung 1x dari checkin (saat selesai),
+    TIDAK dobel (checkin 200rb + booking 200rb = 400rb kalau bocor)."""
+    from core import db, now_iso
+    from routes.reports import _hitung_pendapatan_harian
+    property_id = _property_id_test()
+    rid = await _bikin_kamar_test(db, property_id, "WB1")
+    now = now_iso()
+    today = datetime.now(timezone.utc).astimezone(timezone(timedelta(hours=8))).date()
+    bk_id = str(uuid.uuid4())
+    ci_id = str(uuid.uuid4())
+    await db.checkins.insert_one({
+        "id": ci_id, "property_id": property_id, "room_id": rid, "room_nomor": "WB1", "room_tipe": "Standard",
+        "nama_tamu": "Walk Rev", "no_hp": _wa_unik(), "status": "selesai", "from_booking_id": bk_id,
+        "jam_checkin": now, "jam_checkout": now, "total": 200000, "subtotal": 200000, "service_fee": 0, "created_at": now,
+    })
+    await db.bookings.insert_one({
+        "id": bk_id, "kode": f"WBK-TEST-{uuid.uuid4().hex[:5].upper()}", "property_id": property_id, "room_id": rid,
+        "room_nomor": "WB1", "room_tipe": "Standard", "tipe": "day_use", "status": "checked_in", "payment_status": "paid",
+        "nama_tamu": "Walk Rev", "no_hp": _wa_unik(), "jam_mulai": now, "jam_selesai": now,
+        "total": 200000, "subtotal": 200000, "service_fee": 0, "amount_due": 200000, "checkin_id": ci_id,
+        "source": "walk_in", "created_at": now,
+    })
+    by_day = await _hitung_pendapatan_harian(today.isoformat(), (today + timedelta(days=1)).isoformat(), property_id)
+    du = sum(v.get("kamar_day_use", 0) for v in by_day.values())
+    ok = du == 200000
+    return ("walkin_dayuse_mirror_booking_tak_dobel_hitung",
+            "PASS" if ok else f"FAIL - kamar_day_use={du} (harus 200000 = 1x dari checkin; 400000 = dobel-hitung bocor)")
+
+
 async def main():
     unit_tests = [
         test_tanggal_wita_dini_hari_geser_ke_hari_berikutnya,
@@ -1954,6 +1986,7 @@ async def main():
         skenario_pms_confirm_settlement_idempoten_sekali_per_grup,
         skenario_pms_confirm_pembayaran_telat_kamar_diambil_tidak_revive,
         skenario_availability_kamar_dayuse_checkin_aktif_tak_muncul,
+        skenario_walkin_dayuse_mirror_booking_tak_dobel_hitung,
     ]
 
     print("--- Unit test (murni, tanpa DB) ---")

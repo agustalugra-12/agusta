@@ -160,7 +160,37 @@ async def create_checkin(body: CheckinCreate, user: dict = Depends(get_current_u
             }
             if group_id:
                 doc["group_id"] = group_id
+            # (2026-09-13, permintaan Agus) Walk-in Day Use juga bikin record `db.bookings`
+            # supaya kamar yg dipakai tercermin di semua fitur berbasis booking (availability
+            # booking engine, dsb) — bukan cuma db.checkins. Ditaut 2 arah PERSIS spt jalur
+            # booking→checkin yg sudah battle-tested (checkin_from_booking): booking.checkin_id
+            # = id checkin ini → membuat booking ini DIKECUALIKAN dari pendapatan booking
+            # (_hitung_pendapatan_harian filter `checkin_id: {$exists: False}`, reports.py) jadi
+            # pendapatan tetap dihitung 1x dari checkin (saat selesai), TIDAK dobel. Checkout
+            # nanti meng-update booking ini lewat `from_booking_id` (checkout endpoint di bawah).
+            booking_id = str(uuid.uuid4())
+            doc["from_booking_id"] = booking_id
             await db.checkins.insert_one(doc)
+            # Mirror-booking BEST-EFFORT (setelah checkin sukses) — check-in adalah sumber
+            # kebenaran walk-in & TIDAK BOLEH gagal gara-gara ini. Kalau gagal, perilaku balik
+            # ke lama (checkin tanpa booking) yg availability preview tetap tangkap via db.checkins.
+            try:
+                await db.bookings.insert_one({
+                    "id": booking_id,
+                    "kode": f"WBK-{datetime.now().strftime('%Y%m%d%H%M%S')}-{uuid.uuid4().hex[:4].upper()}",
+                    "property_id": property_id, "room_id": r["id"], "room_nomor": r["nomor"], "room_tipe": r["tipe"],
+                    "tipe": "day_use", "status": "checked_in", "payment_status": "paid",
+                    "nama_tamu": body.nama_tamu, "no_hp": body.no_hp, "no_identitas": body.no_identitas,
+                    "kendaraan": body.kendaraan, "jumlah_tamu": body.jumlah_tamu,
+                    "jam_mulai": jam_ci_iso, "jam_selesai": (jam_ci_dt + timedelta(hours=6)).isoformat(),
+                    "subtotal": base["subtotal"], "service_fee": base["service_fee"], "total": base["total"],
+                    "amount_due": base["total"], "checkin_id": doc["id"],  # <-- kunci anti-dobel-hitung
+                    "source": "walk_in", "catatan": body.catatan,
+                    "checked_in_at": now_iso(), "created_by": user["nama"], "created_at": now_iso(),
+                    **({"group_id": group_id} if group_id else {}),
+                })
+            except Exception as _e:
+                logging.getLogger("checkins").warning(f"Gagal buat mirror-booking walk-in kamar {r['nomor']}: {_e}")
             await db.rooms.update_one({"id": r["id"]}, {"$set": {"status": "day_use", "info": {"checkin_id": doc["id"], "nama_tamu": body.nama_tamu}}})
             await log_activity(user, "checkin", f"Check-in {body.nama_tamu} ke kamar {r['nomor']}", entity=r["nomor"])
             # Audit log for CHECK_IN (2026-08-23, permintaan Agus - audit trail lengkap).
