@@ -3,6 +3,7 @@ from core import *
 from email_service import generate_voucher_pdf, send_voucher_email, kirim_voucher_wa, get_property_branding
 from routes.push import send_push
 from routes.telegram_bot import kirim_alert_owner
+from reservation_service import check_room_available
 from collections import defaultdict
 import hmac
 import httpx
@@ -124,7 +125,10 @@ async def tripay_create_transaction(body: TripayCreateTransactionBody):
                 "price": (round(amount * int(gb.get("total", 0)) / total_group) if total_group else 0), "quantity": 1,
             } for gb in group_bookings],
             "return_url": f"{os.environ.get('FRONTEND_URL', '')}/book/sukses/{b['id']}",
-            "expired_time": int(datetime.now(timezone.utc).timestamp()) + 24 * 3600,
+            # Window bayar = TTL hold (core.HOLD_TTL_MENIT) — SENGAJA disamakan supaya Tripay
+            # menolak pembayaran setelah kamar dilepas (cegah revive booking di kamar yg sudah
+            # diambil tamu lain). Dulu 24 jam → celah overbooking utk pembayar telat (VA).
+            "expired_time": int(datetime.now(timezone.utc).timestamp()) + HOLD_TTL_MENIT * 60,
             "signature": signature,
         }
         async with httpx.AsyncClient(timeout=15) as http:
@@ -307,6 +311,32 @@ async def tripay_callback(request: Request):
                         f"booking ini sudah payment_status=paid dari transaksi lain, tidak didowngrade."
                     )
                     continue
+                # (Phase 5 completion, 2026-09-13) Pembayaran TELAT: booking ini sudah
+                # cancelled karena hold TTL kadaluarsa & kamar dilepas. Window bayar Tripay
+                # kini = TTL hold, jadi ini semestinya langka — tapi kalau masih terjadi
+                # (mis. race di detik terakhir), JANGAN hidupkan ulang tanpa cek: kamar bisa
+                # sudah diambil tamu lain. Cek ulang; kalau tak bebas, biarkan cancelled &
+                # alert staf utk refund (jangan overbooking + dobel-bayar).
+                if (status == "settlement" and gb.get("status") == "cancelled"
+                        and gb.get("jam_mulai") and gb.get("jam_selesai")):
+                    try:
+                        await check_room_available(gb["room_id"], parse_iso(gb["jam_mulai"], "jam_mulai"),
+                                                   parse_iso(gb["jam_selesai"], "jam_selesai"), gb.get("property_id"))
+                    except HTTPException:
+                        logging.getLogger("tripay").warning(
+                            f"Pembayaran telat order {merchant_ref} booking {gb['kode']}: hold kadaluarsa & "
+                            f"KAMAR SUDAH DIAMBIL tamu lain — TIDAK dihidupkan ulang, perlu refund manual."
+                        )
+                        try:
+                            await kirim_alert_owner(
+                                f"⚠️ Pembayaran telat perlu REFUND\n\n"
+                                f"Booking {gb['kode']} — {gb.get('nama_tamu', '-')}\n"
+                                f"Kamar {gb.get('room_nomor', '-')} sudah kadaluarsa (hold lewat) & keburu "
+                                f"dibooking tamu lain.\nUang masuk Rp {int(total_amount or 0):,} — proses refund ke tamu.".replace(",", ".")
+                            )
+                        except Exception:
+                            pass
+                        continue
                 await db.bookings.update_one({"id": gb["id"]}, {"$set": {
                     "status": new_status, "payment_status": new_payment,
                     "paid_at": now if new_payment == "paid" else gb.get("paid_at"),

@@ -1777,6 +1777,102 @@ async def skenario_pms_confirm_settlement_idempoten_sekali_per_grup() -> tuple:
     return ("pms_confirm_settlement_idempoten_sekali_per_grup", status)
 
 
+async def skenario_pms_confirm_pembayaran_telat_kamar_diambil_tidak_revive() -> tuple:
+    """(Phase 5 completion, 2026-09-13) Guard anti-overbooking: kalau booking online sudah
+    CANCELLED (hold TTL kadaluarsa, kamar dilepas) lalu pembayaran TELAT masuk & kamar
+    KEBURU diambil tamu lain — callback settlement TIDAK boleh menghidupkan ulang booking
+    itu jadi paid (kalau tidak: 2 tamu 1 kamar, dua-duanya bayar). Harus tetap cancelled +
+    tak ada posting + tak ada voucher (alih ke alert refund staf)."""
+    import json as _json, hashlib as _hashlib, hmac as _hmac
+    from core import db, now_iso
+    import routes.tripay as tp
+
+    if not tp.TRIPAY_PRIVATE_KEY:
+        return ("pms_confirm_pembayaran_telat_kamar_diambil_tidak_revive", "PASS")
+
+    property_id = _property_id_test()
+    rid = await _bikin_kamar_test(db, property_id, "PT1")
+    await db.rekening.insert_one({"id": str(uuid.uuid4()), "property_id": property_id, "nama": "Test Op",
+                                  "default_operasional": True, "status": "aktif", "saldo": 0, "created_at": now_iso()})
+    besok = (datetime.now(timezone.utc).astimezone(timezone(timedelta(hours=8))).date() + timedelta(days=1)).isoformat()
+    mulai = f"{besok}T05:00:00+00:00"   # besok 13:00 WITA
+    selesai = f"{besok}T11:00:00+00:00"  # besok 19:00 WITA
+    order_id = f"TEST-PT-{uuid.uuid4().hex[:6].upper()}"
+    kode_a = f"TEST-PT-{uuid.uuid4().hex[:6].upper()}"
+    # Booking A: online, SUDAH cancelled krn hold kadaluarsa (belum bayar)
+    id_a = str(uuid.uuid4())
+    await db.bookings.insert_one({
+        "id": id_a, "kode": kode_a, "property_id": property_id, "room_id": rid, "room_nomor": "PT1",
+        "room_tipe": "Standard", "tipe": "day_use", "status": "cancelled", "payment_status": "pending",
+        "source": "online", "cancelled_by": "system:hold_expired", "nama_tamu": "Telat Bayar", "no_hp": _wa_unik(),
+        "invoice_id": order_id, "jam_mulai": mulai, "jam_selesai": selesai,
+        "subtotal": 200000, "service_fee": 0, "total": 200000, "amount_due": 200000, "created_at": now_iso(),
+    })
+    # Booking B: tamu lain sudah ambil kamar+slot yg sama (aktif/paid) → kamar TAK bebas lagi
+    await db.bookings.insert_one({
+        "id": str(uuid.uuid4()), "kode": f"TEST-PT-B-{uuid.uuid4().hex[:5].upper()}", "property_id": property_id,
+        "room_id": rid, "room_nomor": "PT1", "room_tipe": "Standard", "tipe": "day_use", "status": "booking_paid",
+        "payment_status": "paid", "source": "online", "nama_tamu": "Tamu Lain", "no_hp": _wa_unik(),
+        "jam_mulai": mulai, "jam_selesai": selesai, "total": 200000, "created_at": now_iso(),
+    })
+    await db.payment_log.insert_one({
+        "id": str(uuid.uuid4()), "property_id": property_id, "booking_id": id_a, "order_id": order_id,
+        "gateway": "tripay", "transaction_status": "pending", "payment_type": "BRIVA", "payment_option": "full",
+        "gross_amount": "200000", "created_at": now_iso(),
+    })
+
+    calls = {"voucher": 0, "alert": 0}
+    orig = {k: getattr(tp, k) for k in
+            ("send_voucher_email", "kirim_voucher_wa", "send_push", "kirim_alert_owner", "generate_voucher_pdf", "get_property_branding")}
+
+    async def _cv(*a, **k):
+        calls["voucher"] += 1
+
+    async def _ca(*a, **k):
+        calls["alert"] += 1
+
+    async def _noop_async(*a, **k):
+        pass
+
+    async def _branding(*a, **k):
+        return {}
+
+    tp.send_voucher_email = _cv
+    tp.kirim_voucher_wa = _noop_async
+    tp.send_push = _noop_async
+    tp.kirim_alert_owner = _ca
+    tp.get_property_branding = _branding
+    tp.generate_voucher_pdf = lambda *a, **k: b"PDF"
+
+    class _FakeReq:
+        def __init__(self, raw, sig):
+            self._raw = raw
+            self.headers = {"X-Callback-Signature": sig, "X-Callback-Event": "payment_status"}
+        async def body(self):
+            return self._raw
+        async def json(self):
+            return _json.loads(self._raw)
+
+    payload = {"merchant_ref": order_id, "reference": "T-REF", "status": "PAID", "total_amount": 200000, "payment_method": "BRIVA"}
+    raw = _json.dumps(payload).encode()
+    sig = _hmac.new(tp.TRIPAY_PRIVATE_KEY.encode(), raw, _hashlib.sha256).hexdigest()
+
+    try:
+        await tp.tripay_callback(_FakeReq(raw, sig))
+        a = await db.bookings.find_one({"id": id_a}, {"_id": 0, "status": 1, "payment_status": 1})
+        posting = await db.rekening_transaksi.count_documents({"property_id": property_id, "jenis": "pemasukan"})
+        ok = (a["status"] == "cancelled" and a["payment_status"] != "paid" and posting == 0
+              and calls["voucher"] == 0 and calls["alert"] >= 1)
+        status = ("PASS" if ok else
+                  f"FAIL - A.status={a['status']}(harus cancelled), A.payment={a['payment_status']}(bukan paid), "
+                  f"posting={posting}(harus 0), voucher={calls['voucher']}(harus 0), alert_refund={calls['alert']}(harus >=1)")
+    finally:
+        for k, v in orig.items():
+            setattr(tp, k, v)
+        await db.audit_log.delete_many({"detail": {"$regex": kode_a}})
+    return ("pms_confirm_pembayaran_telat_kamar_diambil_tidak_revive", status)
+
+
 async def main():
     unit_tests = [
         test_tanggal_wita_dini_hari_geser_ke_hari_berikutnya,
@@ -1827,6 +1923,7 @@ async def main():
         skenario_availability_tanggal_depan_abaikan_status_fisik,
         skenario_availability_dayuse_presisi_jam_setelah_checkout,
         skenario_pms_confirm_settlement_idempoten_sekali_per_grup,
+        skenario_pms_confirm_pembayaran_telat_kamar_diambil_tidak_revive,
     ]
 
     print("--- Unit test (murni, tanpa DB) ---")

@@ -95,6 +95,11 @@ def hitung_service_fee(subtotal: int, pungut: bool) -> int:
 EXTRA_BED_PRICE = 50000  # per extra bed, flat (PRD: "Extra Bed Rp 50.000 berlaku untuk kedua jenis layanan")
 EXTRA_BED_MAX = 2  # maksimal per kamar (sama seperti ExtraBedSelector di frontend)
 BREAKFAST_PRICE = 25000  # per malam, opsional, hanya berlaku untuk tipe menginap
+# (Booking Engine Traveloka-style, Phase 5, keputusan Agus 2026-09-13) Berapa menit kamar
+# di-HOLD utk booking online yang belum bayar. HARUS = window bayar Tripay (expired_time di
+# routes/tripay.py) supaya tak ada celah "hold lepas tapi Tripay masih terima bayar" yang
+# bisa bikin booking cancelled dihidupkan ulang di kamar yg sudah diambil orang lain.
+HOLD_TTL_MENIT = 45
 # `rooms.tarif` = harga Day Use (flat per sesi 6 jam) — Standard 120rb/Cottage 140rb.
 # `rooms.tarif_menginap` = harga Menginap per malam TANPA sarapan — Standard 150rb/Cottage 200rb,
 # +BREAKFAST_PRICE kalau dengan_sarapan (jadi 175rb/225rb). Dua tarif dasar terpisah sejak 2026-07-12

@@ -431,7 +431,7 @@ async def public_create_booking(body: PublicBookingCreate, properti: Optional[st
                 "tipe": body.tipe,
                 "dengan_sarapan": dengan_sarapan_efektif,
             }
-            booking = await create_reservation(data, property_id, source="online", harga_override=harga_override, hold_menit=15)
+            booking = await create_reservation(data, property_id, source="online", harga_override=harga_override, hold_menit=HOLD_TTL_MENIT)
             if group_id:
                 await db.bookings.update_one({"id": booking["id"]}, {"$set": {"group_id": group_id}})
                 booking["group_id"] = group_id
