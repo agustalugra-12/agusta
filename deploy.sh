@@ -61,6 +61,13 @@ echo "==> Reload Nginx..."
 
 systemctl reload nginx
 
+# (2026-09-14) Catat SHA yang BERHASIL ter-deploy (dipakai jaring-pengaman
+# deploy_safety_net.sh utk deteksi commit yg belum ter-deploy kalau GitHub gagal memicu
+# workflow). Ditulis di AKHIR (setelah semua sukses; set -e sudah menjamin kita hanya
+# sampai sini kalau build+restart+reload tidak ada yang gagal). cd frontend di atas tidak
+# di-cd balik, jadi pakai path absolut.
+git -C /root/agusta rev-parse HEAD > /root/agusta/.last_deployed_sha
+
 echo ""
 echo "======================================"
 echo "Deploy Berhasil"
