@@ -4,6 +4,14 @@ on:
   push:
     branches: [ main ]
 
+# (2026-09-14) Serialkan deploy: push beruntun tidak lagi menjalankan beberapa deploy.sh
+# bersamaan di VPS (dulu bisa bikin rm-rf frontend bertabrakan dgn copy/build run lain).
+# cancel-in-progress: false = ANTRE (jangan batalkan deploy yang sedang jalan di tengah
+# jalan - berbahaya utk deploy stateful; biarkan selesai lalu jalankan berikutnya).
+concurrency:
+  group: deploy-vps
+  cancel-in-progress: false
+
 jobs:
   deploy:
     runs-on: ubuntu-latest

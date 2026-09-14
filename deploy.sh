@@ -10,6 +10,17 @@
 # aman dipasang global tanpa mengubah perilaku command yang lain.
 set -e
 
+# (2026-09-14) Kunci GLOBAL anti-tumpang-tindih: cuma boleh 1 deploy jalan pada satu waktu,
+# dari sumber MANA PUN (GH Actions maupun deploy.sh manual). Tanpa ini, Actions yang lambat +
+# deploy manual bisa jalan bersamaan → `rm -rf /var/www/pmspelangi/*` di satu proses menabrak
+# `cp build/*` proses lain = frontend rusak/parsial. flock non-blocking: kalau deploy lain
+# sedang pegang kunci, keluar bersih (deploy itu sudah/akan memakai kode terbaru via git pull).
+exec 9>/var/lock/pms-deploy.lock
+if ! flock -n 9; then
+  echo "Deploy lain sedang berjalan — dilewati (deploy yang aktif akan memakai kode terbaru)."
+  exit 0
+fi
+
 echo "======================================"
 echo "   Pelangi PMS Auto Deploy"
 echo "======================================"
