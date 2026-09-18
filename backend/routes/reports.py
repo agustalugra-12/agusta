@@ -667,12 +667,11 @@ async def report_kas_metode_bayar(from_date: str = Query(...), to_date: str = Qu
     payment_type payment_log). Ditambahkan sbg sumber KELIMA."""
     start, end = wita_date_range_to_utc(from_date, to_date)
     totals = {"tunai": 0, "qris": 0, "transfer": 0}
-    METODE_MAP = {"cash": "tunai", "qris": "qris", "transfer_manual": "transfer"}
     ks, ci, bk_cash, logs_manual, svc = await asyncio.gather(
         db.kasir.find(scoped({"timestamp": {"$gte": start, "$lte": end}}, property_id), {"_id": 0, "pembayaran": 1}).to_list(5000),
         db.checkins.find(
             scoped({"status": "selesai", "jam_checkout": {"$gte": start, "$lte": end}}, property_id),
-            {"_id": 0, "pembayaran": 1},
+            {"_id": 0, "pembayaran": 1, "from_booking_id": 1},
         ).to_list(5000),
         db.bookings.find(scoped({
             "pembayaran": {"$exists": True, "$ne": []},
@@ -684,23 +683,67 @@ async def report_kas_metode_bayar(from_date: str = Query(...), to_date: str = Qu
             "gateway": {"$ne": "tripay"},
             "transaction_status": {"$in": ["settlement", "capture"]},
             "updated_at": {"$gte": start, "$lte": end},
-        }, property_id), {"_id": 0, "gross_amount": 1, "payment_type": 1}).to_list(5000),
+        }, property_id), {"_id": 0, "gross_amount": 1, "payment_type": 1, "booking_id": 1}).to_list(5000),
         db.services.find(scoped({"tanggal": {"$gte": start, "$lte": end}}, property_id),
                           {"_id": 0, "nominal": 1, "metode_pembayaran": 1}).to_list(5000),
     )
-    for row in ks + ci + bk_cash:
-        for p in row.get("pembayaran") or []:
-            m = p.get("metode")
-            if m in totals:
-                totals[m] += int(p.get("jumlah") or 0)
+    # (2026-09-14, audit kas Agus 11 Sept) Normalisasi label metode: data lapangan tidak
+    # konsisten ("QRIS" huruf besar, "transfer_manual", "cash"). SEBELUMNYA `if m in totals`
+    # (cocok PERSIS "tunai"/"qris"/"transfer" huruf kecil) MENJATUHKAN label yang beda diam-diam
+    # → bucket QRIS & Transfer under-count (uang masuk hilang dari laporan). Satukan lewat _norm:
+    # lowercase + samakan varian (cash→tunai, transfer_manual→transfer, apa pun mengandung
+    # "qris"/"transfer"). Bucket tunai tak berubah utk data yang sudah benar "tunai".
+    def _norm(m):
+        m = (m or "").strip().lower()
+        if m in ("tunai", "cash"):
+            return "tunai"
+        if "qris" in m:
+            return "qris"
+        if "transfer" in m:
+            return "transfer"
+        return None
+    # (2026-09-18, audit kas Agus) DEDUP: satu pembayaran bisa tercatat di DUA tempat —
+    # `checkins.pembayaran` DAN `payment_log` — untuk stay yang berasal dari booking (pelunasan
+    # manual/collect_balance nulis ke payment_log, tapi jg tersalin ke checkin). Dulu tertutup
+    # bug label (sisi checkin dijatuhkan); setelah label difix, tanpa dedup jadi dobel-hitung
+    # (kasus nyata Dipayana 11 Sept, transfer 103rb kehitung 2x). Aturan: payment_log adalah
+    # sumber untuk pembayaran manual booking; kalau pembayaran checkin (yg punya from_booking_id)
+    # nominal+metode-nya SAMA dengan entri payment_log booking itu → LEWATI sisi checkin (biar
+    # dihitung sekali via payment_log). Multiset dikonsumsi supaya nominal kembar tetap akurat.
+    pl_multiset = {}
     for log in logs_manual:
-        m = METODE_MAP.get(log.get("payment_type"))
-        if m in totals:
-            totals[m] += int(float(log.get("gross_amount") or 0))
+        k = _norm(log.get("payment_type"))
+        bid = log.get("booking_id")
+        if k and bid:
+            key = (bid, k, int(float(log.get("gross_amount") or 0)))
+            pl_multiset[key] = pl_multiset.get(key, 0) + 1
+    # kasir + booking walk-in: tak pernah overlap payment_log booking, hitung langsung
+    for row in ks + bk_cash:
+        for p in row.get("pembayaran") or []:
+            k = _norm(p.get("metode"))
+            if k:
+                totals[k] += int(p.get("jumlah") or 0)
+    # checkins: dedup thd payment_log kalau checkin dari booking
+    for c in ci:
+        fbid = c.get("from_booking_id")
+        for p in c.get("pembayaran") or []:
+            k = _norm(p.get("metode"))
+            if not k:
+                continue
+            amt = int(p.get("jumlah") or 0)
+            key = (fbid, k, amt)
+            if fbid and pl_multiset.get(key, 0) > 0:
+                pl_multiset[key] -= 1  # duplikat payment_log — jangan hitung 2x
+                continue
+            totals[k] += amt
+    for log in logs_manual:
+        k = _norm(log.get("payment_type"))
+        if k:
+            totals[k] += int(float(log.get("gross_amount") or 0))
     for s in svc:
-        m = s.get("metode_pembayaran")
-        if m in totals:
-            totals[m] += int(s.get("nominal") or 0)
+        k = _norm(s.get("metode_pembayaran"))
+        if k:
+            totals[k] += int(s.get("nominal") or 0)
     return {**totals, "total": sum(totals.values())}
 
 

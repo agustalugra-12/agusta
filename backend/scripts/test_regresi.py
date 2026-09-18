@@ -1934,6 +1934,69 @@ async def skenario_walkin_dayuse_mirror_booking_tak_dobel_hitung() -> tuple:
             "PASS" if ok else f"FAIL - kamar_day_use={du} (harus 200000 = 1x dari checkin; 400000 = dobel-hitung bocor)")
 
 
+async def skenario_kas_metode_bayar_label_tak_konsisten_tetap_terhitung() -> tuple:
+    """(2026-09-14, audit kas Agus 11 Sept) Kas per Metode Bayar dulu cocokkan label PERSIS
+    ("qris"/"transfer" huruf kecil) → label lapangan yg beda ("QRIS" huruf besar,
+    "transfer_manual") DIJATUHKAN diam-diam = bucket QRIS/Transfer under-count. Setelah fix
+    (_norm case-insensitive+varian) semua harus masuk bucket yang benar."""
+    from routes.reports import report_kas_metode_bayar
+    from core import db, now_iso
+    property_id = _property_id_test()
+    rid = await _bikin_kamar_test(db, property_id, "KM1")
+    today = datetime.now(timezone.utc).astimezone(timezone(timedelta(hours=8))).date().isoformat()
+    now = now_iso()
+    await db.checkins.insert_one({
+        "id": str(uuid.uuid4()), "property_id": property_id, "room_id": rid, "room_nomor": "KM1",
+        "room_tipe": "Standard", "nama_tamu": "Kas Label", "no_hp": _wa_unik(), "status": "selesai",
+        "jam_checkin": now, "jam_checkout": now,
+        "pembayaran": [{"metode": "QRIS", "jumlah": 100000}, {"metode": "tunai", "jumlah": 50000}], "created_at": now,
+    })
+    await db.kasir.insert_one({
+        "id": str(uuid.uuid4()), "property_id": property_id, "timestamp": now, "total": 70000,
+        "pembayaran": [{"metode": "transfer_manual", "jumlah": 70000}], "items": [], "created_at": now,
+    })
+    owner = {"id": "test", "nama": "Test"}
+    res = await report_kas_metode_bayar(from_date=today, to_date=today, user=owner, property_id=property_id)
+    ok = res["qris"] == 100000 and res["tunai"] == 50000 and res["transfer"] == 70000
+    return ("kas_metode_bayar_label_tak_konsisten_tetap_terhitung",
+            "PASS" if ok else f"FAIL - qris={res['qris']}(harus 100000), tunai={res['tunai']}(harus 50000), transfer={res['transfer']}(harus 70000)")
+
+
+async def skenario_kas_metode_bayar_dedup_checkin_paymentlog() -> tuple:
+    """(2026-09-18) Pembayaran manual stay-dari-booking bisa tercatat di checkins.pembayaran DAN
+    payment_log (kasus Dipayana). Setelah normalisasi label, tanpa dedup akan dobel-hitung.
+    Harus dihitung SEKALI. Sekaligus pastikan walk-in murni (tanpa from_booking_id) tetap
+    terhitung penuh dari checkin."""
+    from routes.reports import report_kas_metode_bayar
+    from core import db, now_iso
+    property_id = _property_id_test()
+    r1 = await _bikin_kamar_test(db, property_id, "DD1")
+    r2 = await _bikin_kamar_test(db, property_id, "DD2")
+    today = datetime.now(timezone.utc).astimezone(timezone(timedelta(hours=8))).date().isoformat()
+    now = now_iso()
+    bid = str(uuid.uuid4())
+    # checkin DARI booking + pembayaran transfer 103rb (tersalin), payment_log booking sama 103rb
+    await db.checkins.insert_one({
+        "id": str(uuid.uuid4()), "property_id": property_id, "room_id": r1, "room_nomor": "DD1", "room_tipe": "Standard",
+        "nama_tamu": "Dedup Uji", "no_hp": _wa_unik(), "status": "selesai", "from_booking_id": bid,
+        "jam_checkin": now, "jam_checkout": now, "pembayaran": [{"metode": "transfer_manual", "jumlah": 103000}], "created_at": now,
+    })
+    await db.payment_log.insert_one({
+        "id": str(uuid.uuid4()), "property_id": property_id, "booking_id": bid, "gateway": None,
+        "transaction_status": "settlement", "payment_type": "transfer_manual", "gross_amount": "103000", "updated_at": now, "created_at": now,
+    })
+    # walk-in MURNI (tanpa from_booking_id) tunai 50rb -> harus tetap terhitung penuh
+    await db.checkins.insert_one({
+        "id": str(uuid.uuid4()), "property_id": property_id, "room_id": r2, "room_nomor": "DD2", "room_tipe": "Standard",
+        "nama_tamu": "Walkin Uji", "no_hp": _wa_unik(), "status": "selesai",
+        "jam_checkin": now, "jam_checkout": now, "pembayaran": [{"metode": "tunai", "jumlah": 50000}], "created_at": now,
+    })
+    res = await report_kas_metode_bayar(from_date=today, to_date=today, user={"id": "t", "nama": "t"}, property_id=property_id)
+    ok = res["transfer"] == 103000 and res["tunai"] == 50000
+    return ("kas_metode_bayar_dedup_checkin_paymentlog",
+            "PASS" if ok else f"FAIL - transfer={res['transfer']}(harus 103000 SEKALI, bukan 206000 dobel), tunai={res['tunai']}(harus 50000)")
+
+
 async def main():
     unit_tests = [
         test_tanggal_wita_dini_hari_geser_ke_hari_berikutnya,
@@ -1987,6 +2050,8 @@ async def main():
         skenario_pms_confirm_pembayaran_telat_kamar_diambil_tidak_revive,
         skenario_availability_kamar_dayuse_checkin_aktif_tak_muncul,
         skenario_walkin_dayuse_mirror_booking_tak_dobel_hitung,
+        skenario_kas_metode_bayar_label_tak_konsisten_tetap_terhitung,
+        skenario_kas_metode_bayar_dedup_checkin_paymentlog,
     ]
 
     print("--- Unit test (murni, tanpa DB) ---")
