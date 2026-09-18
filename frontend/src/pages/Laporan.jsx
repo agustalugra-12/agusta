@@ -314,7 +314,8 @@ function LaporanKamar({ from, to }) {
     if (!kor || !kor.dari || !kor.ke) return;
     setKor(k => ({ ...k, saving: true }));
     try {
-      await api.post(`/checkins/${kor.id}/koreksi-metode`, { dari_metode: kor.dari, ke_metode: kor.ke });
+      // checkin (CI-) -> /checkins; menginap/booking (BKO-/WBK-) -> /bookings
+      await api.post(`/${kor.path}/${kor.id}/koreksi-metode`, { dari_metode: kor.dari, ke_metode: kor.ke });
       toast.success(`Metode dikoreksi: ${kor.dari} → ${kor.ke}`);
       setKor(null);
       await load();
@@ -323,6 +324,8 @@ function LaporanKamar({ from, to }) {
       setKor(k => ({ ...k, saving: false }));
     }
   };
+  const bisaKoreksi = (trx) => { const t = String(trx || ""); return t.startsWith("CI-") || t.startsWith("BKO-") || t.startsWith("WBK-"); };
+  const pathKoreksi = (trx) => String(trx || "").startsWith("CI-") ? "checkins" : "bookings";
   const s = data.summary || {};
   const exp = () => downloadCsv(`Laporan_Kamar_${from}_${to}.csv`,
     ["No Transaksi", "Tanggal Check-In", "Tanggal Check-Out", "Nama Tamu", "Kamar", "Tipe", "Tarif Dasar", "Overtime", "Total", "Detail Pembayaran", "Petugas"],
@@ -370,7 +373,7 @@ function LaporanKamar({ from, to }) {
                 </td>
                 <td className="p-3 text-xs">{c.petugas_checkout || c.petugas_checkin}</td>
                 <td className="p-3 text-xs">
-                  {String(c.trx_no || "").startsWith("CI-") && (
+                  {bisaKoreksi(c.trx_no) && (
                     kor?.id === c.id ? (
                       <div className="flex items-center gap-1">
                         <select className="border rounded px-1 py-0.5 text-xs" value={kor.dari} onChange={e => setKor(k => ({ ...k, dari: e.target.value }))}>
@@ -386,7 +389,7 @@ function LaporanKamar({ from, to }) {
                     ) : (
                       <button
                         className="text-blue-600 hover:underline"
-                        onClick={() => setKor({ id: c.id, dari: [...new Set((c.detail_pembayaran || []).map(d => d.metode).filter(Boolean))][0] || "", ke: "tunai", saving: false })}
+                        onClick={() => setKor({ id: c.id, path: pathKoreksi(c.trx_no), dari: [...new Set((c.detail_pembayaran || []).map(d => d.metode).filter(Boolean))][0] || "", ke: "tunai", saving: false })}
                       >Koreksi metode</button>
                     )
                   )}
@@ -403,7 +406,22 @@ function LaporanKamar({ from, to }) {
 
 function LaporanKasir({ from, to }) {
   const [data, setData] = useState({ summary: {}, items: [] });
-  useEffect(() => { api.get("/reports/kasir-detail", { params: { from_date: from, to_date: to } }).then(r => setData(r.data)); }, [from, to]);
+  const load = () => api.get("/reports/kasir-detail", { params: { from_date: from, to_date: to } }).then(r => setData(r.data));
+  useEffect(() => { load(); }, [from, to]); // eslint-disable-line react-hooks/exhaustive-deps
+  const [kor, setKor] = useState(null); // {id, dari, ke, saving} koreksi metode transaksi kasir (owner-only)
+  const submitKor = async () => {
+    if (!kor || !kor.dari || !kor.ke) return;
+    setKor(k => ({ ...k, saving: true }));
+    try {
+      await api.post(`/kasir/${kor.id}/koreksi-metode`, { dari_metode: kor.dari, ke_metode: kor.ke });
+      toast.success(`Metode dikoreksi: ${kor.dari} → ${kor.ke}`);
+      setKor(null);
+      await load();
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Gagal koreksi metode (khusus owner)");
+      setKor(k => ({ ...k, saving: false }));
+    }
+  };
   const s = data.summary || {};
   const exp = () => {
     const rows = [];
@@ -426,7 +444,7 @@ function LaporanKasir({ from, to }) {
       <Card className="border-slate-200"><CardContent className="p-0 overflow-x-auto">
         <table className="w-full text-sm">
           <thead className="bg-slate-50 text-slate-600 text-xs uppercase"><tr>
-            {["No Trx", "Tanggal", "Item", "Kat", "Qty", "Harga", "Subtotal", "Petugas"].map(h => <th key={h} className="text-left p-3">{h}</th>)}
+            {["No Trx", "Tanggal", "Item", "Kat", "Qty", "Harga", "Subtotal", "Petugas", "Aksi"].map(h => <th key={h} className="text-left p-3">{h}</th>)}
           </tr></thead>
           <tbody>
             {(data.items || []).flatMap(t => (t.items || []).map((it, idx) => (
@@ -439,9 +457,30 @@ function LaporanKasir({ from, to }) {
                 <td className="p-3">{fmtRp(it.harga)}</td>
                 <td className="p-3 font-semibold">{fmtRp(it.subtotal)}</td>
                 <td className="p-3 text-xs">{t.petugas}</td>
+                <td className="p-3 text-xs">
+                  {idx === 0 && (t.pembayaran || []).length > 0 && (
+                    kor?.id === t.id ? (
+                      <div className="flex items-center gap-1">
+                        <select className="border rounded px-1 py-0.5 text-xs" value={kor.dari} onChange={e => setKor(k => ({ ...k, dari: e.target.value }))}>
+                          {[...new Set((t.pembayaran || []).map(p => p.metode).filter(Boolean))].map(m => <option key={m} value={m}>{m}</option>)}
+                        </select>
+                        <span>→</span>
+                        <select className="border rounded px-1 py-0.5 text-xs" value={kor.ke} onChange={e => setKor(k => ({ ...k, ke: e.target.value }))}>
+                          {["tunai", "qris", "transfer"].map(m => <option key={m} value={m}>{m}</option>)}
+                        </select>
+                        <button className="text-emerald-700 font-semibold disabled:opacity-50" disabled={kor.saving} onClick={submitKor}>{kor.saving ? "…" : "Simpan"}</button>
+                        <button className="text-slate-400" disabled={kor.saving} onClick={() => setKor(null)}>Batal</button>
+                      </div>
+                    ) : (
+                      <button className="text-blue-600 hover:underline"
+                        onClick={() => setKor({ id: t.id, dari: [...new Set((t.pembayaran || []).map(p => p.metode).filter(Boolean))][0] || "", ke: "tunai", saving: false })}
+                      >Koreksi metode <span className="text-slate-400">({[...new Set((t.pembayaran || []).map(p => p.metode).filter(Boolean))].join(",") || "-"})</span></button>
+                    )
+                  )}
+                </td>
               </tr>
             )))}
-            {(data.items || []).length === 0 && <tr><td colSpan={8} className="p-6 text-center text-slate-500">Tidak ada transaksi</td></tr>}
+            {(data.items || []).length === 0 && <tr><td colSpan={9} className="p-6 text-center text-slate-500">Tidak ada transaksi</td></tr>}
           </tbody>
         </table>
       </CardContent></Card>

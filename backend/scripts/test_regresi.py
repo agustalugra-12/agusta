@@ -2030,6 +2030,42 @@ async def skenario_koreksi_metode_checkin_owner() -> tuple:
     return ("koreksi_metode_checkin_owner", status)
 
 
+async def skenario_koreksi_metode_kasir_dan_booking() -> tuple:
+    """(2026-09-18) Fitur koreksi metode diperluas ke transaksi KASIR & BOOKING (menginap
+    walk-in). Owner-only, nominal tetap, laporan Kas per Metode Bayar ikut pindah bucket."""
+    from routes.checkins import koreksi_metode_kasir, koreksi_metode_booking, KoreksiMetodeBody
+    from routes.reports import report_kas_metode_bayar
+    from core import db, now_iso
+    property_id = _property_id_test()
+    now = now_iso()
+    today = datetime.now(timezone.utc).astimezone(timezone(timedelta(hours=8))).date().isoformat()
+    owner = {"id": "t", "username": "owner", "nama": "Owner"}
+    kid = str(uuid.uuid4()); bid = str(uuid.uuid4())
+    await db.kasir.insert_one({
+        "id": kid, "property_id": property_id, "trx_no": "CI-KAS-TEST", "timestamp": now, "total": 60000,
+        "pembayaran": [{"metode": "QRIS", "jumlah": 60000}], "items": [], "created_at": now,
+    })
+    await db.bookings.insert_one({
+        "id": bid, "kode": "WBK-KOR-TEST", "property_id": property_id, "room_id": str(uuid.uuid4()), "room_nomor": "B1",
+        "room_tipe": "Standard", "tipe": "menginap", "status": "checked_out", "nama_tamu": "Menginap Uji", "no_hp": _wa_unik(),
+        "pembayaran": [{"metode": "transfer_manual", "jumlah": 80000}], "total": 80000, "created_at": now,
+    })
+    try:
+        await koreksi_metode_kasir(kid, KoreksiMetodeBody(dari_metode="qris", ke_metode="tunai"), user=owner, property_id=property_id)
+        await koreksi_metode_booking(bid, KoreksiMetodeBody(dari_metode="transfer", ke_metode="tunai"), user=owner, property_id=property_id)
+        k = await db.kasir.find_one({"id": kid}, {"_id": 0, "pembayaran": 1})
+        b = await db.bookings.find_one({"id": bid}, {"_id": 0, "pembayaran": 1})
+        rep = await report_kas_metode_bayar(from_date=today, to_date=today, user=owner, property_id=property_id)
+        ok = (k["pembayaran"][0]["metode"] == "tunai" and b["pembayaran"][0]["metode"] == "tunai"
+              and rep["tunai"] == 140000 and rep["qris"] == 0 and rep["transfer"] == 0)
+        status = ("PASS" if ok else
+                  f"FAIL - kasir.metode={k['pembayaran'][0]['metode']} booking.metode={b['pembayaran'][0]['metode']} "
+                  f"lap.tunai={rep['tunai']}(harus 140000) qris={rep['qris']} transfer={rep['transfer']}")
+    finally:
+        await db.audit_log.delete_many({"detail": {"$regex": "CI-KAS-TEST|WBK-KOR-TEST"}})
+    return ("koreksi_metode_kasir_dan_booking", status)
+
+
 async def main():
     unit_tests = [
         test_tanggal_wita_dini_hari_geser_ke_hari_berikutnya,
@@ -2086,6 +2122,7 @@ async def main():
         skenario_kas_metode_bayar_label_tak_konsisten_tetap_terhitung,
         skenario_kas_metode_bayar_dedup_checkin_paymentlog,
         skenario_koreksi_metode_checkin_owner,
+        skenario_koreksi_metode_kasir_dan_booking,
     ]
 
     print("--- Unit test (murni, tanpa DB) ---")

@@ -312,26 +312,18 @@ def _kanon_metode(m: str):
     return None
 
 
-@api.post("/checkins/{checkin_id}/koreksi-metode")
-async def koreksi_metode_checkin(checkin_id: str, body: KoreksiMetodeBody,
-                                 user: dict = Depends(require_owner),
-                                 property_id: str = Depends(get_active_property)):
-    """(2026-09-18, permintaan Agus - audit kas) Koreksi metode pembayaran check-in yg SUDAH
-    tercatat — OWNER ONLY. Staf kadang salah pilih metode saat input (mis. tamu bayar TUNAI tapi
-    tercatat QRIS) → bucket di Laporan Kas per Metode Bayar meleset dari uang laci fisik. Endpoint
-    ini mengubah SEMUA entri pembayaran checkin yg metode-nya = `dari_metode` menjadi `ke_metode`
-    (dinormalisasi ke tunai/qris/transfer). NOMINAL TIDAK diubah. Dicatat ke audit_log (siapa,
-    dari→ke, berapa) supaya jejak koreksi jelas & bisa ditelusuri."""
-    ke = _kanon_metode(body.ke_metode)
-    dari = _kanon_metode(body.dari_metode)
+async def _terapkan_koreksi_metode(coll, doc, dari_metode, ke_metode, user, property_id, kode, entity):
+    """(2026-09-18, permintaan Agus - audit kas) Inti koreksi metode pembayaran transaksi yg
+    SUDAH tercatat — OWNER ONLY (dipakai checkin/kasir/booking). Ubah SEMUA entri pembayaran
+    yg metode-nya = `dari_metode` menjadi `ke_metode` (dinormalisasi tunai/qris/transfer). NOMINAL
+    TIDAK diubah. Dicatat ke audit_log (siapa, dari→ke, berapa)."""
+    ke = _kanon_metode(ke_metode)
+    dari = _kanon_metode(dari_metode)
     if ke is None:
         raise HTTPException(400, "ke_metode harus tunai/qris/transfer")
     if dari is None:
         raise HTTPException(400, "dari_metode tidak dikenali")
-    c = await db.checkins.find_one(scoped({"id": checkin_id}, property_id))
-    if not c:
-        raise HTTPException(404, "Check-in tidak ditemukan")
-    pembayaran = c.get("pembayaran") or []
+    pembayaran = doc.get("pembayaran") or []
     ubah = 0
     nominal = 0
     for p in pembayaran:
@@ -341,15 +333,53 @@ async def koreksi_metode_checkin(checkin_id: str, body: KoreksiMetodeBody,
             nominal += int(p.get("jumlah") or 0)
     if ubah == 0:
         raise HTTPException(400, f"Tidak ada pembayaran bermetode {dari} di transaksi ini")
-    await db.checkins.update_one({"id": checkin_id}, {"$set": {"pembayaran": pembayaran, "updated_at": now_iso()}})
+    await coll.update_one({"id": doc["id"]}, {"$set": {"pembayaran": pembayaran, "updated_at": now_iso()}})
     await db.audit_log.insert_one({
         "id": str(uuid.uuid4()), "user_id": user.get("id"), "username": user.get("username"),
-        "action": "KOREKSI_METODE_PEMBAYARAN", "entity": c.get("room_nomor", ""),
-        "detail": f"Koreksi metode {c.get('trx_no')} kamar {c.get('room_nomor')}: {dari} → {ke} (Rp{nominal:,}, {ubah} entri)",
+        "action": "KOREKSI_METODE_PEMBAYARAN", "entity": entity or "",
+        "detail": f"Koreksi metode {kode}: {dari} → {ke} (Rp{nominal:,}, {ubah} entri)",
         "property_id": property_id, "timestamp": now_iso(),
     })
-    await log_activity(user, "koreksi_metode", f"Koreksi metode {c.get('trx_no')}: {dari}→{ke} Rp{nominal:,}", entity=c.get("room_nomor", ""))
-    return await db.checkins.find_one(scoped({"id": checkin_id}, property_id), {"_id": 0})
+    await log_activity(user, "koreksi_metode", f"Koreksi metode {kode}: {dari}→{ke} Rp{nominal:,}", entity=entity or "")
+    return await coll.find_one(scoped({"id": doc["id"]}, property_id), {"_id": 0})
+
+
+@api.post("/checkins/{checkin_id}/koreksi-metode")
+async def koreksi_metode_checkin(checkin_id: str, body: KoreksiMetodeBody,
+                                 user: dict = Depends(require_owner),
+                                 property_id: str = Depends(get_active_property)):
+    """Koreksi metode pembayaran CHECK-IN (Day Use walk-in). Owner-only. Lihat _terapkan_koreksi_metode."""
+    c = await db.checkins.find_one(scoped({"id": checkin_id}, property_id))
+    if not c:
+        raise HTTPException(404, "Check-in tidak ditemukan")
+    return await _terapkan_koreksi_metode(db.checkins, c, body.dari_metode, body.ke_metode, user, property_id,
+                                          c.get("trx_no") or checkin_id, c.get("room_nomor", ""))
+
+
+@api.post("/kasir/{kasir_id}/koreksi-metode")
+async def koreksi_metode_kasir(kasir_id: str, body: KoreksiMetodeBody,
+                               user: dict = Depends(require_owner),
+                               property_id: str = Depends(get_active_property)):
+    """Koreksi metode pembayaran transaksi KASIR (POS makanan/minuman/laundry). Owner-only."""
+    k = await db.kasir.find_one(scoped({"id": kasir_id}, property_id))
+    if not k:
+        raise HTTPException(404, "Transaksi kasir tidak ditemukan")
+    return await _terapkan_koreksi_metode(db.kasir, k, body.dari_metode, body.ke_metode, user, property_id,
+                                          k.get("trx_no") or kasir_id, "Kasir")
+
+
+@api.post("/bookings/{booking_id}/koreksi-metode")
+async def koreksi_metode_booking(booking_id: str, body: KoreksiMetodeBody,
+                                 user: dict = Depends(require_owner),
+                                 property_id: str = Depends(get_active_property)):
+    """Koreksi metode pembayaran BOOKING (mis. Menginap walk-in yg pembayarannya tersimpan di
+    bookings.pembayaran). Owner-only. Catatan: pembayaran manual booking yg tersimpan di
+    payment_log (collect_balance) tidak disentuh di sini — itu jalur berbeda."""
+    b = await db.bookings.find_one(scoped({"id": booking_id}, property_id))
+    if not b:
+        raise HTTPException(404, "Booking tidak ditemukan")
+    return await _terapkan_koreksi_metode(db.bookings, b, body.dari_metode, body.ke_metode, user, property_id,
+                                          b.get("kode") or booking_id, b.get("room_nomor", ""))
 
 
 @api.post("/checkins/{checkin_id}/checkout")
