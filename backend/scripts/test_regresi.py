@@ -1997,6 +1997,39 @@ async def skenario_kas_metode_bayar_dedup_checkin_paymentlog() -> tuple:
             "PASS" if ok else f"FAIL - transfer={res['transfer']}(harus 103000 SEKALI, bukan 206000 dobel), tunai={res['tunai']}(harus 50000)")
 
 
+async def skenario_koreksi_metode_checkin_owner() -> tuple:
+    """(2026-09-18) Fitur koreksi metode owner-only: ubah metode pembayaran checkin yg sudah
+    tercatat (dari qris→tunai), nominal tetap, audit_log tertulis. Setelah koreksi, Laporan Kas
+    per Metode Bayar harus memindahkan nominalnya dari QRIS ke Tunai."""
+    from routes.checkins import koreksi_metode_checkin, KoreksiMetodeBody
+    from routes.reports import report_kas_metode_bayar
+    from core import db, now_iso
+    property_id = _property_id_test()
+    rid = await _bikin_kamar_test(db, property_id, "KO1")
+    now = now_iso()
+    today = datetime.now(timezone.utc).astimezone(timezone(timedelta(hours=8))).date().isoformat()
+    cid = str(uuid.uuid4())
+    await db.checkins.insert_one({
+        "id": cid, "property_id": property_id, "room_id": rid, "room_nomor": "KO1", "room_tipe": "Standard",
+        "trx_no": "CI-KO-TEST", "nama_tamu": "Koreksi Uji", "no_hp": _wa_unik(), "status": "selesai",
+        "jam_checkin": now, "jam_checkout": now, "pembayaran": [{"metode": "QRIS", "jumlah": 120000}], "created_at": now,
+    })
+    owner = {"id": "t", "username": "owner", "nama": "Owner"}
+    try:
+        await koreksi_metode_checkin(cid, KoreksiMetodeBody(dari_metode="qris", ke_metode="tunai"), user=owner, property_id=property_id)
+        c = await db.checkins.find_one({"id": cid}, {"_id": 0, "pembayaran": 1})
+        audit = await db.audit_log.find_one({"action": "KOREKSI_METODE_PEMBAYARAN", "detail": {"$regex": "CI-KO-TEST"}})
+        rep = await report_kas_metode_bayar(from_date=today, to_date=today, user=owner, property_id=property_id)
+        ok = (c["pembayaran"][0]["metode"] == "tunai" and c["pembayaran"][0]["jumlah"] == 120000
+              and audit is not None and rep["tunai"] == 120000 and rep["qris"] == 0)
+        status = ("PASS" if ok else
+                  f"FAIL - metode={c['pembayaran'][0]['metode']}(harus tunai), nominal={c['pembayaran'][0]['jumlah']}, "
+                  f"audit={'ada' if audit else 'TIDAK'}, lap.tunai={rep['tunai']}(harus 120000) lap.qris={rep['qris']}(harus 0)")
+    finally:
+        await db.audit_log.delete_many({"detail": {"$regex": "CI-KO-TEST"}})
+    return ("koreksi_metode_checkin_owner", status)
+
+
 async def main():
     unit_tests = [
         test_tanggal_wita_dini_hari_geser_ke_hari_berikutnya,
@@ -2052,6 +2085,7 @@ async def main():
         skenario_walkin_dayuse_mirror_booking_tak_dobel_hitung,
         skenario_kas_metode_bayar_label_tak_konsisten_tetap_terhitung,
         skenario_kas_metode_bayar_dedup_checkin_paymentlog,
+        skenario_koreksi_metode_checkin_owner,
     ]
 
     print("--- Unit test (murni, tanpa DB) ---")
