@@ -309,7 +309,9 @@ function BookingForm() {
             </Card>
 
             {/* Catalog (per tipe dengan foto + fasilitas) */}
-            <div className="grid sm:grid-cols-2 gap-4 sm:gap-6">
+            {/* (2026-09-20, permintaan Agus) 1 tipe kamar (mis. Harmoni cuma Cottage) di-CENTER,
+                jangan rata-kiri; >1 tipe (Pelangi) tetap grid 2 kolom. */}
+            <div className={catalog.length === 1 ? "max-w-md mx-auto" : "grid sm:grid-cols-2 gap-4 sm:gap-6"}>
               {catalog.map((c) => {
                 const availOfTipe = availability.rooms.filter(r => r.tipe === c.tipe);
                 const isSoldOut = availOfTipe.length === 0;
