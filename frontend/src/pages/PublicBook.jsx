@@ -43,6 +43,14 @@ const JAM_OPERASIONAL = "07.00 – 22.00 WITA";
 // browser, bukan lewat return_url yang sudah disisipi ID booking).
 const LAST_BOOKING_ID_KEY = "pelangi_last_booking_id";
 const ALAMAT_HOMESTAY = "Jl. Kebun Raya Bedugul, Candikuning, Kecamatan Baturiti, Kabupaten Tabanan, Bali 82191, Indonesia";
+// Branding per-properti (2026-09-20, permintaan Agus - halaman /book/harmoni sebelumnya
+// pakai nama/alamat Pelangi). Slug dari URL /book/<slug>. Default = Pelangi (backward compat).
+// logo Harmoni belum ada aset -> null = tampilkan nama sbg teks (bukan logo Pelangi yg salah).
+const DEFAULT_BRANDING = { name: "Pelangi Homestay", tagline: "Bersantai di kaki Bedugul, Bali", address: ALAMAT_HOMESTAY, logo: "/pelangi-logo.png" };
+const PROPERTY_BRANDING = {
+  harmoni: { name: "Harmoni Hills", tagline: "Cottage tenang di jalur Bedugul", address: "Jalan Denpasar - Singaraja, Bedugul, Bali", logo: "/harmoni-logo.png" },
+};
+const brandingFor = (slug) => ({ ...DEFAULT_BRANDING, ...(PROPERTY_BRANDING[slug] || {}) });
 const addDays = (dateStr, n) => {
   const d = new Date(`${dateStr}T00:00:00`);
   d.setDate(d.getDate() + n);
@@ -70,6 +78,7 @@ function BookingForm() {
   // (lihat _resolve_property di routes/public.py). undefined (akses /book tanpa slug,
   // link lama) = backend fallback ke properti default seperti sebelum Fase 5 ada.
   const { propertySlug } = useParams();
+  const brand = brandingFor(propertySlug);
   const [catalog, setCatalog] = useState([]);
   const [tanggal, setTanggal] = useState(todayStr());
   const [tipe, setTipe] = useState("");           // filter tipe kamar (kosong = semua)
@@ -237,7 +246,7 @@ function BookingForm() {
       <header className="sticky top-0 z-10 bg-paper/95 backdrop-blur border-b border-teal-deep/10">
         <div className="max-w-5xl mx-auto px-4 sm:px-6 py-3 flex items-center justify-between">
           <div className="flex items-center gap-2.5">
-            <img src="/pelangi-logo.png" alt="Pelangi Homestay" className="h-12 w-auto object-contain" />
+            {brand.logo ? <img src={brand.logo} alt={brand.name} className="h-12 w-auto object-contain" /> : <span className="font-display text-xl font-bold text-teal-deep">{brand.name}</span>}
           </div>
           <Link to="/login" className="text-xs text-teal-deep/60 hover:text-teal-deep font-medium">Staff Login</Link>
         </div>
@@ -246,7 +255,7 @@ function BookingForm() {
       <main className="max-w-5xl mx-auto px-4 sm:px-6 py-6 sm:py-10 space-y-8">
         {/* Hero */}
         <section className="text-center space-y-3">
-          <img src="/pelangi-logo.png" alt="Pelangi Homestay" className="h-20 sm:h-24 w-auto object-contain mx-auto mb-1" />
+          {brand.logo ? <img src={brand.logo} alt={brand.name} className="h-20 sm:h-24 w-auto object-contain mx-auto mb-1" /> : <span className="block font-display text-3xl sm:text-4xl font-bold text-teal-deep mb-1">{brand.name}</span>}
           <p className="text-xs uppercase tracking-[0.3em] text-mustard-deep font-semibold">Reservasi Online</p>
           <h1 className="font-display text-3xl sm:text-5xl font-bold tracking-tight text-teal-deep">
             Istirahat Sejenak di<br className="hidden sm:block" /> Sejuknya Bedugul
@@ -308,7 +317,7 @@ function BookingForm() {
                   <Card key={c.tipe} data-testid={`pb-catalog-${c.tipe}`} className="bg-paper border-teal-deep/10 rounded-2xl overflow-hidden shadow-paper-sm hover:shadow-paper hover:-translate-y-0.5 transition-all">
                     {c.image && (
                       <div className="relative aspect-[4/3] overflow-hidden bg-teal-deep/5">
-                        <img src={c.image} alt={`${c.tipe} — Pelangi Homestay`} className="w-full h-full object-cover" loading="lazy" />
+                        <img src={c.image} alt={`${c.tipe} — ${brand.name}`} className="w-full h-full object-cover" loading="lazy" />
                         {isSoldOut && (
                           <div className="absolute inset-0 bg-teal-deep/70 flex items-center justify-center">
                             <span className="bg-cream text-teal-deep font-display font-bold px-4 py-2 rounded-full text-sm rotate-[-6deg] shadow-paper-sm">Sold Out</span>
@@ -606,8 +615,8 @@ function BookingForm() {
 
         {/* Footer info */}
         <footer className="text-center text-xs text-teal-deep/60 pt-8 border-t border-teal-deep/10 space-y-2">
-          <p className="font-semibold text-teal-deep">Pelangi Homestay &middot; Bersantai di kaki Bedugul, Bali</p>
-          <p className="max-w-md mx-auto">{ALAMAT_HOMESTAY}</p>
+          <p className="font-semibold text-teal-deep">{brand.name} &middot; {brand.tagline}</p>
+          <p className="max-w-md mx-auto">{brand.address}</p>
           <p className="flex items-center justify-center gap-1.5">
             <Clock className="w-3.5 h-3.5" /> Jam Operasional: {JAM_OPERASIONAL}
           </p>

@@ -132,6 +132,11 @@ async def public_rooms_catalog(properti: Optional[str] = None):
                 "rooms": [],
             }
         grouped[t]["rooms"].append({"id": r["id"], "nomor": r["nomor"]})
+    # (2026-09-20, permintaan Agus) Foto per-properti: Harmoni pakai foto Cottage-nya sendiri
+    # (dari data situs Harmoni), bukan foto Pelangi default di META. Pakai URL web langsung
+    # (bukan aset lokal) supaya tak perlu commit gambar besar / tak terhapus saat deploy.
+    if properti == "harmoni" and "Cottage" in grouped:
+        grouped["Cottage"]["image"] = "https://harmonihillsvillage.com/api/media/eebaaa6715d74e728740326c71711902"
     return list(grouped.values())
 
 @api.get("/public/availability")
