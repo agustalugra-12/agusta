@@ -204,6 +204,11 @@ function BookingForm() {
       return;
     }
     if (selectedRooms.length === 0) { toast.error("Pilih kamar dulu"); return; }
+    // (2026-09-22, Agus) Day Use hanya jam 12:00 ke atas (jaga selain min input, kalau diketik manual)
+    if (bookingTipe === "day_use" && form.jam_checkin && form.jam_checkin < "12:00") {
+      toast.error("Day Use hanya bisa mulai jam 12:00 ke atas ya");
+      return;
+    }
     if (!method) { toast.error("Pilih metode pembayaran dulu"); return; }
     setSubmitting(true);
     try {
@@ -459,7 +464,12 @@ function BookingForm() {
                   <FieldIcon icon={Car} label="Kendaraan"><Input data-testid="pb-kendaraan" placeholder="Mis: B 1234 ABC" value={form.kendaraan} onChange={(e) => setForm(f => ({ ...f, kendaraan: e.target.value }))} className="h-12" /></FieldIcon>
                 </div>
                 <FieldIcon icon={Clock} label="Jam Check-In">
-                  <Input data-testid="pb-jam" type="time" value={form.jam_checkin} onChange={(e) => setForm(f => ({ ...f, jam_checkin: e.target.value }))} className="h-12" />
+                  {/* (2026-09-22, Agus) Day Use hanya boleh mulai jam 12:00 ke atas (kamar
+                      menginap baru checkout jam 12). min=12:00 utk day_use; menginap bebas. */}
+                  <Input data-testid="pb-jam" type="time" min={bookingTipe === "day_use" ? "12:00" : undefined} value={form.jam_checkin} onChange={(e) => setForm(f => ({ ...f, jam_checkin: e.target.value }))} className="h-12" />
+                  {bookingTipe === "day_use" && (
+                    <p className="mt-1.5 text-[11px] text-teal-deep/60">Day Use mulai jam 12:00 ke atas.</p>
+                  )}
                   {dayuseHints.map((h) => (
                     <div key={h.room_nomor} data-testid={`pb-dayuse-hint-${h.room_nomor}`} className="mt-2 flex items-start gap-2 text-xs text-mustard-deep bg-mustard/10 border border-mustard/30 rounded-md p-2.5">
                       <AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
